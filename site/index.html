@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goblintown — multi-agent orchestration on top of OpenAI</title>
+<meta name="description" content="A six-agent orchestration protocol on top of OpenAI: scavenge, dispatch, attack, review, fall back. Content-addressed, drift-monitored, budget-capped." />
+<meta property="og:title" content="Goblintown" />
+<meta property="og:description" content="Multi-agent orchestration on top of OpenAI. Six specialized agents, one pipeline." />
+<meta property="og:type" content="website" />
+<meta name="theme-color" content="#0d1410" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='52'>%F0%9F%91%B9</text></svg>" />
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0d1410;
+    --bg-deep: #0a0e08;
+    --fg: #b9d3a8;
+    --fg-bright: #d8efb6;
+    --accent: #8fcf52;
+    --accent-hot: #c2f37a;
+    --muted: #5a7042;
+    --line: #1f2d18;
+    --line-soft: #14201a;
+    --warn: #f3df7a;
+    --bad: #f3a07a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.6 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    background-image:
+      radial-gradient(circle at 20% 0%, rgba(143, 207, 82, 0.06), transparent 40%),
+      radial-gradient(circle at 80% 30%, rgba(143, 207, 82, 0.04), transparent 50%);
+    background-attachment: fixed;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { color: var(--accent-hot); }
+  ::selection { background: var(--accent); color: var(--bg); }
+
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 1.25rem; }
+
+  header { padding: 2rem 0 1rem; }
+  nav.top { display: flex; gap: 1.5rem; align-items: center; }
+  nav.top .brand { color: var(--fg-bright); font-weight: 700; letter-spacing: .04em; }
+  nav.top .spacer { flex: 1; }
+  nav.top a.tab { color: var(--muted); }
+  nav.top a.tab:hover { color: var(--fg-bright); }
+
+  .hero { padding: 4rem 0 3rem; }
+  .hero h1 {
+    font-size: clamp(2.6rem, 8vw, 5.5rem);
+    line-height: 1;
+    margin: 0 0 1.2rem;
+    color: var(--fg-bright);
+    letter-spacing: -0.02em;
+  }
+  .hero .tagline {
+    font-size: clamp(1.05rem, 2.2vw, 1.25rem);
+    color: var(--fg);
+    max-width: 600px;
+    margin: 0 0 2rem;
+  }
+  .hero .blink::after {
+    content: "▮";
+    color: var(--accent);
+    margin-left: .15em;
+    animation: blink 1.1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .cta {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .65rem 1.1rem;
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    color: var(--fg-bright);
+    font-family: inherit;
+    font-size: .95rem;
+    margin-right: .6rem;
+    margin-bottom: .6rem;
+    transition: border-color .15s, color .15s, transform .1s;
+  }
+  .cta:hover { border-color: var(--accent); color: var(--accent-hot); transform: translateY(-1px); }
+  .cta.primary { border-color: var(--accent); color: var(--bg); background: var(--accent); }
+  .cta.primary:hover { background: var(--accent-hot); border-color: var(--accent-hot); color: var(--bg); }
+  .cta .arrow { transition: transform .15s; }
+  .cta:hover .arrow { transform: translateX(2px); }
+
+  section { padding: 2.5rem 0; border-top: 1px solid var(--line); }
+  section h2 {
+    color: var(--fg-bright);
+    font-size: 1.4rem;
+    margin: 0 0 1rem;
+    letter-spacing: .02em;
+  }
+  section h2 .hash { color: var(--muted); margin-right: .5rem; }
+  section p { margin: 0 0 1rem; max-width: 70ch; }
+
+  pre, code {
+    font-family: inherit;
+    background: var(--bg-deep);
+  }
+  pre {
+    padding: 1rem 1.2rem;
+    border-left: 3px solid var(--line);
+    overflow-x: auto;
+    font-size: .88rem;
+    line-height: 1.55;
+    color: var(--fg-bright);
+    margin: 0 0 1.2rem;
+  }
+  code {
+    padding: 1px 5px;
+    border-radius: 2px;
+    font-size: .9em;
+    color: var(--fg-bright);
+  }
+  .ascii {
+    color: var(--accent);
+    font-size: .82rem;
+    line-height: 1.35;
+    white-space: pre;
+    border-left-color: var(--line-soft);
+  }
+  .comment { color: var(--muted); }
+
+  .roster {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.5rem;
+  }
+  .roster th, .roster td {
+    border: 1px solid var(--line);
+    padding: .55rem .9rem;
+    text-align: left;
+    vertical-align: top;
+    font-size: .92rem;
+  }
+  .roster th { background: var(--line-soft); color: var(--fg-bright); font-weight: 600; }
+  .roster td.kind {
+    color: var(--accent);
+    font-weight: 600;
+    width: 7rem;
+    white-space: nowrap;
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.2rem;
+    margin-top: 1rem;
+  }
+  .card {
+    border: 1px solid var(--line);
+    padding: 1rem 1.2rem;
+    background: var(--bg-deep);
+  }
+  .card h3 {
+    margin: 0 0 .5rem;
+    color: var(--fg-bright);
+    font-size: 1rem;
+    letter-spacing: .02em;
+  }
+  .card p { margin: 0; color: var(--fg); font-size: .9rem; }
+
+  footer {
+    padding: 3rem 0 4rem;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: .85rem;
+  }
+  footer .links { margin-bottom: .8rem; display: flex; gap: 1.3rem; flex-wrap: wrap; }
+  footer .meta { line-height: 1.5; }
+
+  @media (max-width: 600px) {
+    .hero { padding: 2.5rem 0 2rem; }
+    section { padding: 2rem 0; }
+    .roster th, .roster td { padding: .4rem .55rem; font-size: .85rem; }
+    pre { font-size: .8rem; padding: .8rem .9rem; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <nav class="top">
+    <span class="brand">goblintown</span>
+    <span class="spacer"></span>
+    <a class="tab" href="#install">install</a>
+    <a class="tab" href="#usage">usage</a>
+    <a class="tab" href="#roster">roster</a>
+    <a class="tab" href="https://github.com/0XBL33P/goblintown">github →</a>
+  </nav>
+
+  <div class="hero">
+    <h1>goblintown<span class="blink"></span></h1>
+    <p class="tagline">
+      Multi-agent orchestration on top of OpenAI. Six specialized agents
+      scavenge context, race against each other, attack each other's outputs,
+      and hand back a signed, content-addressed answer.
+    </p>
+    <a class="cta primary" href="#install">
+      <span>install</span>
+      <span class="arrow">→</span>
+    </a>
+    <a class="cta" href="https://github.com/0XBL33P/goblintown">
+      <span>github</span>
+      <span class="arrow">↗</span>
+    </a>
+    <a class="cta" href="https://www.npmjs.com/package/goblintown">
+      <span>npm</span>
+      <span class="arrow">↗</span>
+    </a>
+  </div>
+</header>
+
+<section id="background">
+  <h2><span class="hash">#</span> background</h2>
+  <p>
+    In April 2026, OpenAI published
+    <a href="https://openai.com/index/where-the-goblins-came-from/">Where the goblins came from</a>,
+    explaining how a reward signal trained for a "Nerdy" personality leaked
+    across all of GPT-5.5's outputs and produced a noticeable surge in creature
+    metaphors. Codex shipped with a hardcoded ban list — goblins, gremlins,
+    raccoons, trolls, ogres, pigeons.
+  </p>
+  <p>This project takes that ban list as a roster.</p>
+</section>
+
+<section id="roster">
+  <h2><span class="hash">#</span> roster</h2>
+  <table class="roster">
+    <thead>
+      <tr><th>Creature</th><th>Job</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="kind">Goblin</td><td>Worker. Cheap, high-temperature, dispatched in packs.</td></tr>
+      <tr><td class="kind">Gremlin</td><td>Adversarial. Tries to break a candidate output.</td></tr>
+      <tr><td class="kind">Raccoon</td><td>Scavenger. Returns only the facts a task actually needs.</td></tr>
+      <tr><td class="kind">Troll</td><td>Reviewer. Default-rejects. Returns a JSON verdict.</td></tr>
+      <tr><td class="kind">Ogre</td><td>Heavyweight. Deep reasoning, called when the pack fails.</td></tr>
+      <tr><td class="kind">Pigeon</td><td>Carrier. Compresses and routes artifacts between Warrens.</td></tr>
+    </tbody>
+  </table>
+  <p class="comment">
+    A unit test pins the roster to the OpenAI ban list, so it can't drift quietly.
+  </p>
+</section>
+
+<section id="pipeline">
+  <h2><span class="hash">#</span> the rite</h2>
+  <p>The full pipeline. Every step writes a Loot drop to the Hoard with parent links to its inputs — a Rite is fully reconstructible from the Hoard alone.</p>
+<pre class="ascii">  ┌──────────┐   facts   ┌────────────┐  N parallel  ┌──────────┐
+  │ Raccoon  │──────────▶│  Goblin    │═════════════▶│ Goblins  │
+  │ (optional│           │  pack      │              │  output  │
+  │  scan)   │           └────────────┘              └────┬─────┘
+  └──────────┘                                            │
+                                                          ▼
+                                                  ┌─────────────┐
+                                                  │   Gremlin   │
+                                                  │ chaos pass  │
+                                                  └──────┬──────┘
+                                                         ▼
+                                                  ┌─────────────┐
+                                                  │    Troll    │
+                                                  │   review    │
+                                                  └──────┬──────┘
+                                                         │
+                                              any pass ──┴── all fail
+                                                  │             │
+                                                  ▼             ▼
+                                            ┌────────┐    ┌──────────┐
+                                            │ winner │    │   Ogre   │
+                                            │  loot  │    │ fallback │
+                                            └────────┘    └──────────┘</pre>
+</section>
+
+<section id="concepts">
+  <h2><span class="hash">#</span> concepts</h2>
+  <div class="grid-2">
+    <div class="card"><h3>Loot</h3><p>One agent invocation, content-addressed by sha256(model || prompt || output).</p></div>
+    <div class="card"><h3>Quest</h3><p>Lightweight: Goblin pack + Troll arbitration.</p></div>
+    <div class="card"><h3>Rite</h3><p>Full pipeline: Raccoon → pack → Gremlin → Troll → Ogre fallback.</p></div>
+    <div class="card"><h3>Hoard</h3><p>File-backed store under .goblintown/hoard/. Every drop is auditable.</p></div>
+    <div class="card"><h3>Warren</h3><p>Per-project root, found by walking up from cwd.</p></div>
+    <div class="card"><h3>Shinies</h3><p>Reward = troll score − cross-creature drift penalty + pass bonus, clamped 0..1.</p></div>
+    <div class="card"><h3>Drift</h3><p>Cross-creature word frequency. A Goblin output mentioning <em>raccoons</em> unprompted is the signal we measure.</p></div>
+    <div class="card"><h3>Federation</h3><p>Pigeons compress and route artifacts to other Warrens — file or HTTP, signed, optional HMAC.</p></div>
+  </div>
+</section>
+
+<section id="install">
+  <h2><span class="hash">#</span> install</h2>
+<pre><span class="comment"># global install</span>
+npm install -g goblintown
+
+<span class="comment"># or, in a project</span>
+npm install goblintown
+export OPENAI_API_KEY=sk-...
+goblintown init</pre>
+</section>
+
+<section id="usage">
+  <h2><span class="hash">#</span> usage</h2>
+<pre><span class="comment"># one-shot — output streams as it arrives</span>
+goblintown summon raccoon --task "Summarize package.json" --personality stoic
+
+<span class="comment"># scavenge a corpus</span>
+goblintown scavenge --task "What does the build system do?" \
+  --scan "package.json" --scan "src/**/*.ts"
+
+<span class="comment"># lightweight pack dispatch</span>
+goblintown quest "Write a SQL join: users to last 5 orders" --pack 3
+
+<span class="comment"># full ceremony with a budget cap</span>
+goblintown rite "Refactor src/quest.ts to share the troll-review helper" \
+  --pack 3 --scan "src/quest.ts" --budget 80000
+
+<span class="comment"># observability</span>
+goblintown drift
+goblintown audit &lt;riteId&gt;
+goblintown graph &lt;riteId|lootId&gt;
+goblintown serve --port 7777    <span class="comment"># web UI + SSE rite form</span></pre>
+</section>
+
+<section id="features">
+  <h2><span class="hash">#</span> what's in the box</h2>
+  <div class="grid-2">
+    <div class="card"><h3>Pack dispatch + arbitration</h3><p>N goblins race in parallel with perturbed temperatures. A troll judges. The highest shinies wins.</p></div>
+    <div class="card"><h3>Adversarial review</h3><p>Every output gets attacked by a gremlin before review. Edge cases, off-by-ones, prompt injection.</p></div>
+    <div class="card"><h3>Ogre fallback</h3><p>If the whole pack fails, escalate to a heavyweight model that synthesizes the best parts.</p></div>
+    <div class="card"><h3>Content-addressed Hoard</h3><p>Every Loot drop is keyed by hash. Full causal graph of who-produced-what is recoverable.</p></div>
+    <div class="card"><h3>Drift telemetry</h3><p>Goblintown measures cross-creature word frequency. High drift = your reward signal is leaking.</p></div>
+    <div class="card"><h3>Budget caps</h3><p>Per-rite token budgets and per-call max-output. No runaway pack costs.</p></div>
+    <div class="card"><h3>Concurrency limits</h3><p>An in-process semaphore caps in-flight calls. The SDK retries 429/5xx automatically.</p></div>
+    <div class="card"><h3>Federation</h3><p>Pigeons deliver compressed artifacts between Warrens, over filesystem or HTTP. Signed bodies, optional HMAC.</p></div>
+    <div class="card"><h3>Browser-driven rites</h3><p>Web UI with an HTML form that POSTs and subscribes to SSE for live progress.</p></div>
+    <div class="card"><h3>Pluggable rewards</h3><p>Drop a .goblintown/reward.mjs to override the default scoring.</p></div>
+    <div class="card"><h3>Reroll, export, compare</h3><p>Re-run a rite with same params; export the whole thing as markdown; diff two rites.</p></div>
+    <div class="card"><h3>57 tests</h3><p>Pure-function coverage on every protocol invariant. No OpenAI calls during testing.</p></div>
+  </div>
+</section>
+
+<section id="reward-plugin">
+  <h2><span class="hash">#</span> reward plugins</h2>
+  <p>Drop a <code>.goblintown/reward.mjs</code> in your Warren to override the default scoring.</p>
+<pre><span class="comment">// .goblintown/reward.mjs</span>
+export default function (loot, verdict) {
+  return verdict.passed
+    ? 0.8 + (1 - loot.drift.driftRate) * 0.2
+    : verdict.score * 0.5;
+}</pre>
+  <p class="comment">Result is clamped to [0, 1].</p>
+</section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/0XBL33P/goblintown">github ↗</a>
+      <a href="https://www.npmjs.com/package/goblintown">npm ↗</a>
+      <a href="https://github.com/0XBL33P/goblintown/issues">issues ↗</a>
+      <a href="https://openai.com/index/where-the-goblins-came-from/">the postmortem ↗</a>
+    </div>
+    <div class="meta">
+      <span>MIT licensed · 0XBL33P · v1.0.0</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

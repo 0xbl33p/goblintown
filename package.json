@@ -4,6 +4,14 @@
   "description": "Multi-agent orchestration protocol on top of OpenAI.",
   "license": "MIT",
   "author": "0XBL33P",
+  "homepage": "https://github.com/0XBL33P/goblintown#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0XBL33P/goblintown.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0XBL33P/goblintown/issues"
+  },
   "type": "module",
   "bin": {
     "goblintown": "./dist/cli.js"
