@@ -1,0 +1,51 @@
+{
+  "name": "goblintown",
+  "version": "1.0.0",
+  "description": "Multi-agent orchestration protocol on top of OpenAI.",
+  "license": "MIT",
+  "author": "0XBL33P",
+  "type": "module",
+  "bin": {
+    "goblintown": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "serve": "node dist/cli.js serve",
+    "clean": "rimraf dist",
+    "test": "npm run build && node --test dist/__tests__/drift.test.js dist/__tests__/reward.test.js dist/__tests__/hoard.test.js dist/__tests__/federation.test.js dist/__tests__/audit.test.js dist/__tests__/reward-plugin.test.js dist/__tests__/graph.test.js dist/__tests__/ban-list.test.js dist/__tests__/concurrency.test.js dist/__tests__/budget.test.js dist/__tests__/run-store.test.js dist/__tests__/export-compare.test.js",
+    "prepublishOnly": "npm run clean && npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "openai",
+    "gpt",
+    "llm",
+    "orchestration",
+    "multi-agent",
+    "cli"
+  ],
+  "dependencies": {
+    "express": "^4.21.0",
+    "glob": "^11.0.0",
+    "openai": "^4.80.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.7.0",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
