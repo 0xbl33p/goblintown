@@ -129,6 +129,45 @@
   }
   .comment { color: var(--muted); }
 
+  .bestiary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin: 1.25rem 0 .5rem;
+  }
+  .bestiary .creature {
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    padding: 1.2rem .8rem 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .bestiary .creature pre {
+    margin: 0 0 .8rem;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-size: .72rem;
+    line-height: 1.05;
+    text-align: left;
+  }
+  .bestiary .name {
+    color: var(--accent);
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    font-size: .8rem;
+  }
+  @media (max-width: 800px) {
+    .bestiary { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 500px) {
+    .bestiary { grid-template-columns: 1fr; }
+  }
+
   .roster {
     width: 100%;
     border-collapse: collapse;
@@ -251,29 +290,81 @@
   <p class="comment">
     A unit test pins the roster to the OpenAI ban list, so it can't drift quietly.
   </p>
-<pre class="ascii">   ▄█▄        ▄█▄              ▀▄ ▄▀ ▀▄ ▄▀                    ▄█▄          ▄█▄
-   ███        ███                 ▀█▄▄█▄▄█▀                     ███          ███
-    ▀████████████▀                 █████████                     ▀████████████▀
-     █  ▀▄  ▄▀  █                  █ ◉   ◉ █                     █▌ ●▔     ▔● ▐█
-     █   ●  ●   █                  █   ╳   █                     █      ▾      █
-     █    ▾▾    █                  █ ╲╱╲╱╲ █                     █▄▄▄▄▄▄▄▄▄▄▄▄█
-     █▄▄▄▄▄▄▄▄▄▄█                   ▀█████▀                      █▌█        █▐█
-      █▌ █  █ ▐█                      █ █                        ▀▀▀        ▀▀▀
-      ▀▀ ▀  ▀ ▀▀                     ▀▀ ▀▀
-        Goblin                        Gremlin                          Raccoon
-
-
-       ▄ ▄    ▄ ▄              ▄▄▄▄▄▄▄▄▄▄                   ▄██▄
-       █ █    █ █              ████████████                ██  ●█
-     ▄████████████▄         ██  ▀▀    ▀▀  ██                █▌    █▶▶▶
-     █  ●        ●  █       █     ●    ●    █               ██████████
-     █     ▾▾▾▾    █        █        ▽       █              █▀▀▀▀▀▀▀▀█
-     █  ──────────  █       █▄  ▼▼▼▼▼▼▼▼  ▄█                ████████
-     ████████████████        ████████████                       █ █
-    █▌                ▐█    ██████████████                      █ █
-    █▌                ▐█    ██          ██                     ▀▀ ▀▀
-    ████          ████      ▀▀          ▀▀
-        Troll                    Ogre                            Pigeon</pre>
+  <div class="bestiary">
+    <div class="creature">
+<pre>   ▄█▄        ▄█▄
+   ███        ███
+    ▀████████████▀
+     █  ▀▄  ▄▀  █
+     █   ●  ●   █
+     █    ▾▾    █
+     █▄▄▄▄▄▄▄▄▄▄█
+      █▌ █  █ ▐█
+      ▀▀ ▀  ▀ ▀▀</pre>
+      <div class="name">Goblin</div>
+    </div>
+    <div class="creature">
+<pre>   ▀▄ ▄▀ ▀▄ ▄▀
+     ▀█▄▄█▄▄█▀
+      █████████
+      █ ◉   ◉ █
+      █   ╳   █
+      █ ╲╱╲╱╲ █
+       ▀█████▀
+         █ █
+        ▀▀ ▀▀</pre>
+      <div class="name">Gremlin</div>
+    </div>
+    <div class="creature">
+<pre>    ▄█▄          ▄█▄
+    ███          ███
+     ▀████████████▀
+     █▌ ●▔     ▔● ▐█
+     █      ▾      █
+     █▄▄▄▄▄▄▄▄▄▄▄▄█
+     █▌█        █▐█
+     ▀▀▀        ▀▀▀</pre>
+      <div class="name">Raccoon</div>
+    </div>
+    <div class="creature">
+<pre>       ▄ ▄    ▄ ▄
+       █ █    █ █
+     ▄████████████▄
+     █  ●        ●  █
+     █     ▾▾▾▾    █
+     █  ──────────  █
+     ████████████████
+    █▌                ▐█
+    █▌                ▐█
+    ████          ████</pre>
+      <div class="name">Troll</div>
+    </div>
+    <div class="creature">
+<pre>        ▄▄▄▄▄▄▄▄▄▄
+       ████████████
+      ██  ▀▀    ▀▀  ██
+      █     ●    ●    █
+      █        ▽       █
+      █▄  ▼▼▼▼▼▼▼▼  ▄█
+       ████████████
+      ██████████████
+      ██          ██
+      ██          ██</pre>
+      <div class="name">Ogre</div>
+    </div>
+    <div class="creature">
+<pre>       ▄██▄
+      ██  ●█
+      █▌    █▶▶▶
+      ██████████
+      █▀▀▀▀▀▀▀▀█
+       ████████
+          █ █
+          █ █
+         ▀▀ ▀▀</pre>
+      <div class="name">Pigeon</div>
+    </div>
+  </div>
 </section>
 
 <section id="pipeline">
