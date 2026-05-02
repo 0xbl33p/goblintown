@@ -259,9 +259,13 @@ export OPENROUTER_REFERER="https://github.com/yourname/yourproject"
 export OPENROUTER_TITLE="Goblintown"
 ```
 
-The default model names (`gpt-5.4-mini`, `gpt-5.5`) are part of the project's
-lore and **must** be overridden when using a different provider, otherwise
-calls will 404. OpenRouter addresses models as `vendor/model`:
+That's enough to run with the default models. When `OPENAI_BASE_URL` points
+at OpenRouter, any `GOBLINTOWN_MODEL_*` value without a `/` is auto-namespaced
+to `openai/`, so the built-in defaults (`gpt-5.4-mini` for the pack, `gpt-5.5`
+for the Ogre) become `openai/gpt-5.4-mini` / `openai/gpt-5.5` automatically.
+
+Override per creature to mix providers — already-prefixed names are passed
+through untouched:
 
 ```bash
 export GOBLINTOWN_MODEL_GOBLIN="anthropic/claude-haiku-4.5"

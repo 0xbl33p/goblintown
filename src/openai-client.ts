@@ -41,9 +41,23 @@ export interface CreatureResponse {
 // `max_completion_tokens` instead of `max_tokens`. Also covers the same
 // families when accessed through OpenRouter as `openai/gpt-5...` or
 // `openai/o3...`, plus DeepSeek-R and explicit `*-thinking` variants.
-function isFixedSamplingModel(model: string): boolean {
+export function isFixedSamplingModel(model: string): boolean {
   const name = model.includes("/") ? model.split("/").slice(-1)[0] : model;
   return /^(gpt-5|o\d|deepseek-r\d)/i.test(name) || /-thinking$/i.test(name);
+}
+
+// OpenRouter addresses models as `vendor/name`. When OPENAI_BASE_URL points
+// at OpenRouter and the configured model has no vendor prefix, default to
+// the `openai/` namespace so the project's defaults (`gpt-5.4-mini`,
+// `gpt-5.5`, etc.) keep working unchanged.
+export function resolveModel(
+  model: string,
+  baseURL: string | undefined = process.env.OPENAI_BASE_URL,
+): string {
+  if (model.includes("/")) return model;
+  if (!baseURL) return model;
+  if (!/openrouter\.ai/i.test(baseURL)) return model;
+  return `openai/${model}`;
 }
 
 interface BaseParams {
@@ -59,9 +73,10 @@ function buildBaseParams(
   userPrompt: string,
   opts: CallOptions,
 ): BaseParams {
-  const fixed = isFixedSamplingModel(creature.model);
+  const model = resolveModel(creature.model);
+  const fixed = isFixedSamplingModel(model);
   const params: BaseParams = {
-    model: creature.model,
+    model,
     messages: [
       { role: "system", content: creature.systemPrompt },
       { role: "user", content: userPrompt },
