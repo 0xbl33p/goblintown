@@ -2,6 +2,8 @@ import { mkdir, readFile, writeFile, access } from "node:fs/promises";
 import { constants as FS } from "node:fs";
 import { join } from "node:path";
 import { Hoard } from "./hoard.js";
+import type { HoardBackend } from "./hoard-backend.js";
+import { JsonHoardBackend } from "./hoard-json.js";
 import type { WarrenManifest } from "./types.js";
 
 const WARREN_DIRNAME = ".goblintown";
@@ -17,7 +19,10 @@ export interface Warren {
 export async function initWarren(root: string): Promise<Warren> {
   const dir = join(root, WARREN_DIRNAME);
   await mkdir(dir, { recursive: true });
-  const hoard = new Hoard(join(dir, "hoard"));
+  const hoardDir = join(dir, "hoard");
+  const storage = resolveStorage(undefined);
+  const backend = await makeBackend(storage, hoardDir);
+  const hoard = new Hoard(hoardDir, backend);
   await hoard.init();
 
   const manifestPath = join(dir, MANIFEST_FILE);
@@ -28,6 +33,7 @@ export async function initWarren(root: string): Promise<Warren> {
     defaultModelGoblin: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5.4-mini",
     defaultModelOgre: process.env.GOBLINTOWN_MODEL_OGRE ?? "gpt-5.5",
     defaultModelTroll: process.env.GOBLINTOWN_MODEL_TROLL ?? "gpt-5.4-mini",
+    storage,
   };
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
 
@@ -45,8 +51,29 @@ export async function loadWarren(cwd: string): Promise<Warren> {
   const manifest = JSON.parse(
     await readFile(manifestPath, "utf8"),
   ) as WarrenManifest;
-  const hoard = new Hoard(join(root, WARREN_DIRNAME, "hoard"));
+  const hoardDir = join(root, WARREN_DIRNAME, "hoard");
+  const storage = resolveStorage(manifest.storage);
+  const backend = await makeBackend(storage, hoardDir);
+  const hoard = new Hoard(hoardDir, backend);
+  await hoard.init();
   return { root, manifestPath, manifest, hoard };
+}
+
+function resolveStorage(manifestStorage: "json" | "sqlite" | undefined): "json" | "sqlite" {
+  const env = process.env.GOBLINTOWN_STORAGE?.toLowerCase();
+  if (env === "sqlite" || env === "json") return env;
+  return manifestStorage ?? "json";
+}
+
+async function makeBackend(
+  storage: "json" | "sqlite",
+  hoardDir: string,
+): Promise<HoardBackend> {
+  if (storage === "sqlite") {
+    const { SqliteHoardBackend } = await import("./hoard-sqlite.js");
+    return new SqliteHoardBackend(join(hoardDir, "hoard.db"));
+  }
+  return new JsonHoardBackend(hoardDir);
 }
 
 async function findWarrenRoot(start: string): Promise<string | null> {

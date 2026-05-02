@@ -125,4 +125,6 @@ export interface WarrenManifest {
   defaultModelTroll: string;
   /** Optional shared secret for HMAC-authenticated federation. */
   peerSecret?: string;
+  /** Storage backend. Defaults to "json". Override with GOBLINTOWN_STORAGE. */
+  storage?: "json" | "sqlite";
 }

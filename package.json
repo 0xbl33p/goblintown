@@ -14,11 +14,13 @@
   },
   "type": "module",
   "bin": {
-    "goblintown": "./dist/cli.js"
+    "goblintown": "./dist/cli.js",
+    "goblintown-mcp": "./dist/mcp.js"
   },
   "main": "./dist/index.js",
   "files": [
     "dist",
+    "site/static",
     "LICENSE",
     "README.md"
   ],
@@ -28,7 +30,7 @@
     "start": "node dist/cli.js",
     "serve": "node dist/cli.js serve",
     "clean": "rimraf dist",
-    "test": "npm run build && node --test dist/__tests__/drift.test.js dist/__tests__/reward.test.js dist/__tests__/hoard.test.js dist/__tests__/federation.test.js dist/__tests__/audit.test.js dist/__tests__/reward-plugin.test.js dist/__tests__/graph.test.js dist/__tests__/ban-list.test.js dist/__tests__/concurrency.test.js dist/__tests__/budget.test.js dist/__tests__/run-store.test.js dist/__tests__/export-compare.test.js dist/__tests__/pack-prompt.test.js dist/__tests__/banners.test.js",
+    "test": "npm run build && node --test dist/__tests__/drift.test.js dist/__tests__/reward.test.js dist/__tests__/hoard.test.js dist/__tests__/hoard-sqlite.test.js dist/__tests__/federation.test.js dist/__tests__/audit.test.js dist/__tests__/reward-plugin.test.js dist/__tests__/graph.test.js dist/__tests__/ban-list.test.js dist/__tests__/concurrency.test.js dist/__tests__/budget.test.js dist/__tests__/run-store.test.js dist/__tests__/export-compare.test.js dist/__tests__/pack-prompt.test.js dist/__tests__/banners.test.js dist/__tests__/goblin-variants.test.js",
     "prepublishOnly": "npm run clean && npm run build && npm test"
   },
   "engines": {
@@ -45,11 +47,15 @@
     "cli"
   ],
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^11.10.0",
     "express": "^4.21.0",
     "glob": "^11.0.0",
-    "openai": "^4.80.0"
+    "openai": "^4.80.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^4.17.21",
     "@types/node": "^22.7.0",
     "rimraf": "^6.0.1",

@@ -1,0 +1,16 @@
+node_modules
+dist
+.git
+.github
+.goblintown
+.env
+.env.local
+*.log
+vscode-extension
+coverage
+*.md
+!README.md
+.dockerignore
+Dockerfile
+fly.toml
+render.yaml

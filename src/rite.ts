@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Budget, BudgetExceededError } from "./budget.js";
 import { makeGoblin } from "./creatures.js";
+import { variantForPackIndex } from "./goblin-variants.js";
 import { measureDrift } from "./drift.js";
 import { callCreature } from "./openai-client.js";
 import { shinies } from "./reward.js";
@@ -126,8 +127,10 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
     : opts.task;
 
   const goblinJobs = Array.from({ length: opts.packSize }, async (_, i) => {
+    const variant = variantForPackIndex(i, opts.packSize);
+    const variantGoblin = makeGoblin(personality, variant);
     const variantPrompt = packVariant(taskWithFacts, i, opts.packSize);
-    const { text: output, usage } = await callCreature(goblin, variantPrompt, {
+    const { text: output, usage } = await callCreature(variantGoblin, variantPrompt, {
       maxOutputTokens: opts.maxOutputTokensPerCall,
     });
     const drift = measureDrift(output);
@@ -135,8 +138,8 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
       id: "",
       riteId,
       creatureKind: "goblin",
-      personality: goblin.personality,
-      model: goblin.model,
+      personality: variantGoblin.personality,
+      model: variantGoblin.model,
       prompt: variantPrompt,
       output,
       parentLootIds: rite.contextLootId ? [rite.contextLootId] : undefined,

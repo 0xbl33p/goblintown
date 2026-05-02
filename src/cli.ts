@@ -14,6 +14,7 @@ import { measureDrift } from "./drift.js";
 import { exportRiteMarkdown } from "./export.js";
 import { sendToWarren, sendToWarrenHttp, verifyInbox } from "./federation.js";
 import { renderLootAncestry, renderRiteGraph } from "./graph.js";
+import { migrateWarren } from "./migrate.js";
 import { callCreatureStream } from "./openai-client.js";
 import { dispatchQuest } from "./quest.js";
 import { reroll } from "./reroll.js";
@@ -83,6 +84,10 @@ Usage:
   goblintown serve [--port <N>]
       Start the Hoard web UI. Default port=7777.
 
+  goblintown migrate <json|sqlite>
+      Migrate this Warren's Hoard between storage backends. Source data
+      is preserved; remove the old files manually after verifying.
+
 Environment:
   OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare)
   GOBLINTOWN_MODEL_GOBLIN     default: gpt-5.4-mini
@@ -136,6 +141,8 @@ async function main(): Promise<void> {
       return cmdOutbox();
     case "serve":
       return cmdServe(argv.slice(1));
+    case "migrate":
+      return cmdMigrate(argv.slice(1));
     default:
       process.stderr.write(`Unknown command: ${cmd}\n\n${HELP}`);
       process.exitCode = 1;
@@ -749,7 +756,25 @@ async function cmdOutbox(): Promise<void> {
 async function cmdServe(args: string[]): Promise<void> {
   const flags = parseFlags(args);
   const port = flags.port ? Number(flags.port) : 7777;
-  await serve({ cwd: process.cwd(), port });
+  const host = flags.host;
+  await serve({ cwd: process.cwd(), port, host });
+}
+
+async function cmdMigrate(args: string[]): Promise<void> {
+  const target = args[0];
+  if (target !== "json" && target !== "sqlite") {
+    process.stderr.write(`usage: goblintown migrate <json|sqlite>\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const w = await loadWarren(process.cwd());
+  process.stdout.write(`Migrating Warren ${w.root} → ${target}...\n`);
+  const r = await migrateWarren(w.root, target);
+  process.stdout.write(
+    `Done. loot=${r.loot} quests=${r.quests} rites=${r.rites} ` +
+      `inbox=${r.inbox} outbox=${r.outbox}\n` +
+      `Source data left in place; remove manually after verifying.\n`,
+  );
 }
 
 function parseFlags(args: string[]): Record<string, string> {

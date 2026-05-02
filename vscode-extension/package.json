@@ -1,0 +1,75 @@
+{
+  "name": "goblintown-vscode",
+  "displayName": "Goblintown",
+  "description": "Run Goblintown rites against your code from inside VS Code.",
+  "version": "0.1.0",
+  "publisher": "goblintown",
+  "license": "MIT",
+  "engines": { "vscode": "^1.86.0" },
+  "categories": ["Other", "AI"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "goblintown.summon",
+        "title": "Goblintown: Summon Creature on Selection"
+      },
+      {
+        "command": "goblintown.quest",
+        "title": "Goblintown: Quest on Selection"
+      },
+      {
+        "command": "goblintown.rite",
+        "title": "Goblintown: Rite on Active File"
+      },
+      {
+        "command": "goblintown.openHoard",
+        "title": "Goblintown: Open Hoard (web UI)"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "goblintown.summon", "group": "goblintown@1", "when": "editorHasSelection" },
+        { "command": "goblintown.quest", "group": "goblintown@2", "when": "editorHasSelection" }
+      ]
+    },
+    "configuration": {
+      "title": "Goblintown",
+      "properties": {
+        "goblintown.cliPath": {
+          "type": "string",
+          "default": "goblintown",
+          "description": "Path to the goblintown CLI binary (or just 'goblintown' if on PATH)."
+        },
+        "goblintown.packSize": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 9,
+          "description": "Number of goblins per quest / rite."
+        },
+        "goblintown.personality": {
+          "type": "string",
+          "enum": ["nerdy", "cynical", "chipper", "stoic", "feral"],
+          "default": "nerdy"
+        },
+        "goblintown.serverPort": {
+          "type": "integer",
+          "default": 7777,
+          "description": "Port that 'goblintown serve' is expected to be running on for Open Hoard."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -p . -w",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/vscode": "^1.86.0",
+    "typescript": "^5.6.0"
+  }
+}
