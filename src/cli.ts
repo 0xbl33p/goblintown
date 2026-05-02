@@ -7,6 +7,7 @@ try {
 
 import { writeFile } from "node:fs/promises";
 import { auditRite } from "./audit.js";
+import { printBanner } from "./banners.js";
 import { compareRites } from "./compare.js";
 import { makeCreature } from "./creatures.js";
 import { measureDrift } from "./drift.js";
@@ -167,6 +168,8 @@ async function cmdSummon(args: string[]): Promise<void> {
   }
   const personality = flags.personality as Personality | undefined;
   const creature = makeCreature(kind, personality);
+
+  printBanner(kind);
 
   const { text, usage } = await callCreatureStream(creature, task, (chunk) => {
     process.stdout.write(chunk);
