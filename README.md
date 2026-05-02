@@ -122,8 +122,8 @@ goblintown outbox
 
 ## Models
 
-Defaults: Goblin / Gremlin / Raccoon / Troll / Pigeon on `gpt-5-mini`,
-Ogre on `gpt-5`. Override per creature with environment variables:
+Defaults: Goblin / Gremlin / Raccoon / Troll / Pigeon on `gpt-5.4-mini`,
+Ogre on `gpt-5.5`. Override per creature with environment variables:
 
 - `GOBLINTOWN_MODEL_GOBLIN`
 - `GOBLINTOWN_MODEL_GREMLIN`

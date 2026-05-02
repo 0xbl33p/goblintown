@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { makeGoblin } from "./creatures.js";
 import { measureDrift } from "./drift.js";
 import { callCreature } from "./openai-client.js";
+import { packVariant } from "./pack-prompt.js";
 import { shinies } from "./reward.js";
 import { trollReview } from "./troll-review.js";
 import type { Loot, Personality, Quest } from "./types.js";
@@ -22,9 +23,7 @@ export interface DispatchResult {
   winner: Loot;
 }
 
-export async function dispatchQuest(
-  opts: DispatchOptions,
-): Promise<DispatchResult> {
+export async function dispatchQuest(opts: DispatchOptions): Promise<DispatchResult> {
   const personality: Personality = opts.personality ?? "nerdy";
   const questId = randomUUID().slice(0, 8);
   const quest: Quest = {
@@ -37,14 +36,10 @@ export async function dispatchQuest(
     startedAt: Date.now(),
   };
 
-  const baseGoblin = makeGoblin(personality);
+  const goblin = makeGoblin(personality);
   const goblinJobs = Array.from({ length: opts.packSize }, async (_, i) => {
-    const tempStep = (i - (opts.packSize - 1) / 2) * 0.1;
-    const goblin = {
-      ...baseGoblin,
-      temperature: clampTemp(baseGoblin.temperature + tempStep),
-    };
-    const { text: output, usage } = await callCreature(goblin, opts.task);
+    const variantPrompt = packVariant(opts.task, i, opts.packSize);
+    const { text: output, usage } = await callCreature(goblin, variantPrompt);
     const drift = measureDrift(output);
     const loot: Loot = {
       id: "",
@@ -52,7 +47,7 @@ export async function dispatchQuest(
       creatureKind: "goblin",
       personality: goblin.personality,
       model: goblin.model,
-      prompt: opts.task,
+      prompt: variantPrompt,
       output,
       timestamp: Date.now(),
       drift,
@@ -85,8 +80,4 @@ export async function dispatchQuest(
   await opts.hoard.stashQuest(quest);
 
   return { quest, loot, winner };
-}
-
-function clampTemp(n: number): number {
-  return Math.max(0, Math.min(1.6, n));
 }

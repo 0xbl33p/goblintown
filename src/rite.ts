@@ -6,6 +6,7 @@ import { callCreature } from "./openai-client.js";
 import { shinies } from "./reward.js";
 import { scavenge } from "./scavenge.js";
 import { chaosPass } from "./chaos.js";
+import { packVariant } from "./pack-prompt.js";
 import { trollReview } from "./troll-review.js";
 import { ogreFallback } from "./fallback.js";
 import type {
@@ -119,18 +120,14 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
     onStep({ kind: "rite:done", outcome: rite.outcome });
     throw new BudgetExceededError(budget.used, opts.budgetTokens ?? 0);
   }
-  const baseGoblin = makeGoblin(personality);
+  const goblin = makeGoblin(personality);
   const taskWithFacts = factsBlock
     ? `${opts.task}\n\nFacts gathered by the Raccoon:\n${factsBlock}`
     : opts.task;
 
   const goblinJobs = Array.from({ length: opts.packSize }, async (_, i) => {
-    const tempStep = (i - (opts.packSize - 1) / 2) * 0.1;
-    const goblin = {
-      ...baseGoblin,
-      temperature: clampTemp(baseGoblin.temperature + tempStep),
-    };
-    const { text: output, usage } = await callCreature(goblin, taskWithFacts, {
+    const variantPrompt = packVariant(taskWithFacts, i, opts.packSize);
+    const { text: output, usage } = await callCreature(goblin, variantPrompt, {
       maxOutputTokens: opts.maxOutputTokensPerCall,
     });
     const drift = measureDrift(output);
@@ -140,7 +137,7 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
       creatureKind: "goblin",
       personality: goblin.personality,
       model: goblin.model,
-      prompt: taskWithFacts,
+      prompt: variantPrompt,
       output,
       parentLootIds: rite.contextLootId ? [rite.contextLootId] : undefined,
       timestamp: Date.now(),
@@ -242,8 +239,4 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
   onStep({ kind: "rite:done", outcome: rite.outcome });
 
   return { rite, winnerLoot, allLoot };
-}
-
-function clampTemp(n: number): number {
-  return Math.max(0, Math.min(1.6, n));
 }

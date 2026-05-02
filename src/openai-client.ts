@@ -24,6 +24,43 @@ export interface CreatureResponse {
   usage: TokenUsage;
 }
 
+// gpt-5 and o-series reasoning models reject `temperature` and use
+// `max_completion_tokens` instead of `max_tokens`.
+function isFixedSamplingModel(model: string): boolean {
+  return /^(gpt-5|o\d)/i.test(model);
+}
+
+interface BaseParams {
+  model: string;
+  messages: Array<{ role: "system" | "user"; content: string }>;
+  temperature?: number;
+  max_tokens?: number;
+  max_completion_tokens?: number;
+}
+
+function buildBaseParams(
+  creature: Creature,
+  userPrompt: string,
+  opts: CallOptions,
+): BaseParams {
+  const fixed = isFixedSamplingModel(creature.model);
+  const params: BaseParams = {
+    model: creature.model,
+    messages: [
+      { role: "system", content: creature.systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+  };
+  if (!fixed && creature.temperature !== undefined) {
+    params.temperature = creature.temperature;
+  }
+  if (opts.maxOutputTokens !== undefined) {
+    if (fixed) params.max_completion_tokens = opts.maxOutputTokens;
+    else params.max_tokens = opts.maxOutputTokens;
+  }
+  return params;
+}
+
 export async function callCreature(
   creature: Creature,
   userPrompt: string,
@@ -33,15 +70,7 @@ export async function callCreature(
   const sem = sharedSemaphore();
   return sem.run(async () => {
     const completion = await client.chat.completions.create(
-      {
-        model: creature.model,
-        temperature: creature.temperature,
-        max_tokens: opts.maxOutputTokens,
-        messages: [
-          { role: "system", content: creature.systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      },
+      buildBaseParams(creature, userPrompt, opts),
       { signal: opts.signal },
     );
     const text = completion.choices[0]?.message?.content;
@@ -71,15 +100,9 @@ export async function callCreatureStream(
   return sem.run(async () => {
     const stream = await client.chat.completions.create(
       {
-        model: creature.model,
-        temperature: creature.temperature,
-        max_tokens: opts.maxOutputTokens,
+        ...buildBaseParams(creature, userPrompt, opts),
         stream: true,
         stream_options: { include_usage: true },
-        messages: [
-          { role: "system", content: creature.systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
       },
       { signal: opts.signal },
     );

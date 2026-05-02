@@ -1,12 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  readFile,
-  readdir,
-  writeFile,
-  access,
-} from "node:fs/promises";
-import { constants as FS } from "node:fs";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { InboxMessage, Loot, OutboxRecord, Quest, Rite } from "./types.js";
 
@@ -39,15 +32,6 @@ export class Hoard {
     await mkdir(this.riteDir, { recursive: true });
     await mkdir(this.inboxDir, { recursive: true });
     await mkdir(this.outboxDir, { recursive: true });
-  }
-
-  async exists(): Promise<boolean> {
-    try {
-      await access(this.dir, FS.F_OK);
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   async stash(loot: Loot): Promise<string> {

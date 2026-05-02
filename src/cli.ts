@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+try {
+  process.loadEnvFile?.();
+} catch {
+  // no .env file — that's fine
+}
+
 import { writeFile } from "node:fs/promises";
 import { auditRite } from "./audit.js";
 import { compareRites } from "./compare.js";
@@ -78,9 +84,9 @@ Usage:
 
 Environment:
   OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare)
-  GOBLINTOWN_MODEL_GOBLIN     default: gpt-5-mini
-  GOBLINTOWN_MODEL_OGRE       default: gpt-5
-  GOBLINTOWN_MODEL_TROLL      default: gpt-5-mini
+  GOBLINTOWN_MODEL_GOBLIN     default: gpt-5.4-mini
+  GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
+  GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini
   GOBLINTOWN_MAX_CONCURRENCY  default: 5 (in-flight OpenAI calls)
   (also: GREMLIN, RACCOON, PIGEON)
 

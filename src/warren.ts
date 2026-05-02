@@ -25,9 +25,9 @@ export async function initWarren(root: string): Promise<Warren> {
     name: pathBasename(root),
     version: 1,
     createdAt: new Date().toISOString(),
-    defaultModelGoblin: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5-mini",
-    defaultModelOgre: process.env.GOBLINTOWN_MODEL_OGRE ?? "gpt-5",
-    defaultModelTroll: process.env.GOBLINTOWN_MODEL_TROLL ?? "gpt-5-mini",
+    defaultModelGoblin: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5.4-mini",
+    defaultModelOgre: process.env.GOBLINTOWN_MODEL_OGRE ?? "gpt-5.5",
+    defaultModelTroll: process.env.GOBLINTOWN_MODEL_TROLL ?? "gpt-5.4-mini",
   };
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
 
