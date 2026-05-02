@@ -242,6 +242,63 @@ Ogre on `gpt-5.5`. Override per creature with environment variables:
 
 `GOBLINTOWN_MAX_CONCURRENCY` (default 5) bounds in-flight OpenAI calls.
 
+## OpenRouter and other providers
+
+Goblintown talks to OpenAI by default, but the underlying client is just the
+`openai` SDK pointed at a base URL. Anything that exposes an OpenAI-compatible
+API works — set `OPENAI_BASE_URL` and use the matching `OPENAI_API_KEY`.
+
+### OpenRouter
+
+```bash
+export OPENAI_API_KEY="sk-or-v1-..."
+export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
+
+# Optional analytics headers shown on https://openrouter.ai/activity
+export OPENROUTER_REFERER="https://github.com/yourname/yourproject"
+export OPENROUTER_TITLE="Goblintown"
+```
+
+The default model names (`gpt-5.4-mini`, `gpt-5.5`) are part of the project's
+lore and **must** be overridden when using a different provider, otherwise
+calls will 404. OpenRouter addresses models as `vendor/model`:
+
+```bash
+export GOBLINTOWN_MODEL_GOBLIN="anthropic/claude-haiku-4.5"
+export GOBLINTOWN_MODEL_GREMLIN="anthropic/claude-haiku-4.5"
+export GOBLINTOWN_MODEL_RACCOON="google/gemini-2.5-flash"
+export GOBLINTOWN_MODEL_TROLL="openai/gpt-4o-mini"
+export GOBLINTOWN_MODEL_OGRE="anthropic/claude-sonnet-4.6"
+export GOBLINTOWN_MODEL_PIGEON="openai/gpt-4o-mini"
+```
+
+This is the main reason to use OpenRouter: each creature can run on a
+different vendor without managing multiple API keys.
+
+### Other OpenAI-compatible endpoints
+
+```bash
+# Groq
+export OPENAI_BASE_URL="https://api.groq.com/openai/v1"
+
+# Together AI
+export OPENAI_BASE_URL="https://api.together.xyz/v1"
+
+# Local Ollama (any non-empty key works)
+export OPENAI_API_KEY="ollama"
+export OPENAI_BASE_URL="http://localhost:11434/v1"
+
+# LM Studio
+export OPENAI_BASE_URL="http://localhost:1234/v1"
+```
+
+### Reasoning models
+
+`gpt-5*`, `o*`, `deepseek-r*`, and any model whose name ends in `-thinking`
+are detected automatically and switched to `max_completion_tokens` with no
+`temperature` parameter. The detection strips an OpenRouter `vendor/` prefix,
+so `openai/o3-mini` is handled the same as `o3-mini`.
+
 ## Reward plugins
 
 Drop a `.goblintown/reward.mjs` in your Warren to override the default scoring:

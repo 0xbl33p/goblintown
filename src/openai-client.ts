@@ -10,7 +10,20 @@ function getClient(): OpenAI {
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set.");
   }
-  _client = new OpenAI({ apiKey, maxRetries: 4 });
+  const baseURL = process.env.OPENAI_BASE_URL;
+  const referer = process.env.OPENROUTER_REFERER;
+  const defaultHeaders = referer
+    ? {
+        "HTTP-Referer": referer,
+        "X-Title": process.env.OPENROUTER_TITLE ?? "Goblintown",
+      }
+    : undefined;
+  _client = new OpenAI({
+    apiKey,
+    baseURL,
+    maxRetries: 4,
+    defaultHeaders,
+  });
   return _client;
 }
 
@@ -25,9 +38,12 @@ export interface CreatureResponse {
 }
 
 // gpt-5 and o-series reasoning models reject `temperature` and use
-// `max_completion_tokens` instead of `max_tokens`.
+// `max_completion_tokens` instead of `max_tokens`. Also covers the same
+// families when accessed through OpenRouter as `openai/gpt-5...` or
+// `openai/o3...`, plus DeepSeek-R and explicit `*-thinking` variants.
 function isFixedSamplingModel(model: string): boolean {
-  return /^(gpt-5|o\d)/i.test(model);
+  const name = model.includes("/") ? model.split("/").slice(-1)[0] : model;
+  return /^(gpt-5|o\d|deepseek-r\d)/i.test(name) || /-thinking$/i.test(name);
 }
 
 interface BaseParams {
