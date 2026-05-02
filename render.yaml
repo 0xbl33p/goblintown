@@ -1,0 +1,22 @@
+# Render.com blueprint for Goblintown.
+# Set OPENAI_API_KEY in the Render dashboard (sync: false keeps it out of git).
+services:
+  - type: web
+    name: goblintown
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 7777
+      - key: GOBLINTOWN_NO_BANNER
+        value: "1"
+      - key: GOBLINTOWN_STORAGE
+        value: sqlite
+      - key: OPENAI_API_KEY
+        sync: false
+    disk:
+      name: goblintown-data
+      mountPath: /data
+      sizeGB: 1

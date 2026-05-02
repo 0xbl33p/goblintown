@@ -1,3 +1,7 @@
+import {
+  GOBLIN_VARIANT_SPECS,
+  type GoblinVariant,
+} from "./goblin-variants.js";
 import type { Creature, CreatureKind, Personality } from "./types.js";
 
 const PERSONALITY_TAGLINES: Record<Personality, string> = {
@@ -12,16 +16,22 @@ function personalityTag(p: Personality): string {
   return `\n\nPersonality: ${p}. ${PERSONALITY_TAGLINES[p]}`;
 }
 
-export function makeGoblin(personality: Personality = "nerdy"): Creature {
+export function makeGoblin(
+  personality: Personality = "nerdy",
+  variant: GoblinVariant = "worker",
+): Creature {
+  const spec = GOBLIN_VARIANT_SPECS[variant];
+  const baseTemp = 0.9;
   return {
     kind: "goblin",
     model: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5.4-mini",
-    temperature: 0.9,
+    temperature: baseTemp * spec.temperatureScale,
     personality,
     systemPrompt:
       `You are a Goblin in the Goblintown protocol. ` +
       `You are a worker dispatched to produce a complete answer to a single task. ` +
       `No preamble, no apology, no meta-commentary. Be specific, dense, and useful.` +
+      spec.promptSuffix +
       personalityTag(personality),
   };
 }

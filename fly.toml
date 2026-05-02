@@ -1,0 +1,32 @@
+# fly.io deploy config for Goblintown.
+# Usage:
+#   fly launch --no-deploy --copy-config
+#   fly secrets set OPENAI_API_KEY=sk-...
+#   fly volumes create goblintown_data --size 1
+#   fly deploy
+app = "goblintown"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "7777"
+  GOBLINTOWN_NO_BANNER = "1"
+  GOBLINTOWN_STORAGE = "sqlite"
+
+[mounts]
+  source = "goblintown_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 7777
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

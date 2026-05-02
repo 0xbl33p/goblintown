@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { makeGoblin } from "./creatures.js";
 import { measureDrift } from "./drift.js";
+import { variantForPackIndex } from "./goblin-variants.js";
 import { callCreature } from "./openai-client.js";
 import { packVariant } from "./pack-prompt.js";
 import { shinies } from "./reward.js";
@@ -38,15 +39,19 @@ export async function dispatchQuest(opts: DispatchOptions): Promise<DispatchResu
 
   const goblin = makeGoblin(personality);
   const goblinJobs = Array.from({ length: opts.packSize }, async (_, i) => {
+    // Variant-per-index decorrelates pack outputs at the prompt-shape level,
+    // on top of the temperature variance and packVariant() approach hints.
+    const variant = variantForPackIndex(i, opts.packSize);
+    const variantGoblin = makeGoblin(personality, variant);
     const variantPrompt = packVariant(opts.task, i, opts.packSize);
-    const { text: output, usage } = await callCreature(goblin, variantPrompt);
+    const { text: output, usage } = await callCreature(variantGoblin, variantPrompt);
     const drift = measureDrift(output);
     const loot: Loot = {
       id: "",
       questId,
       creatureKind: "goblin",
-      personality: goblin.personality,
-      model: goblin.model,
+      personality: variantGoblin.personality,
+      model: variantGoblin.model,
       prompt: variantPrompt,
       output,
       timestamp: Date.now(),

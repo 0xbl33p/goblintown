@@ -1,155 +1,92 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { HoardBackend } from "./hoard-backend.js";
+import { JsonHoardBackend } from "./hoard-json.js";
 import type { InboxMessage, Loot, OutboxRecord, Quest, Rite } from "./types.js";
 
+/**
+ * Hoard is the public storage interface for a Warren. It is backend-agnostic;
+ * a JsonHoardBackend (default) or SqliteHoardBackend may be supplied.
+ *
+ * Loot ids are derived from sha256(model || prompt || output) so the same
+ * (model, prompt, output) triple always produces the same id, regardless of
+ * which backend persists it. That is the property federation / audit / compare
+ * rely on.
+ */
 export class Hoard {
-  constructor(private readonly dir: string) {}
+  private readonly backend: HoardBackend;
+  // Path-style accessors are kept for callers that want the on-disk JSON
+  // layout (external tooling, tests). They reference the conventional dirs
+  // regardless of which backend is wired in.
+  readonly lootDir: string;
+  readonly questDir: string;
+  readonly riteDir: string;
+  readonly inboxDir: string;
+  readonly outboxDir: string;
 
-  get lootDir(): string {
-    return join(this.dir, "loot");
-  }
-
-  get questDir(): string {
-    return join(this.dir, "quests");
-  }
-
-  get riteDir(): string {
-    return join(this.dir, "rites");
-  }
-
-  get inboxDir(): string {
-    return join(this.dir, "inbox");
-  }
-
-  get outboxDir(): string {
-    return join(this.dir, "outbox");
+  constructor(dir: string, backend?: HoardBackend) {
+    this.backend = backend ?? new JsonHoardBackend(dir);
+    this.lootDir = join(dir, "loot");
+    this.questDir = join(dir, "quests");
+    this.riteDir = join(dir, "rites");
+    this.inboxDir = join(dir, "inbox");
+    this.outboxDir = join(dir, "outbox");
   }
 
   async init(): Promise<void> {
-    await mkdir(this.lootDir, { recursive: true });
-    await mkdir(this.questDir, { recursive: true });
-    await mkdir(this.riteDir, { recursive: true });
-    await mkdir(this.inboxDir, { recursive: true });
-    await mkdir(this.outboxDir, { recursive: true });
+    await this.backend.init();
   }
 
   async stash(loot: Loot): Promise<string> {
     const id = contentAddress(loot.model, loot.prompt, loot.output);
     loot.id = id;
-    await writeFile(
-      join(this.lootDir, `${id}.json`),
-      JSON.stringify(loot, null, 2),
-      "utf8",
-    );
+    await this.backend.putLoot(loot);
     return id;
   }
 
   async stashQuest(quest: Quest): Promise<void> {
-    await writeFile(
-      join(this.questDir, `${quest.id}.json`),
-      JSON.stringify(quest, null, 2),
-      "utf8",
-    );
+    await this.backend.putQuest(quest);
   }
 
   async getLoot(id: string): Promise<Loot | null> {
-    try {
-      const raw = await readFile(join(this.lootDir, `${id}.json`), "utf8");
-      return JSON.parse(raw) as Loot;
-    } catch {
-      return null;
-    }
+    return this.backend.getLoot(id);
   }
 
   async allLoot(): Promise<Loot[]> {
-    let entries: string[];
-    try {
-      entries = await readdir(this.lootDir);
-    } catch {
-      return [];
-    }
-    const out: Loot[] = [];
-    for (const name of entries) {
-      if (!name.endsWith(".json")) continue;
-      try {
-        const raw = await readFile(join(this.lootDir, name), "utf8");
-        out.push(JSON.parse(raw) as Loot);
-      } catch {
-        // skip malformed
-      }
-    }
-    return out;
+    return this.backend.allLoot();
   }
 
   async allQuests(): Promise<Quest[]> {
-    return readJsonDir<Quest>(this.questDir);
+    return this.backend.allQuests();
   }
 
   async stashRite(rite: Rite): Promise<void> {
-    await writeFile(
-      join(this.riteDir, `${rite.id}.json`),
-      JSON.stringify(rite, null, 2),
-      "utf8",
-    );
+    await this.backend.putRite(rite);
   }
 
   async getRite(id: string): Promise<Rite | null> {
-    try {
-      const raw = await readFile(join(this.riteDir, `${id}.json`), "utf8");
-      return JSON.parse(raw) as Rite;
-    } catch {
-      return null;
-    }
+    return this.backend.getRite(id);
   }
 
   async allRites(): Promise<Rite[]> {
-    return readJsonDir<Rite>(this.riteDir);
+    return this.backend.allRites();
   }
 
   async stashInbox(msg: InboxMessage): Promise<void> {
-    await writeFile(
-      join(this.inboxDir, `${msg.id}.json`),
-      JSON.stringify(msg, null, 2),
-      "utf8",
-    );
+    await this.backend.putInbox(msg);
   }
 
   async allInbox(): Promise<InboxMessage[]> {
-    return readJsonDir<InboxMessage>(this.inboxDir);
+    return this.backend.allInbox();
   }
 
   async stashOutbox(rec: OutboxRecord): Promise<void> {
-    await writeFile(
-      join(this.outboxDir, `${rec.id}.json`),
-      JSON.stringify(rec, null, 2),
-      "utf8",
-    );
+    await this.backend.putOutbox(rec);
   }
 
   async allOutbox(): Promise<OutboxRecord[]> {
-    return readJsonDir<OutboxRecord>(this.outboxDir);
+    return this.backend.allOutbox();
   }
-}
-
-async function readJsonDir<T>(dir: string): Promise<T[]> {
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return [];
-  }
-  const out: T[] = [];
-  for (const name of entries) {
-    if (!name.endsWith(".json")) continue;
-    try {
-      const raw = await readFile(join(dir, name), "utf8");
-      out.push(JSON.parse(raw) as T);
-    } catch {
-      // skip malformed entries
-    }
-  }
-  return out;
 }
 
 function contentAddress(model: string, prompt: string, output: string): string {
