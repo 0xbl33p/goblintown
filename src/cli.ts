@@ -19,10 +19,13 @@ import { dispatchQuest } from "./quest.js";
 import { reroll } from "./reroll.js";
 import { performRite, type RiteStep } from "./rite.js";
 import { loadRewardPlugin } from "./reward-plugin.js";
+import { ensureRunDir, loadAllRuns, loadRun } from "./run-store.js";
 import { previewScan, scavenge } from "./scavenge.js";
 import { serve } from "./server.js";
+import { exportRunAsMasTrace } from "./trace-export.js";
 import {
   CREATURE_KINDS,
+  type Artifact,
   type CreatureKind,
   type Loot,
   type Personality,
@@ -47,7 +50,35 @@ Usage:
 
   goblintown rite "<task>" [--pack <N>] [--scan <glob>]... [--personality <p>] [--no-fallback]
                           [--budget <tokens>] [--max-output <tokens>]
-      Full ceremony: Raccoon → Goblin pack → Gremlin chaos → Troll review → Ogre fallback.
+                          [--cite <riteId>]... [--remember]
+                          [--no-specialist] [--specialist-cap <N>] [--debate]
+      Full ceremony: Raccoon → Goblin pack → [Debate round] → Gremlin chaos →
+                    Troll review → [Specialist re-rite on failure] →
+                    Ogre fallback → Scribe.
+      --cite <riteId>:    load that rite's Artifact as prior context.
+      --remember:         auto-load up to 3 most-relevant prior Artifacts.
+      --no-specialist:    skip the specialist recovery layer (go straight to Ogre).
+      --specialist-cap N: max specialist goblins to spawn (default 3).
+      --debate:           run an inter-agent debate round after the pack proposes.
+      --troll-tools:      enable verifier tool-use during troll review (json/regex/http.head).
+
+  goblintown ancestry <riteId>
+      Print the artifact lineage for a rite (parents → this → children).
+
+  goblintown plan "<task>" [--max-nodes <N>] [--max-replan <N>] [--budget <tokens>]
+                          [--cite <riteId>]... [--remember]
+      Use the Planner to decompose the task into a DAG of sub-rites and
+      execute them in order (Phase 3). Each sub-rite produces its own artifact;
+      dependent sub-rites consume them. On a node failure the planner is
+      re-invoked (recursive replan, max depth 2 by default).
+
+  goblintown export-trace <runId> [--out <path.json>]
+      Export a run as an LLM-MAS Orchestration Trace (academic schema —
+      xxzcc/awesome-llm-mas-rl).
+
+  goblintown fold [--threshold <N>] [--min-overlap <K>] [--max-cluster <S>] [--min-age-days <D>]
+      Phase 6: fold related older artifacts into higher-level summary
+      artifacts (Pigeon-Scribe). Defaults: threshold=30, overlap=2, max=6, age=7d.
 
   goblintown reroll <riteId> [--no-fallback] [--budget <tokens>]
       Re-run an existing rite with identical task / pack / personality / scan.
@@ -84,11 +115,15 @@ Usage:
       Start the Hoard web UI. Default port=7777.
 
 Environment:
-  OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare)
+  OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare / ancestry)
+  OPENAI_BASE_URL             optional; e.g. https://openrouter.ai/api/v1
   GOBLINTOWN_MODEL_GOBLIN     default: gpt-5.4-mini
   GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
   GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini
-  GOBLINTOWN_MAX_CONCURRENCY  default: 5 (in-flight OpenAI calls)
+  GOBLINTOWN_MODEL_SCRIBE     default: gpt-5.4-mini  (Pigeon-as-Scribe artifact distillation)
+  GOBLINTOWN_EMBEDDING_MODEL  default: text-embedding-3-small  (artifact retrieval, Phase 6)
+  GOBLINTOWN_TOOLS_HTTP       set to 1 to enable http.head verifier tool (default disabled)
+  GOBLINTOWN_MAX_CONCURRENCY  default: 5 (in-flight API calls)
   (also: GREMLIN, RACCOON, PIGEON)
 
 "OpenAI tried to put the goblins back in the box. We built the box for them."
@@ -136,6 +171,14 @@ async function main(): Promise<void> {
       return cmdOutbox();
     case "serve":
       return cmdServe(argv.slice(1));
+    case "ancestry":
+      return cmdAncestry(argv.slice(1));
+    case "export-trace":
+      return cmdExportTrace(argv.slice(1));
+    case "plan":
+      return cmdPlan(argv.slice(1));
+    case "fold":
+      return cmdFold(argv.slice(1));
     default:
       process.stderr.write(`Unknown command: ${cmd}\n\n${HELP}`);
       process.exitCode = 1;
@@ -292,16 +335,24 @@ async function cmdRite(args: string[]): Promise<void> {
   const task = positional[0];
   if (!task) {
     process.stderr.write(
-      `usage: goblintown rite "<task>" [--pack <N>] [--scan <glob>]... [--personality <p>] [--no-fallback] [--budget <tokens>] [--max-output <tokens>]\n`,
+      `usage: goblintown rite "<task>" [--pack <N>] [--scan <glob>]... [--personality <p>] [--no-fallback] [--budget <tokens>] [--max-output <tokens>] [--cite <riteId>]... [--remember]\n`,
     );
     process.exitCode = 1;
     return;
   }
   const flags = parseFlags(args);
   const scanGlobs = collectFlag(args, "scan");
+  const cites = collectFlag(args, "cite");
+  const remember = flags.remember === "true";
   const packSize = flags.pack ? Number(flags.pack) : 3;
   const personality = flags.personality as Personality | undefined;
   const noFallback = flags["no-fallback"] === "true";
+  const noSpecialist = flags["no-specialist"] === "true";
+  const specialistCap = flags["specialist-cap"]
+    ? Number(flags["specialist-cap"])
+    : undefined;
+  const debate = flags.debate === "true";
+  const trollTools = flags["troll-tools"] === "true";
   const budgetTokens = flags.budget ? Number(flags.budget) : undefined;
   const maxOutputTokensPerCall = flags["max-output"]
     ? Number(flags["max-output"])
@@ -312,6 +363,31 @@ async function cmdRite(args: string[]): Promise<void> {
   if (rewardPlugin.source !== "builtin") {
     process.stdout.write(`(reward plugin: ${rewardPlugin.source})\n`);
   }
+
+  // Phase 1+6 memory: load any --cite'd or --remember'd artifacts.
+  const parentArtifacts: Artifact[] = [];
+  for (const riteId of cites) {
+    const a = await w.hoard.getArtifactByRiteId(riteId);
+    if (a) parentArtifacts.push(a);
+    else process.stderr.write(`(warning: no artifact found for rite ${riteId})\n`);
+  }
+  if (remember) {
+    const all = await w.hoard.allArtifacts();
+    const { findRelevantArtifactsEmbedded } = await import("./embeddings.js");
+    const auto = (await findRelevantArtifactsEmbedded({
+      artifacts: all,
+      queryText: task,
+      limit: 3,
+      hoard: w.hoard,
+    })).filter((a) => !parentArtifacts.some((p) => p.id === a.id));
+    parentArtifacts.push(...auto);
+  }
+  if (parentArtifacts.length > 0) {
+    process.stdout.write(
+      `(loaded ${parentArtifacts.length} prior artifact(s): ${parentArtifacts.map((a) => a.id).join(", ")})\n`,
+    );
+  }
+
   process.stdout.write(
     `Beginning rite (pack=${packSize}, scan=${scanGlobs.length} glob(s)` +
       `${budgetTokens ? `, budget=${budgetTokens}` : ""})...\n`,
@@ -327,8 +403,13 @@ async function cmdRite(args: string[]): Promise<void> {
     personality,
     rewardFn: rewardPlugin.fn,
     noFallback,
+    noSpecialist,
+    specialistCap,
+    debate,
+    trollTools,
     budgetTokens,
     maxOutputTokensPerCall,
+    parentArtifacts,
     onStep: (s) => process.stdout.write(formatRiteStep(s) + "\n"),
   });
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
@@ -360,22 +441,52 @@ function formatRiteStep(s: RiteStep): string {
       return `  raccoon scavenging (${s.globs.length} glob(s))...`;
     case "scavenge:done":
       return `  raccoon stashed ${s.lootId} (${s.fileCount} file(s))`;
+    case "artifacts:loaded":
+      return `  raccoon loaded ${s.count} prior artifact(s): ${s.artifactIds.join(", ")}`;
     case "pack:start":
       return `  dispatching pack of ${s.size}...`;
     case "pack:goblin":
-      return `    goblin ${s.index + 1} → ${s.lootId}`;
+      return `    goblin ${s.index + 1}${s.personality ? ` [${s.personality}]` : ""} → ${s.lootId}`;
+    case "debate:start":
+      return `  debate round ${s.round} (size ${s.size})...`;
+    case "debate:goblin":
+      return `    debate goblin ${s.index + 1} → ${s.lootId}`;
+    case "debate:done":
+      return `  debate round ${s.round} done`;
     case "chaos:start":
       return `  gremlins running chaos pass...`;
     case "chaos:done":
       return `    gremlin → ${s.gremlinId} (on goblin ${s.goblinId})`;
     case "review:start":
       return `  troll reviewing...`;
+    case "tool:calls":
+      return `    troll invoking tools: ${s.calls.map((c) => c.name).join(", ")}`;
+    case "tool:results":
+      return `    tool results: ${s.results.map((r) => `${r.name}=${r.ok ? "ok" : "err"}`).join(", ")}`;
     case "review:verdict":
       return `    troll: ${s.verdict.passed ? "PASS" : "FAIL"} score=${s.verdict.score.toFixed(2)} (${s.verdict.lootId})`;
+    case "specialist:cluster:start":
+      return `  pack failed; clustering failure modes...`;
+    case "specialist:cluster:done":
+      return `  identified ${s.clusters.length} cluster(s): ${s.clusters.map((c) => `${c.name}[${c.severity}]`).join(", ")}`;
+    case "specialist:spawn":
+      return `    specialist #${s.index + 1} → focus: "${truncate(s.focus, 80)}"`;
+    case "specialist:done":
+      return `    specialist #${s.index + 1} delivered ${s.lootId}`;
+    case "specialist:verdict":
+      return `    specialist #${s.index + 1} troll: ${s.verdict.passed ? "PASS" : "FAIL"} score=${s.verdict.score.toFixed(2)}`;
     case "fallback:start":
-      return `  pack failed; summoning ogre...`;
+      return `  specialists insufficient; summoning ogre...`;
     case "fallback:done":
       return `  ogre delivered ${s.lootId}`;
+    case "scribe:start":
+      return `  pigeon-scribe writing artifact...`;
+    case "scribe:done":
+      return `  artifact ${s.artifactId} stashed`;
+    case "scribe:error":
+      return `  ⚠ scribe failed: ${s.message}`;
+    case "thinking":
+      return `    [${s.slot}] thinking… ${s.text.length} chars`;
     case "budget:exceeded":
       return `  ⚠ budget exceeded at ${s.phase}: used ${s.used} / cap ${s.cap}`;
     case "rite:done":
@@ -530,6 +641,24 @@ async function cmdAudit(args: string[]): Promise<void> {
   if (report.warnings.length > 0) {
     process.stdout.write(`\nWarnings:\n`);
     for (const w of report.warnings) process.stdout.write(`  ⚠ ${w}\n`);
+  }
+  if (report.artifact) {
+    process.stdout.write(`\nArtifact (Phase 1):\n`);
+    process.stdout.write(`  id:             ${report.artifact.id}\n`);
+    process.stdout.write(`  parents:        ${report.artifact.parentArtifactIds.length}\n`);
+    process.stdout.write(`  children:       ${report.artifactChildren?.length ?? 0}\n`);
+    process.stdout.write(`  claims:         ${report.artifact.claims.length}\n`);
+    process.stdout.write(`  open questions: ${report.artifact.openQuestions.length}\n`);
+    process.stdout.write(`  next steps:     ${report.artifact.nextSteps.length}\n`);
+  } else {
+    process.stdout.write(`\nArtifact (Phase 1): none (scribe failed or skipped)\n`);
+  }
+  if ((r.specialistLootIds?.length ?? 0) > 0) {
+    process.stdout.write(`\nSpecialist recovery (Phase 2): ${r.specialistLootIds!.length} specialist(s)\n`);
+    for (const sid of r.specialistLootIds!) {
+      const v = r.specialistVerdicts?.[sid];
+      process.stdout.write(`  ${sid}  ${v ? `${v.passed ? "PASS" : "FAIL"} score=${v.score.toFixed(2)}` : "(no verdict)"}\n`);
+    }
   }
 }
 
@@ -750,6 +879,209 @@ async function cmdServe(args: string[]): Promise<void> {
   const flags = parseFlags(args);
   const port = flags.port ? Number(flags.port) : 7777;
   await serve({ cwd: process.cwd(), port });
+}
+
+async function cmdPlan(args: string[]): Promise<void> {
+  const positional = args.filter((a) => !a.startsWith("--"));
+  const task = positional[0];
+  if (!task) {
+    process.stderr.write(`usage: goblintown plan "<task>" [--max-nodes N] [--max-replan N] [--budget tokens] [--cite <riteId>]... [--remember]\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const flags = parseFlags(args);
+  const cites = collectFlag(args, "cite");
+  const remember = flags.remember === "true";
+  const maxNodes = flags["max-nodes"] ? Number(flags["max-nodes"]) : 6;
+  const maxReplan = flags["max-replan"] ? Number(flags["max-replan"]) : 2;
+  const budgetTokens = flags.budget ? Number(flags.budget) : undefined;
+  const maxOutputTokensPerCall = flags["max-output"] ? Number(flags["max-output"]) : undefined;
+
+  const w = await loadWarren(process.cwd());
+  const rewardPlugin = await loadRewardPlugin(w.root);
+
+  const { findRelevantArtifacts } = await import("./artifact.js");
+  const parents: Artifact[] = [];
+  for (const r of cites) {
+    const a = await w.hoard.getArtifactByRiteId(r);
+    if (a) parents.push(a);
+  }
+  if (remember) {
+    const all = await w.hoard.allArtifacts();
+    const auto = findRelevantArtifacts(all, task, 3).filter(
+      (a) => !parents.some((p) => p.id === a.id),
+    );
+    parents.push(...auto);
+  }
+  if (parents.length > 0) {
+    process.stdout.write(`(loaded ${parents.length} prior artifact(s))\n`);
+  }
+
+  process.stdout.write(`Planning task...\n`);
+  const { planTask } = await import("./planner.js");
+  const { plan } = await planTask({
+    task,
+    parentArtifacts: parents,
+    maxNodes,
+    maxOutputTokens: maxOutputTokensPerCall,
+  });
+  process.stdout.write(`Plan ${plan.id}: ${plan.nodes.length} node(s)\n`);
+  for (const n of plan.nodes) {
+    const inputs = n.inputs.length > 0 ? ` ← [${n.inputs.join(",")}]` : "";
+    process.stdout.write(`  ${n.id} (${n.kind}, pack=${n.packSize ?? 3}, ${n.personality ?? "?"}): ${truncate(n.task, 80)}${inputs}\n`);
+  }
+  process.stdout.write(`Executing...\n\n`);
+
+  const { executePlan } = await import("./plan-executor.js");
+  const t0 = Date.now();
+  const result = await executePlan({
+    plan,
+    cwd: w.root,
+    hoard: w.hoard,
+    rewardFn: rewardPlugin.fn,
+    budgetTokens,
+    maxOutputTokensPerCall,
+    parentArtifacts: parents,
+    maxReplanDepth: maxReplan,
+    onPlanEvent: (ev) => {
+      if (ev.kind === "plan:node:start") process.stdout.write(`  ▸ node ${ev.nodeId} starting\n`);
+      else if (ev.kind === "plan:node:done") process.stdout.write(`  ✓ node ${ev.nodeId} done — rite=${ev.riteId} outcome=${ev.outcome}${ev.artifactId ? ` artifact=${ev.artifactId}` : ""}\n`);
+      else if (ev.kind === "plan:node:failed") process.stdout.write(`  ✗ node ${ev.nodeId} failed: ${ev.reason}\n`);
+      else if (ev.kind === "plan:replan") process.stdout.write(`  ↻ replanning (depth ${ev.depth}): ${ev.reason}\n`);
+      else if (ev.kind === "plan:done") process.stdout.write(`  ${ev.outcome === "success" ? "✓" : "✗"} plan ${ev.outcome}\n`);
+    },
+    onStep: (nodeId, step) => process.stdout.write(`    [${nodeId}] ${formatRiteStep(step)}\n`),
+  });
+  const dt = ((Date.now() - t0) / 1000).toFixed(1);
+  process.stdout.write(`\nPlan finished in ${dt}s — ${result.outcome}\n`);
+  if (result.finalArtifact) {
+    process.stdout.write(`Final artifact: ${result.finalArtifact.id}\n`);
+  }
+}
+
+async function cmdExportTrace(args: string[]): Promise<void> {
+  const positional = args.filter((a) => !a.startsWith("--"));
+  const idArg = positional[0];
+  if (!idArg) {
+    process.stderr.write(
+      `usage: goblintown export-trace <runId|riteId> [--out <path.json>]\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const flags = parseFlags(args);
+  const w = await loadWarren(process.cwd());
+  const runDir = await ensureRunDir(w.root);
+  let run = await loadRun(runDir, idArg);
+  if (!run) {
+    // Allow lookup by riteId.
+    const all = await loadAllRuns(runDir);
+    run = all.find((r) => r.finalRiteId === idArg) ?? null;
+  }
+  if (!run) {
+    process.stderr.write(`No run or rite found for "${idArg}".\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const trace = exportRunAsMasTrace(run, w.manifest.name);
+  const json = JSON.stringify(trace, null, 2);
+  if (flags.out) {
+    await writeFile(flags.out, json, "utf8");
+    process.stdout.write(`Wrote ${flags.out} (${trace.events.length} events, ${trace.edges.length} edges).\n`);
+  } else {
+    process.stdout.write(json + "\n");
+  }
+}
+
+async function cmdFold(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const threshold = flags.threshold ? Number(flags.threshold) : 30;
+  const minOverlap = flags["min-overlap"] ? Number(flags["min-overlap"]) : 2;
+  const maxCluster = flags["max-cluster"] ? Number(flags["max-cluster"]) : 6;
+  const minAgeDays = flags["min-age-days"] ? Number(flags["min-age-days"]) : 7;
+
+  const w = await loadWarren(process.cwd());
+  const { foldArtifacts } = await import("./fold.js");
+  const { created, foldedInputCount } = await foldArtifacts({
+    hoard: w.hoard,
+    threshold,
+    minOverlap,
+    maxClusterSize: maxCluster,
+    minAgeDays,
+    onProgress: (m) => process.stdout.write(`  ${m}\n`),
+  });
+  process.stdout.write(`Folded ${foldedInputCount} input artifact(s) into ${created.length} summary artifact(s).\n`);
+  for (const a of created) {
+    process.stdout.write(`  ${a.id}  parents=${a.parentArtifactIds.length}  task="${truncate(a.task, 80)}"\n`);
+  }
+}
+
+async function cmdAncestry(args: string[]): Promise<void> {
+  const riteId = args.find((a) => !a.startsWith("--"));
+  if (!riteId) {
+    process.stderr.write(`usage: goblintown ancestry <riteId>\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const w = await loadWarren(process.cwd());
+  const all = await w.hoard.allArtifacts();
+  const root = all.find((a) => a.riteId === riteId || a.id === riteId);
+  if (!root) {
+    process.stderr.write(`No artifact found for rite/id "${riteId}".\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Walk parents
+  const byId = new Map(all.map((a) => [a.id, a] as const));
+  const parents: typeof all = [];
+  const seen = new Set<string>();
+  const queue = [...root.parentArtifactIds];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const a = byId.get(id);
+    if (!a) continue;
+    parents.push(a);
+    queue.push(...a.parentArtifactIds);
+  }
+
+  // Walk children (any artifact citing root in its parents)
+  const children = all.filter((a) => a.parentArtifactIds.includes(root.id));
+
+  const fmt = (a: typeof root): string =>
+    `  ${a.id}  rite=${a.riteId}  outcome=${a.outcome}  task="${truncate(a.task, 70)}"`;
+
+  process.stdout.write(`Ancestry for artifact ${root.id} (rite ${root.riteId}):\n\n`);
+  if (parents.length > 0) {
+    process.stdout.write(`Parents (${parents.length}):\n`);
+    for (const p of parents) process.stdout.write(fmt(p) + "\n");
+  } else {
+    process.stdout.write(`Parents: (none — root rite)\n`);
+  }
+  process.stdout.write(`\nThis:\n${fmt(root)}\n`);
+  if (children.length > 0) {
+    process.stdout.write(`\nChildren (${children.length}):\n`);
+    for (const c of children) process.stdout.write(fmt(c) + "\n");
+  } else {
+    process.stdout.write(`\nChildren: (none yet)\n`);
+  }
+
+  if (root.claims.length > 0) {
+    process.stdout.write(`\nClaims:\n`);
+    for (const c of root.claims) {
+      process.stdout.write(`  - (${c.confidence}) ${c.text}\n`);
+    }
+  }
+  if (root.openQuestions.length > 0) {
+    process.stdout.write(`\nOpen questions:\n`);
+    for (const q of root.openQuestions) process.stdout.write(`  - ${q}\n`);
+  }
+  if (root.nextSteps.length > 0) {
+    process.stdout.write(`\nSuggested next steps:\n`);
+    for (const n of root.nextSteps) process.stdout.write(`  - ${n}\n`);
+  }
 }
 
 function parseFlags(args: string[]): Record<string, string> {

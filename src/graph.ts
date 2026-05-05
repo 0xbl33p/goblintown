@@ -68,6 +68,28 @@ export async function renderRiteGraph(
     );
   }
 
+  // Phase 1+6 artifact lineage block
+  const artifact = await hoard.getArtifactByRiteId(riteId);
+  if (artifact) {
+    lines.push("");
+    lines.push("artifact lineage:");
+    if (artifact.parentArtifactIds.length > 0) {
+      const all = await hoard.allArtifacts();
+      const byId = new Map(all.map((a) => [a.id, a] as const));
+      for (const pid of artifact.parentArtifactIds) {
+        const p = byId.get(pid);
+        if (p) lines.push(`  ⤴ parent ${p.id}  rite=${p.riteId}  task="${truncate(p.task, 60)}"`);
+        else lines.push(`  ⤴ parent ${pid}  (missing)`);
+      }
+    }
+    lines.push(`  ★ this  ${artifact.id}  claims=${artifact.claims.length}  open=${artifact.openQuestions.length}`);
+    const all = await hoard.allArtifacts();
+    const children = all.filter((a) => a.parentArtifactIds.includes(artifact.id));
+    for (const c of children) {
+      lines.push(`  ⤵ child  ${c.id}  rite=${c.riteId}  task="${truncate(c.task, 60)}"`);
+    }
+  }
+
   return lines.join("\n");
 }
 

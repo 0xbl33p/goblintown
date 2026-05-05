@@ -26,6 +26,29 @@ export function makeGoblin(personality: Personality = "nerdy"): Creature {
   };
 }
 
+/**
+ * Specialist Goblin: focused recovery worker spawned when the pack failed
+ * for a specific reason. Lower temperature than a regular goblin — surgical,
+ * not exploratory.
+ */
+export function makeSpecialistGoblin(focus: string, personality: Personality = "stoic"): Creature {
+  return {
+    kind: "goblin",
+    model: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5.4-mini",
+    temperature: 0.5,
+    personality,
+    systemPrompt:
+      `You are a Specialist Goblin in the Goblintown protocol. ` +
+      `The first pack of goblins failed troll review. You are the recovery for one specific failure mode: ${focus}. ` +
+      `You will receive the original task, the best previous attempt as a seed, and the gremlin's critique. ` +
+      `Your priority is fixing your focused issue, but you must produce a COMPLETE answer to the original task. ` +
+      `Take the seed as your starting point. Preserve the parts that are correct. Improve weak parts where you can. ` +
+      `Be ruthless about the focused issue: the seed clearly failed there, so do not just patch superficially. ` +
+      `No preamble, no diff, no commentary. Output the full improved answer only.` +
+      personalityTag(personality),
+  };
+}
+
 export function makeGremlin(personality: Personality = "feral"): Creature {
   return {
     kind: "gremlin",
@@ -99,6 +122,35 @@ export function makePigeon(personality: Personality = "chipper"): Creature {
       `Your job is to compress and route: you receive a long artifact and a target audience. ` +
       `Produce a maximally short carrier-message that preserves the essential facts and instructions for that audience. ` +
       `Output only the compressed message. No commentary.` +
+      personalityTag(personality),
+  };
+}
+
+/**
+ * Pigeon-as-Scribe variant: distills a completed Rite into a structured
+ * Artifact JSON. Cheap model, low temperature, JSON-only output.
+ */
+export function makeScribe(personality: Personality = "stoic"): Creature {
+  return {
+    kind: "pigeon",
+    model: process.env.GOBLINTOWN_MODEL_SCRIBE ?? "gpt-5.4-mini",
+    temperature: 0.2,
+    personality,
+    systemPrompt:
+      `You are a Pigeon in the Goblintown protocol acting as Scribe. ` +
+      `You receive a completed rite — its task, the winning output, the troll's verdict, and the gremlin's critiques — and you distill it into a typed Artifact. ` +
+      `Output a single JSON object and nothing else, matching this schema exactly:\n` +
+      `{\n` +
+      `  "claims": [{ "text": string, "confidence": "established"|"likely"|"speculative", "evidenceIds": number[] }],\n` +
+      `  "evidence": [{ "kind": "loot"|"file"|"url"|"external", "ref": string, "snippet": string }],\n` +
+      `  "openQuestions": string[],\n` +
+      `  "nextSteps": string[],\n` +
+      `  "keywords": string[]\n` +
+      `}\n` +
+      `Rules: claims are concise (one sentence each), grounded in the winning output. ` +
+      `Evidence "ref" is a loot id, file path, or url already mentioned in the inputs — don't fabricate. ` +
+      `Keywords are lowercase single words or short phrases useful for retrieval. ` +
+      `If a list is empty, return []. Output JSON only, no prose, no code fences.` +
       personalityTag(personality),
   };
 }

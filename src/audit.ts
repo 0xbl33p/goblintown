@@ -1,4 +1,4 @@
-import { CREATURE_KINDS, type CreatureKind, type Loot, type Rite } from "./types.js";
+import { CREATURE_KINDS, type Artifact, type CreatureKind, type Loot, type Rite } from "./types.js";
 import type { Hoard } from "./hoard.js";
 
 export interface AuditReport {
@@ -11,6 +11,10 @@ export interface AuditReport {
   highestDrift: { lootId: string; rate: number; kind: CreatureKind } | null;
   longestChain: { length: number; lootIds: string[] };
   warnings: string[];
+  /** Phase 1+ artifact lineage attached to this rite. */
+  artifact?: Artifact | null;
+  /** Other artifacts that cite this one (children). */
+  artifactChildren?: Artifact[];
 }
 
 export interface KindStats {
@@ -87,6 +91,14 @@ export async function auditRite(
     }
   }
 
+  // Phase 6: artifact lineage.
+  const artifact = await hoard.getArtifactByRiteId(riteId);
+  let artifactChildren: Artifact[] = [];
+  if (artifact) {
+    const all = await hoard.allArtifacts();
+    artifactChildren = all.filter((a) => a.parentArtifactIds.includes(artifact.id));
+  }
+
   return {
     rite,
     totalLoot: loot.length,
@@ -97,6 +109,8 @@ export async function auditRite(
     highestDrift,
     longestChain,
     warnings,
+    artifact,
+    artifactChildren,
   };
 }
 
@@ -106,6 +120,7 @@ export function collectRiteLootIds(rite: Rite): string[] {
   for (const id of rite.goblinLootIds) ids.add(id);
   for (const id of Object.values(rite.chaosLootIds)) ids.add(id);
   if (rite.ogreLootId) ids.add(rite.ogreLootId);
+  for (const id of rite.specialistLootIds ?? []) ids.add(id);
   return [...ids];
 }
 

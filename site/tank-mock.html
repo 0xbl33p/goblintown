@@ -1,0 +1,1092 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goblintown — Warren Tank (mock)</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0d1410;
+    --bg-deep: #0a0e08;
+    --fg: #b9d3a8;
+    --fg-bright: #d8efb6;
+    --accent: #8fcf52;
+    --accent-hot: #c2f37a;
+    --muted: #5a7042;
+    --muted-deep: #2e3e22;
+    --muted-deeper: #1c2614;
+    --line: #1f2d18;
+    --line-soft: #14201a;
+    --pass: #b6f37a;
+    --fail: #f3a07a;
+    --warn: #f3df7a;
+    --bubble-bg: #14201a;
+    --bubble-border: #2e4220;
+    --sky: #131c14;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.45 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    background-image:
+      radial-gradient(circle at 20% 0%, rgba(143,207,82,0.05), transparent 40%),
+      radial-gradient(circle at 80% 30%, rgba(143,207,82,0.03), transparent 50%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 1rem;
+  }
+
+  .warren {
+    width: min(1200px, 97vw);
+    height: min(780px, 94vh);
+    background: var(--bg-deep);
+    border: 2px solid var(--line);
+    border-radius: 8px;
+    box-shadow:
+      inset 0 0 80px rgba(0,0,0,0.65),
+      0 0 0 4px var(--bg),
+      0 0 0 5px var(--line);
+    display: grid;
+    grid-template-rows: auto 1fr auto auto;
+    overflow: hidden;
+  }
+
+  .strip {
+    border-bottom: 1px solid var(--line);
+    padding: 0.55rem 1rem;
+    display: flex; gap: 1.4rem; align-items: center;
+    color: var(--muted); font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .strip .name { color: var(--fg-bright); font-weight: 600; }
+  .strip .stat { color: var(--fg); }
+  .strip .stat b { color: var(--accent); font-weight: 600; }
+  .strip .grow { flex: 1; }
+  .strip .clock { color: var(--muted); }
+  .strip .tier { color: var(--warn); }
+
+  .tank {
+    position: relative; overflow: hidden;
+    background: linear-gradient(180deg, var(--sky) 0%, #0c1310 65%, #0a0e08 100%);
+  }
+
+  /* Tier visibility */
+  .t1, .t2, .t3, .t4 { display: none; }
+  .warren[data-tier="1"] .t1 { display: block; }
+  .warren[data-tier="2"] .t1, .warren[data-tier="2"] .t2 { display: block; }
+  .warren[data-tier="3"] .t1, .warren[data-tier="3"] .t2, .warren[data-tier="3"] .t3 { display: block; }
+  .warren[data-tier="4"] .t1, .warren[data-tier="4"] .t2,
+  .warren[data-tier="4"] .t3, .warren[data-tier="4"] .t4 { display: block; }
+  /* Inline-flex variants for skylines */
+  .warren[data-tier="2"] .t2-flex { display: flex; }
+  .warren[data-tier="3"] .t2-flex,
+  .warren[data-tier="3"] .t3-flex { display: flex; }
+  .warren[data-tier="4"] .t2-flex,
+  .warren[data-tier="4"] .t3-flex,
+  .warren[data-tier="4"] .t4-flex { display: flex; }
+  .t2-flex, .t3-flex, .t4-flex { display: none; }
+
+  /* Stars (always) */
+  .star {
+    position: absolute;
+    color: var(--muted-deep);
+    font-size: 0.7rem;
+    opacity: 0.6;
+    animation: twinkle 4s ease-in-out infinite;
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.6; }
+    50%      { opacity: 0.2; }
+  }
+
+  /* Mountains (t4) — emoji */
+  .mountains {
+    position: absolute;
+    top: 4%; left: 0; right: 0;
+    text-align: center;
+    font-size: 3.2rem;
+    line-height: 1;
+    filter: brightness(0.5) saturate(0.4);
+    letter-spacing: -0.4em;
+  }
+
+  /* Skyline rows of buildings */
+  .skyline {
+    position: absolute;
+    left: 0; right: 0;
+    text-align: center;
+    line-height: 1;
+    letter-spacing: 0.2em;
+  }
+  .skyline.back {
+    top: 13%;
+    font-size: 1.7rem;
+    filter: brightness(0.55) saturate(0.6);
+  }
+  .skyline.mid {
+    top: 22%;
+    font-size: 2.5rem;
+    filter: brightness(0.85) saturate(0.85);
+  }
+
+  /* Town banner (t2+) — ASCII, intentionally pixelated */
+  .banner {
+    position: absolute;
+    top: 5%; left: 50%; transform: translateX(-50%);
+    color: var(--warn);
+    font-size: 0.82rem;
+    line-height: 1.05;
+    text-align: center;
+    white-space: pre;
+    letter-spacing: 0.05em;
+    text-shadow: 0 0 6px rgba(243,223,122,0.3);
+  }
+
+  /* Trees flanking village (t3+) */
+  .trees {
+    position: absolute;
+    bottom: 18%;
+    font-size: 2.2rem;
+    line-height: 1;
+    filter: brightness(0.85);
+  }
+  .trees.left { left: 2%; }
+  .trees.right { right: 2%; }
+
+  /* Lanterns (t3+) */
+  .lantern {
+    position: absolute;
+    font-size: 1.4rem;
+    opacity: 0;
+    filter: drop-shadow(0 0 8px rgba(243,223,122,0.6));
+    animation: flicker 2.4s ease-in-out infinite;
+    transition: opacity .5s;
+  }
+  .warren[data-tier="3"] .lantern,
+  .warren[data-tier="4"] .lantern { opacity: 1; }
+  @keyframes flicker {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.6; }
+  }
+
+  /* Smoke wisps from chimneys (t2+) */
+  .smoke {
+    position: absolute;
+    color: var(--muted);
+    font-size: 0.85rem;
+    opacity: 0;
+    line-height: 1;
+    animation: smoke 4s ease-out infinite;
+    pointer-events: none;
+  }
+  .warren[data-tier="2"] .smoke,
+  .warren[data-tier="3"] .smoke,
+  .warren[data-tier="4"] .smoke { opacity: 1; }
+  @keyframes smoke {
+    0%   { opacity: 0; transform: translateY(0) scale(0.9); }
+    25%  { opacity: 0.6; }
+    100% { opacity: 0; transform: translateY(-40px) scale(1.5); }
+  }
+
+  /* Ground street (always) */
+  .ground {
+    position: absolute;
+    left: 0; right: 0;
+    bottom: 5%;
+    height: 4px;
+    background: repeating-linear-gradient(90deg, var(--muted-deep) 0 14px, transparent 14px 22px);
+  }
+  .ground-shadow {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 5%;
+    background: linear-gradient(180deg, transparent 0%, rgba(143,207,82,0.04) 100%);
+  }
+
+  /* Foreground landmarks */
+  .landmark {
+    position: absolute;
+    line-height: 1;
+  }
+  /* Pigeon's wire post */
+  .pigeon-wire {
+    position: absolute;
+    top: 7%; left: 4%;
+    color: var(--muted-deep);
+    font-size: 1.2rem;
+    line-height: 1;
+    white-space: pre;
+  }
+  /* Gremlin's perch */
+  .gremlin-perch {
+    position: absolute;
+    top: 12%; right: 7%;
+    color: var(--muted-deep);
+    font-size: 1.1rem;
+    line-height: 1;
+    white-space: pre;
+  }
+  /* Ogre's cave */
+  .ogre-cave {
+    position: absolute;
+    top: 31%; left: 3%;
+    width: 180px; height: 130px;
+    border: 2px solid var(--muted-deep);
+    border-radius: 90px 90px 0 0;
+    background: radial-gradient(ellipse at 50% 60%, #060906 0%, #0a0e08 80%);
+    box-shadow: inset 0 0 30px rgba(0,0,0,0.9);
+  }
+  .ogre-cave-label {
+    position: absolute; top: 28%; left: 6%;
+    color: var(--muted); font-size: 0.62rem;
+    letter-spacing: 0.15em; text-transform: uppercase;
+  }
+  /* Goblin workshop area */
+  .workshop {
+    position: absolute;
+    bottom: 14%; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 0.2rem;
+    color: var(--muted);
+    font-size: 0.66rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .workshop-fire {
+    font-size: 2.2rem;
+    filter: drop-shadow(0 0 12px rgba(243,160,82,0.5));
+    animation: fire-flicker 0.7s ease-in-out infinite alternate;
+  }
+  @keyframes fire-flicker {
+    from { transform: scale(1); filter: drop-shadow(0 0 12px rgba(243,160,82,0.5)); }
+    to   { transform: scale(1.06); filter: drop-shadow(0 0 18px rgba(243,160,82,0.7)); }
+  }
+  /* Troll bridge */
+  .troll-bridge {
+    position: absolute;
+    bottom: 7%; right: 7%;
+    width: 200px;
+    color: var(--muted-deep);
+    font-size: 0.72rem;
+    line-height: 1.0;
+    white-space: pre;
+    text-align: center;
+  }
+  /* Raccoon dump */
+  .raccoon-dump {
+    position: absolute;
+    bottom: 7%; left: 9%;
+    font-size: 1.6rem;
+    filter: brightness(0.7);
+    line-height: 1;
+  }
+
+  /* Hoard pile (centered) */
+  .hoard {
+    position: absolute;
+    bottom: 22%; left: 50%; transform: translateX(-50%);
+    font-size: 1.6rem;
+    line-height: 1;
+    opacity: 0;
+    filter: drop-shadow(0 0 10px rgba(243,223,122,0.4));
+    transition: opacity .5s;
+    text-align: center;
+    z-index: 2;
+  }
+  .warren[data-tier="2"] .hoard { opacity: 0.7; }
+  .warren[data-tier="3"] .hoard { opacity: 0.9; }
+  .warren[data-tier="4"] .hoard { opacity: 1; }
+
+  /* Creatures — emoji sprites */
+  .creature {
+    position: absolute;
+    font-size: 2.6rem;
+    line-height: 1;
+    z-index: 4;
+    transition: filter .25s, opacity .3s;
+    user-select: none;
+  }
+  .creature .emoji { display: block; line-height: 1; }
+  .creature .label {
+    display: block;
+    margin-top: 0.15rem;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  /* Idle ambient — per-creature randomized */
+  .creature[data-state="idle"] {
+    animation: sway var(--sway-dur, 4s) ease-in-out infinite;
+    animation-delay: var(--sway-delay, 0s);
+  }
+  @keyframes sway {
+    0%, 100% { transform: translate(0, 0); }
+    25%      { transform: translate(var(--sway-x, 2px), 0); }
+    50%      { transform: translate(0, var(--sway-y, -2px)); }
+    75%      { transform: translate(calc(var(--sway-x, 2px) * -1), 0); }
+  }
+
+  /* States via filter (emoji can't be color: tinted) */
+  .creature[data-state="active"]   { filter: drop-shadow(0 0 12px rgba(194,243,122,0.7)) brightness(1.2); }
+  .creature[data-state="pass"]     { filter: drop-shadow(0 0 14px rgba(182,243,122,0.85)) brightness(1.25) saturate(1.2); }
+  .creature[data-state="fail"]     { filter: drop-shadow(0 0 14px rgba(243,160,122,0.85)) hue-rotate(-30deg) brightness(0.95); }
+  .creature[data-state="winner"]   { filter: drop-shadow(0 0 18px rgba(243,223,122,0.95)) brightness(1.35) saturate(1.3); }
+  .creature[data-state="cave"]     { filter: brightness(0.45) blur(0.4px); opacity: 0.7; }
+
+  /* Pounce variants (gremlin) */
+  .creature.pounce-a { animation: pounce-a 0.9s ease-in-out 1; }
+  .creature.pounce-b { animation: pounce-b 1.0s cubic-bezier(.4,1.4,.5,1) 1; }
+  .creature.pounce-c { animation: pounce-c 0.85s ease-out 1; }
+  @keyframes pounce-a {
+    0%   { transform: translate(0,0) rotate(0); }
+    35%  { transform: translate(var(--px, -180px), var(--py, 110px)) rotate(-8deg) scale(1.25);
+           filter: drop-shadow(0 0 18px rgba(243,160,122,.95)); }
+    65%  { transform: translate(var(--px, -180px), var(--py, 110px)) rotate(0) scale(1.05); }
+    100% { transform: translate(0,0) rotate(0); }
+  }
+  @keyframes pounce-b {
+    0%   { transform: translate(0,0) scale(1); }
+    25%  { transform: translate(0, -25px) scale(1.1); }
+    55%  { transform: translate(var(--px, -200px), var(--py, 90px)) scale(1.3) rotate(15deg);
+           filter: drop-shadow(0 0 20px rgba(243,160,122,.95)); }
+    80%  { transform: translate(var(--px, -200px), var(--py, 90px)) scale(1) rotate(0); }
+    100% { transform: translate(0,0) scale(1); }
+  }
+  @keyframes pounce-c {
+    0%   { transform: translate(0,0); }
+    30%  { transform: translate(var(--px, -160px), var(--py, 130px)) scale(1.4) rotate(-20deg);
+           filter: drop-shadow(0 0 22px rgba(243,160,122,1)); }
+    50%  { transform: translate(var(--px, -160px), var(--py, 130px)) scale(1.05); }
+    70%  { transform: translate(calc(var(--px, -160px) * 0.4), calc(var(--py, 130px) * 0.4)); }
+    100% { transform: translate(0,0); }
+  }
+
+  /* Stomp variants (ogre) */
+  .creature.stomp-a { animation: stomp-a 1.3s ease-out 1; }
+  .creature.stomp-b { animation: stomp-b 1.5s ease-out 1; }
+  @keyframes stomp-a {
+    0%   { opacity: 0.45; transform: translateX(140px); filter: brightness(0.8); }
+    30%  { opacity: 1;    transform: translateX(50px); filter: brightness(1.1); }
+    45%  { transform: translateX(0) translateY(0); }
+    55%  { transform: translateX(0) translateY(-9px); }
+    65%  { transform: translateX(0) translateY(0); }
+    100% { transform: translateX(0); opacity: 1; filter: drop-shadow(0 0 10px rgba(194,243,122,0.6)); }
+  }
+  @keyframes stomp-b {
+    0%   { opacity: 0.45; transform: translateX(170px) translateY(-12px); filter: brightness(0.8); }
+    25%  { opacity: 1;    transform: translateX(70px); }
+    40%  { transform: translateX(20px) translateY(-3px); }
+    50%  { transform: translateX(0) translateY(3px); }
+    60%  { transform: translateX(0) translateY(-11px); }
+    72%  { transform: translateX(0) translateY(2px); }
+    85%  { transform: translateX(0) translateY(-3px); }
+    100% { transform: translate(0,0); opacity: 1; filter: drop-shadow(0 0 10px rgba(194,243,122,0.6)); }
+  }
+
+  /* Scurry variants (raccoon) */
+  .creature.scurry-a { animation: scurry-a 1.6s ease-in-out 1; }
+  .creature.scurry-b { animation: scurry-b 1.8s ease-in-out 1; }
+  @keyframes scurry-a {
+    0%   { transform: translate(0,0); }
+    20%  { transform: translate(calc(var(--sx, 220px) * 0.3), calc(var(--sy, -50px) * 0.3)); }
+    40%  { transform: translate(var(--sx, 220px), var(--sy, -50px)); }
+    60%  { transform: translate(var(--sx, 220px), var(--sy, -50px)); }
+    100% { transform: translate(0,0); }
+  }
+  @keyframes scurry-b {
+    0%   { transform: translate(0,0); }
+    15%  { transform: translate(calc(var(--sx, 220px) * 0.2), -8px); }
+    30%  { transform: translate(calc(var(--sx, 220px) * 0.5), calc(var(--sy, -50px) * 0.4)); }
+    50%  { transform: translate(var(--sx, 220px), var(--sy, -50px)); }
+    65%  { transform: translate(var(--sx, 220px), var(--sy, -50px)); }
+    100% { transform: translate(0,0); }
+  }
+
+  /* Gavel variants (troll) */
+  .creature.gavel-a { animation: gavel-a 0.8s ease-in-out 2; }
+  .creature.gavel-b { animation: gavel-b 1.0s ease-in-out 2; }
+  @keyframes gavel-a {
+    0%, 100% { transform: rotate(0); }
+    25%      { transform: rotate(-6deg); }
+    75%      { transform: rotate(6deg); }
+  }
+  @keyframes gavel-b {
+    0%, 100% { transform: rotate(0) translateY(0); }
+    20%      { transform: rotate(-8deg) translateY(-2px); }
+    60%      { transform: rotate(10deg) translateY(0); }
+    80%      { transform: rotate(-3deg); }
+  }
+
+  /* Hop (goblin propose) */
+  .creature.hop { animation: hop 0.55s ease-out 1; }
+  @keyframes hop {
+    0%   { transform: translateY(0); }
+    40%  { transform: translateY(-12px); }
+    70%  { transform: translateY(3px); }
+    100% { transform: translateY(0); }
+  }
+
+  /* Positions */
+  .pos-pigeon  { top: 4%;   left: 4%; }
+  .pos-gremlin { top: 9%;   right: 8%; }
+  .pos-ogre    { top: 35%;  left: 7%; }
+  .pos-goblins { bottom: 17%; left: 50%; transform: translateX(-50%); }
+  .pos-raccoon { bottom: 8%; left: 12%; }
+  .pos-troll   { bottom: 11%; right: 11%; }
+
+  .goblin-pile {
+    display: flex;
+    gap: 1.2rem;
+    align-items: flex-end;
+  }
+  .goblin-pile .creature { position: static; font-size: 2.2rem; }
+  .goblin-pile .badge {
+    align-self: center;
+    margin-left: 0.4rem;
+    padding: 2px 7px;
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    color: var(--accent);
+    font-size: 0.7rem;
+    border-radius: 3px;
+    letter-spacing: 0.06em;
+  }
+  .goblin-wrap { display: flex; flex-direction: column; align-items: center; }
+  .personality {
+    margin-top: 0.15rem;
+    font-size: 0.58rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  /* Speech bubbles */
+  .bubble-layer { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
+  .bubble {
+    position: absolute;
+    max-width: 22ch;
+    padding: 0.45rem 0.65rem;
+    background: var(--bubble-bg);
+    border: 1px solid var(--bubble-border);
+    border-radius: 6px;
+    color: var(--fg-bright);
+    font-size: 0.74rem;
+    line-height: 1.35;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+    opacity: 0;
+    transform: translateY(6px);
+    animation: bubble-in 0.25s ease-out forwards, bubble-out 0.4s ease-in forwards;
+    animation-delay: 0s, 4s;
+  }
+  .bubble.kind-attack { border-color: #5a2a14; color: var(--fail); }
+  .bubble.kind-pass   { border-color: #2a5a14; color: var(--pass); }
+  .bubble.kind-fail   { border-color: #5a2a14; color: var(--fail); }
+  .bubble.kind-win    { border-color: #5a4a14; color: var(--warn); }
+  .bubble::after {
+    content: ""; position: absolute;
+    width: 0; height: 0; border: 6px solid transparent;
+  }
+  .bubble[data-tail="bl"]::after { bottom: -12px; left: 14px; border-top-color: var(--bubble-border); }
+  .bubble[data-tail="br"]::after { bottom: -12px; right: 14px; border-top-color: var(--bubble-border); }
+  .bubble[data-tail="tl"]::after { top: -12px; left: 14px; border-bottom-color: var(--bubble-border); }
+  @keyframes bubble-in  { to { opacity: 1; transform: translateY(0); } }
+  @keyframes bubble-out { to { opacity: 0; transform: translateY(-4px); } }
+
+  .ticker {
+    border-top: 1px solid var(--line);
+    padding: 0.55rem 1rem;
+    color: var(--muted); font-size: 0.82rem;
+    min-height: 2.3rem;
+    display: flex; align-items: center; gap: 0.6rem;
+  }
+  .ticker .dot { color: var(--accent); }
+  .ticker.live { color: var(--fg-bright); }
+  .ticker.live .dot { color: var(--accent-hot); animation: pulse-dot 1s ease-in-out infinite; }
+  @keyframes pulse-dot { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+
+  .controls {
+    border-top: 1px solid var(--line);
+    padding: 0.7rem 1rem;
+    display: flex; gap: 0.6rem;
+    background: var(--bg);
+  }
+  .btn {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    color: var(--fg-bright);
+    font-family: inherit; font-size: 0.85rem;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s, transform .1s;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent-hot); transform: translateY(-1px); }
+  .btn.primary {
+    border-color: var(--accent); background: var(--accent);
+    color: var(--bg); font-weight: 600;
+  }
+  .btn.primary:hover { background: var(--accent-hot); border-color: var(--accent-hot); color: var(--bg); }
+
+  .devpanel {
+    position: fixed; top: 1rem; right: 1rem;
+    background: rgba(10,14,8,0.92);
+    border: 1px solid var(--line);
+    padding: 0.65rem 0.85rem;
+    color: var(--muted); font-size: 0.78rem;
+    display: flex; flex-direction: column; gap: 0.5rem;
+    border-radius: 4px; z-index: 999;
+    min-width: 240px;
+  }
+  .devpanel strong { color: var(--fg-bright); letter-spacing: 0.06em; text-transform: uppercase; font-size: 0.72rem; }
+  .devpanel .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .devpanel button {
+    padding: 4px 9px;
+    background: var(--bg-deep); border: 1px solid var(--line); color: var(--fg);
+    font-family: inherit; cursor: pointer; font-size: 0.78rem;
+  }
+  .devpanel button:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .devpanel label { color: var(--muted); }
+  .devpanel select, .devpanel input[type="number"] {
+    background: var(--bg); border: 1px solid var(--line); color: var(--fg);
+    padding: 2px 5px; font-family: inherit; font-size: 0.78rem;
+  }
+  .devpanel .step-name { color: var(--accent); font-size: 0.72rem; min-width: 12ch; }
+  .devpanel .hint { color: var(--muted); font-size: 0.7rem; line-height: 1.4; }
+</style>
+</head>
+<body>
+
+<div class="warren" id="warren" data-tier="0">
+
+  <div class="strip">
+    <span class="name">WARREN · goblintown</span>
+    <span class="stat"><b id="stat-loot">0</b> loot</span>
+    <span class="stat"><b id="stat-rites">0</b> rites</span>
+    <span class="stat">drift <b id="stat-drift">0.04</b></span>
+    <span class="grow"></span>
+    <span class="tier" id="tier-display">tier 0 · empty plot</span>
+    <span class="clock" id="clock">idle</span>
+  </div>
+
+  <div class="tank" id="tank">
+
+    <!-- STARS (always) -->
+    <span class="star" style="top: 5%;  left: 18%;">✦</span>
+    <span class="star" style="top: 8%;  left: 38%;  animation-delay: -1s;">✦</span>
+    <span class="star" style="top: 4%;  left: 62%;  animation-delay: -2s;">·</span>
+    <span class="star" style="top: 9%;  left: 75%;  animation-delay: -3s;">✦</span>
+    <span class="star" style="top: 6%;  left: 88%;">·</span>
+
+    <!-- MOUNTAINS (t4) — emoji -->
+    <div class="mountains t4">🏔️ 🏔️ 🏔️ 🏔️ 🏔️</div>
+
+    <!-- DISTANT BACK SKYLINE (t3+) -->
+    <div class="skyline back t3">🛖 🛖 🏚️ 🛖 🏚️ 🛖 🏚️ 🛖</div>
+
+    <!-- MAIN MID SKYLINE (grows by tier) -->
+    <div class="skyline mid t1" id="skyline-t1">🛖</div>
+    <div class="skyline mid t2-flex" style="justify-content: center; gap: 1.2rem;">
+      <span>🏚️</span><span>🛖</span><span>🏠</span>
+    </div>
+    <div class="skyline mid t3-flex" style="justify-content: center; gap: 1rem;">
+      <span>🛖</span><span>🏚️</span><span>🛖</span><span>🏠</span><span>🛖</span>
+    </div>
+    <div class="skyline mid t4-flex" style="justify-content: center; gap: 0.9rem;">
+      <span>🏚️</span><span>🛖</span><span>🏚️</span><span>🛖</span><span>🏠</span><span>🛖</span><span>🏚️</span>
+    </div>
+
+    <!-- CHIMNEY SMOKE (t2+) -->
+    <span class="smoke t2" style="top: 19%; left: 47%;">~</span>
+    <span class="smoke t2" style="top: 19%; left: 41%; animation-delay: -1.4s;">~</span>
+    <span class="smoke t2" style="top: 19%; left: 55%; animation-delay: -2.6s;">~</span>
+
+    <!-- TOWN BANNER (t2+) -->
+    <pre class="banner t2">┌──── GOBLINTOWN ────┐
+└── est. 2026 · MIT ─┘</pre>
+
+    <!-- TREES (t3+) -->
+    <div class="trees left t3">🌲🌲</div>
+    <div class="trees right t3">🌲🌲</div>
+
+    <!-- LANTERNS (t3+) -->
+    <span class="lantern" style="top: 36%; left: 26%;">🏮</span>
+    <span class="lantern" style="top: 36%; right: 26%;">🏮</span>
+    <span class="lantern" style="top: 56%; left: 18%; animation-delay: -1s;">🏮</span>
+
+    <!-- GROUND -->
+    <div class="ground"></div>
+    <div class="ground-shadow"></div>
+
+    <!-- LANDMARKS -->
+
+    <!-- Pigeon's wire post -->
+<pre class="pigeon-wire">═══════════════
+        │
+        │</pre>
+
+    <!-- Gremlin's perch -->
+<pre class="gremlin-perch">    │
+    │
+ ───┴───</pre>
+
+    <!-- Ogre's cave (always present) -->
+    <div class="ogre-cave"></div>
+    <div class="ogre-cave-label">ogre's cave</div>
+
+    <!-- Goblin workshop -->
+    <div class="workshop">
+      <div class="workshop-fire">🔥</div>
+      <div>workshop</div>
+    </div>
+
+    <!-- Troll bridge -->
+<pre class="troll-bridge">▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+▐▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▌
+▌                  ▐
+~~~~~~~~~~~~~~~~~~~~</pre>
+
+    <!-- Raccoon dump pile -->
+    <div class="raccoon-dump">🗑️ 📦</div>
+
+    <!-- Hoard pile (centered, scales by tier) -->
+    <div class="hoard" id="hoard"></div>
+
+    <!-- CREATURES (emoji sprites) -->
+
+    <div class="creature pos-pigeon" id="c-pigeon" data-state="idle"
+         style="--sway-dur: 3.6s; --sway-x: 3px; --sway-delay: -0.8s;">
+      <span class="emoji">🐦</span>
+      <span class="label">pigeon</span>
+    </div>
+
+    <div class="creature pos-gremlin" id="c-gremlin" data-state="idle"
+         style="--sway-dur: 3.2s; --sway-x: 4px; --sway-delay: -2.1s;">
+      <span class="emoji">😈</span>
+      <span class="label">gremlin</span>
+    </div>
+
+    <div class="creature pos-ogre" id="c-ogre" data-state="cave"
+         style="--sway-dur: 6s; --sway-x: 1px; font-size: 3rem;">
+      <span class="emoji">👹</span>
+      <span class="label">ogre</span>
+    </div>
+
+    <div class="pos-goblins" id="c-goblins">
+      <div class="goblin-pile" id="goblin-pile"></div>
+    </div>
+
+    <div class="creature pos-raccoon" id="c-raccoon" data-state="idle"
+         style="--sway-dur: 4.4s; --sway-x: 3px; --sway-delay: -1.3s;">
+      <span class="emoji">🦝</span>
+      <span class="label">raccoon</span>
+    </div>
+
+    <div class="creature pos-troll" id="c-troll" data-state="idle"
+         style="--sway-dur: 5.2s; --sway-x: 2px; --sway-delay: -3s; font-size: 2.8rem;">
+      <span class="emoji">🧌</span>
+      <span class="label">troll</span>
+    </div>
+
+    <div class="bubble-layer" id="bubble-layer"></div>
+  </div>
+
+  <div class="ticker" id="ticker">
+    <span class="dot">●</span> <span id="ticker-text">idle — empty plot, awaiting first rite</span>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="btn-rite">▶ NEW RITE</button>
+    <button class="btn" id="btn-hoard">HOARD</button>
+    <button class="btn" id="btn-drift">DRIFT</button>
+  </div>
+</div>
+
+<div class="devpanel">
+  <div class="row"><strong>mock controls</strong></div>
+  <div class="row">
+    <label>pack <input id="dev-pack" type="number" value="3" min="1" max="6" style="width:3rem"></label>
+    <label>verdict
+      <select id="dev-verdict">
+        <option value="pass">pass</option>
+        <option value="fail">fail → ogre</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <button id="dev-play">▶ play</button>
+    <button id="dev-step">step</button>
+    <button id="dev-reset">soft reset</button>
+  </div>
+  <div class="row">
+    <button id="dev-clear">clear town</button>
+    <button id="dev-jump-tier">+ tier</button>
+  </div>
+  <div class="row">
+    <span>step:</span> <span class="step-name" id="dev-step-name">—</span>
+  </div>
+  <div class="hint">▶ NEW RITE plays the same timeline.<br>each played rite grows the town.</div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const tank = $("tank");
+const ticker = $("ticker");
+const tickerText = $("ticker-text");
+const goblinPile = $("goblin-pile");
+const bubbleLayer = $("bubble-layer");
+const warren = $("warren");
+
+const rand  = (lo, hi) => lo + Math.random() * (hi - lo);
+const irand = (lo, hi) => Math.floor(rand(lo, hi + 1));
+const pick  = (arr)    => arr[Math.floor(Math.random() * arr.length)];
+
+/* Town progression (persistent) */
+const STORAGE_KEY = "goblintown.tank.mock.v3";
+function loadTown() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {loot:0,rites:0}; }
+  catch { return {loot:0,rites:0}; }
+}
+function saveTown(s) { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }
+let town = loadTown();
+function tierOf(rites) {
+  if (rites >= 12) return 4;
+  if (rites >= 6)  return 3;
+  if (rites >= 2)  return 2;
+  if (rites >= 1)  return 1;
+  return 0;
+}
+const tierName = ["empty plot","settlement","camp","village","town"];
+function applyTown() {
+  const t = tierOf(town.rites);
+  warren.dataset.tier = t;
+  $("stat-loot").textContent = town.loot;
+  $("stat-rites").textContent = town.rites;
+  $("tier-display").textContent = `tier ${t} · ${tierName[t]}`;
+  // Hoard grows by tier
+  const piles = ["", "💰", "💰💰", "💰💰💰", "💰💰💰💰💎"];
+  $("hoard").textContent = piles[t] || "";
+}
+applyTown();
+
+/* Personalities */
+const PERSONALITIES = ["nerdy","cynical","chipper","stoic","feral"];
+function pickPersonalities(n) {
+  const pool = [...PERSONALITIES];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(pool[i % pool.length]);
+  return out;
+}
+const GOBLIN_LINES = {
+  nerdy:    ["regex /^\\d+$/ — but only ASCII", "use Array.flat({depth:Infinity})", "O(n log n) via heap", "memoize the recursion", "monad it."],
+  cynical:  ["nested loop, O(n²), whatever", "ship it, who reads errors", "this won't survive prod", "fine. it works on my machine.", "good enough for q4"],
+  chipper:  ["oh! how about Map.groupBy?!", "easy! just .reduce it!", "we can do it together :)", "i love this problem!", "✨ functional ✨"],
+  stoic:    ["one pass. no allocation.", "return early on empty.", "pure function. no side effects.", "minimal is correct.", "no exceptions thrown."],
+  feral:    ["BITE THE STRING", "RAW LOOP GO BRRRR", "smash all the bytes!!", "GRRR sort.descending", "EAT THE ARRAY"],
+};
+const GREMLIN_ATTACKS = [
+  "what if input is null?",
+  "fails on empty array",
+  "OOMs at 10k rows",
+  "off-by-one on the last index",
+  "this throws on unicode",
+  "race condition on retry",
+  "leaks file handles",
+  "no timeout — hangs forever",
+];
+const TROLL_PASS = [
+  "passes spec. shipping.",
+  "edge cases handled. PASS.",
+  "approved · 0.87 shinies",
+  "acceptable. for once.",
+];
+const TROLL_FAIL = [
+  "rejected: missing edge case",
+  "all FAIL — escalating to ogre",
+  "the pack has failed me",
+  "0/3 acceptable. summon the ogre.",
+];
+const OGRE_LINES = [
+  "synthesizing from 3 attempts...",
+  "merging best parts: lines 4-7 + 12-15",
+  "this is what you should have written.",
+  "fine. i'll fix it myself.",
+];
+
+/* Bubbles */
+const MAX_BUBBLES = 3;
+const activeBubbles = [];
+function dispatchBubble(creatureEl, text, kind = "say", lifetime = 4400) {
+  const tankRect = tank.getBoundingClientRect();
+  const cRect = creatureEl.getBoundingClientRect();
+  const cx = cRect.left - tankRect.left + cRect.width / 2;
+  const cy = cRect.top  - tankRect.top;
+  const onLeft = cx < tankRect.width / 2;
+
+  const b = document.createElement("div");
+  b.className = "bubble kind-" + kind;
+  b.textContent = text;
+  bubbleLayer.appendChild(b);
+
+  const bw = 200;
+  let left = onLeft ? cx + 14 : cx - bw + 14;
+  left = Math.max(8, Math.min(tankRect.width - bw - 8, left));
+  let top = cy - 56;
+  if (top < 8) top = cy + cRect.height + 12;
+  b.style.left = left + "px";
+  b.style.top = top + "px";
+  b.dataset.tail = (top < cy) ? (onLeft ? "bl" : "br") : "tl";
+
+  activeBubbles.push(b);
+  if (activeBubbles.length > MAX_BUBBLES) {
+    const old = activeBubbles.shift();
+    old.style.animation = "bubble-out 0.3s ease-in forwards";
+    setTimeout(() => old.remove(), 350);
+  }
+  setTimeout(() => { b.remove(); const i = activeBubbles.indexOf(b); if (i >= 0) activeBubbles.splice(i, 1); }, lifetime + 400);
+}
+
+function setState(id, state) { $(id).dataset.state = state; }
+function playVariantAnim(id, variants, ms, varsObj = {}) {
+  const el = $(id);
+  variants.forEach(v => el.classList.remove(v));
+  Object.entries(varsObj).forEach(([k, v]) => el.style.setProperty(k, v));
+  void el.offsetWidth;
+  const chosen = pick(variants);
+  el.classList.add(chosen);
+  setTimeout(() => el.classList.remove(chosen), ms);
+}
+function pounceVariant() {
+  const px = -irand(150, 230);
+  const py =  irand(80, 140);
+  playVariantAnim("c-gremlin", ["pounce-a","pounce-b","pounce-c"], 1100, { "--px": px+"px", "--py": py+"px" });
+}
+function stompVariant() {
+  playVariantAnim("c-ogre", ["stomp-a","stomp-b"], 1500);
+}
+function scurryVariant() {
+  const sx = irand(180, 260);
+  const sy = -irand(40, 80);
+  playVariantAnim("c-raccoon", ["scurry-a","scurry-b"], 1800, { "--sx": sx+"px", "--sy": sy+"px" });
+}
+function gavelVariant() {
+  playVariantAnim("c-troll", ["gavel-a","gavel-b"], 1600);
+}
+function hopGoblin(goblinEl) {
+  goblinEl.classList.remove("hop");
+  void goblinEl.offsetWidth;
+  goblinEl.classList.add("hop");
+  setTimeout(() => goblinEl.classList.remove("hop"), 700);
+}
+
+function setTicker(text, live=false) {
+  tickerText.textContent = text;
+  ticker.classList.toggle("live", live);
+}
+
+let goblinEls = [];
+function renderGoblins(n) {
+  goblinPile.innerHTML = "";
+  goblinEls = [];
+  const visible = Math.min(n, 3);
+  const personalities = pickPersonalities(visible);
+  for (let i = 0; i < visible; i++) {
+    const wrap = document.createElement("div");
+    wrap.className = "goblin-wrap";
+    const div = document.createElement("div");
+    div.className = "creature goblin";
+    div.dataset.state = "idle";
+    div.style.setProperty("--sway-dur", (3 + Math.random() * 2.5).toFixed(2) + "s");
+    div.style.setProperty("--sway-x", irand(2,4) + "px");
+    div.style.setProperty("--sway-delay", (-Math.random() * 3).toFixed(2) + "s");
+    div.innerHTML = `<span class="emoji">👺</span>`;
+    const tag = document.createElement("span");
+    tag.className = "personality";
+    tag.textContent = personalities[i];
+    wrap.appendChild(div);
+    wrap.appendChild(tag);
+    goblinPile.appendChild(wrap);
+    goblinEls.push({ el: div, personality: personalities[i] });
+  }
+  if (n > 3) {
+    const badge = document.createElement("div");
+    badge.className = "badge";
+    badge.textContent = `+${n - 3}`;
+    goblinPile.appendChild(badge);
+  }
+}
+
+function buildTimeline(packSize, verdict) {
+  const fileCount = irand(8, 22);
+  const tokens = (1 + Math.random() * 4).toFixed(1) + "k";
+  const winnerIdx = irand(0, Math.min(packSize, 3) - 1);
+  const goblinDelay = irand(550, 850);
+
+  const steps = [
+    { name: "scavenge:start", at: 0,
+      run: () => {
+        setState("c-raccoon","active");
+        setTicker("raccoon scanning corpus", true);
+        dispatchBubble($("c-raccoon"), `foraging src/**/*.ts ...`);
+      } },
+    { name: "scavenge:done", at: 1500,
+      run: () => {
+        scurryVariant();
+        setTicker("raccoon → goblins · facts handed off", true);
+        dispatchBubble($("c-raccoon"), `scanned ${fileCount} files · ${tokens}t`);
+      } },
+    { name: "pack:start", at: 3000,
+      run: () => {
+        setTicker(`pack of ${packSize} dispatched`, true);
+        goblinEls.forEach(g => g.el.dataset.state = "active");
+      } },
+  ];
+
+  goblinEls.forEach((g, i) => {
+    steps.push({ name: `goblin#${i}:propose`, at: 3400 + i * goblinDelay,
+      run: () => { hopGoblin(g.el); dispatchBubble(g.el, pick(GOBLIN_LINES[g.personality])); } });
+  });
+
+  const chaosAt = 3400 + goblinEls.length * goblinDelay + 600;
+  steps.push(
+    { name: "chaos:start", at: chaosAt,
+      run: () => {
+        setState("c-gremlin","active");
+        pounceVariant();
+        setTicker("gremlin attacking", true);
+        dispatchBubble($("c-gremlin"), pick(GREMLIN_ATTACKS), "attack");
+      } },
+    { name: "chaos:done", at: chaosAt + 1200,
+      run: () => { setState("c-gremlin","idle"); } },
+    { name: "review:start", at: chaosAt + 1600,
+      run: () => {
+        setState("c-troll","active");
+        gavelVariant();
+        setTicker("troll reviewing", true);
+        dispatchBubble($("c-troll"), "weighing the verdict...");
+      } },
+    { name: "review:verdict", at: chaosAt + 3200,
+      run: () => {
+        setState("c-troll", verdict);
+        const line = verdict === "pass" ? pick(TROLL_PASS) : pick(TROLL_FAIL);
+        setTicker(`troll verdict: ${verdict.toUpperCase()}`, true);
+        dispatchBubble($("c-troll"), line, verdict);
+      } },
+  );
+
+  if (verdict === "fail") {
+    steps.push(
+      { name: "fallback:start", at: chaosAt + 4100,
+        run: () => {
+          stompVariant();
+          setState("c-ogre","active");
+          setTicker("ogre fallback", true);
+          dispatchBubble($("c-ogre"), pick(OGRE_LINES));
+        } },
+      { name: "fallback:done", at: chaosAt + 5600,
+        run: () => { setTicker("ogre synthesized result", true); } },
+      { name: "rite:done", at: chaosAt + 6200,
+        run: () => { setTicker(`rite done · OGRE FALLBACK · pack=${packSize}`); completeRite("fallback"); } },
+    );
+  } else {
+    steps.push(
+      { name: "winner:crowned", at: chaosAt + 3900,
+        run: () => {
+          if (goblinEls[winnerIdx]) {
+            goblinEls[winnerIdx].el.dataset.state = "winner";
+            dispatchBubble(goblinEls[winnerIdx].el, `👑 winner · 0.${80 + irand(0,15)} shinies`, "win");
+          }
+        } },
+      { name: "rite:done", at: chaosAt + 4700,
+        run: () => { setTicker(`rite done · PASS · pack=${packSize}`); completeRite("pass"); } },
+    );
+  }
+  return steps;
+}
+
+function completeRite(outcome) {
+  town.rites += 1;
+  town.loot += irand(4, 7);
+  saveTown(town);
+  applyTown();
+  resetSoft(true);
+}
+
+function resetHard() {
+  ["c-raccoon","c-gremlin","c-troll","c-pigeon"].forEach(i => setState(i,"idle"));
+  setState("c-ogre","cave");
+  goblinEls.forEach(g => g.el.dataset.state = "idle");
+  setTicker(town.rites === 0 ? "idle — empty plot, awaiting first rite" : `idle — ${town.rites} rites in this town`);
+  $("dev-step-name").textContent = "—";
+  $("clock").textContent = "idle";
+  bubbleLayer.innerHTML = "";
+  activeBubbles.length = 0;
+}
+function resetSoft(keepWinner=false) {
+  setTimeout(() => {
+    ["c-raccoon","c-gremlin","c-troll","c-pigeon"].forEach(i => setState(i,"idle"));
+    setState("c-ogre","cave");
+    goblinEls.forEach(g => {
+      if (!(keepWinner && g.el.dataset.state === "winner")) g.el.dataset.state = "idle";
+    });
+  }, 2000);
+}
+
+let stepIndex = 0;
+let timeline = [];
+let timeouts = [];
+function clearTimeouts() { timeouts.forEach(clearTimeout); timeouts = []; }
+function loadTimeline() {
+  const pack = +$("dev-pack").value;
+  const verdict = $("dev-verdict").value;
+  renderGoblins(pack);
+  timeline = buildTimeline(pack, verdict);
+  stepIndex = 0;
+}
+
+$("dev-play").onclick = () => {
+  clearTimeouts();
+  resetHard();
+  loadTimeline();
+  $("clock").textContent = "rite running";
+  timeline.forEach(s => {
+    timeouts.push(setTimeout(() => { s.run(); $("dev-step-name").textContent = s.name; }, s.at));
+  });
+};
+$("dev-step").onclick = () => {
+  if (stepIndex === 0) { resetHard(); loadTimeline(); }
+  if (stepIndex >= timeline.length) return;
+  const s = timeline[stepIndex++];
+  s.run();
+  $("dev-step-name").textContent = s.name;
+};
+$("dev-reset").onclick = () => { clearTimeouts(); resetHard(); loadTimeline(); };
+$("dev-clear").onclick = () => {
+  if (confirm("Clear town progression (localStorage)?")) {
+    town = {loot:0,rites:0};
+    saveTown(town);
+    applyTown();
+    resetHard();
+  }
+};
+$("dev-jump-tier").onclick = () => {
+  town.rites = [0,1,2,6,12][Math.min(4, tierOf(town.rites) + 1)];
+  town.loot = town.rites * 5;
+  saveTown(town);
+  applyTown();
+};
+
+$("btn-rite").onclick = () => $("dev-play").click();
+$("btn-hoard").onclick = () => alert("(mock) → /runs");
+$("btn-drift").onclick = () => alert("(mock) → /drift");
+
+renderGoblins(3);
+resetHard();
+</script>
+</body>
+</html>

@@ -91,7 +91,11 @@ export interface Rite {
   trollVerdicts: Record<string, TrollVerdict>;
   ogreLootId?: string;
   winnerLootId?: string;
-  outcome: "winner" | "ogre_fallback" | "all_failed";
+  /** Specialist-recovery loot ids (Phase 2). */
+  specialistLootIds?: string[];
+  /** Verdicts for specialist outputs (keyed by specialist loot id). */
+  specialistVerdicts?: Record<string, TrollVerdict>;
+  outcome: "winner" | "specialist_recovery" | "ogre_fallback" | "all_failed";
   startedAt: number;
   finishedAt?: number;
 }
@@ -114,6 +118,104 @@ export interface OutboxRecord {
   pigeonLootId: string;
   signature: string;
   sentAt: number;
+}
+
+/**
+ * An Artifact is a typed, structured summary of what a Rite established.
+ * Stored separately from raw Loot so that future rites can load just the
+ * distilled findings without re-reading every prompt/output.
+ */
+export interface Artifact {
+  /** Stable id derived from rite id + content hash. */
+  id: string;
+  riteId: string;
+  task: string;
+  outcome: Rite["outcome"];
+  /** Pointer to the winning loot (whose output the artifact distills). */
+  winnerLootId?: string;
+
+  /** Things this rite established. */
+  claims: ArtifactClaim[];
+  /** Pointers to evidence backing the claims. */
+  evidence: ArtifactEvidence[];
+  /** Things the rite identified but didn't resolve. */
+  openQuestions: string[];
+  /** Suggested follow-up rites. */
+  nextSteps: string[];
+
+  /** Other artifacts this rite built on (parent → child memory chain). */
+  parentArtifactIds: string[];
+
+  /** Keywords for v1 retrieval. */
+  keywords: string[];
+  /** Optional embedding for v2 retrieval. */
+  embedding?: number[];
+
+  timestamp: number;
+}
+
+export interface ArtifactClaim {
+  text: string;
+  confidence: "established" | "likely" | "speculative";
+  /** Indexes into Artifact.evidence. */
+  evidenceIds?: number[];
+}
+
+export interface ArtifactEvidence {
+  kind: "loot" | "file" | "url" | "external";
+  ref: string;
+  snippet?: string;
+}
+
+/**
+ * A Plan is a DAG of sub-rites the Planner emits for complex tasks.
+ * Topologically executed; failed nodes can trigger recursive replan.
+ */
+export interface Plan {
+  id: string;
+  rootTask: string;
+  nodes: PlanNode[];
+  edges: PlanEdge[];
+  /** How many times the planner has been re-invoked on this plan (max 2). */
+  replanDepth: number;
+  createdAt: number;
+}
+
+export interface PlanNode {
+  id: string;
+  task: string;
+  /** ids of nodes whose artifacts must be available before this node runs. */
+  inputs: string[];
+  kind: "sub_rite" | "synthesize";
+  /** Suggested pack size from dynamic spawning; defaults to 1 if absent. */
+  packSize?: number;
+  /** Suggested lead personality for the goblin pack on this node. */
+  personality?: Personality;
+  status: "pending" | "running" | "done" | "failed" | "skipped";
+  riteId?: string;
+  artifactId?: string;
+  failureReason?: string;
+}
+
+export interface PlanEdge {
+  from: string;
+  to: string;
+}
+
+/**
+ * Identified failure mode across a pack of failed goblin attempts.
+ * Used to spawn focused Specialist goblins in the recovery layer.
+ */
+export interface FailureCluster {
+  /** Short identifier, e.g. "null-handling". */
+  name: string;
+  /** 1-2 sentence description of what's wrong. */
+  description: string;
+  /** Indexes into the goblin pack that exhibit this failure. */
+  affectedGoblinIndexes: number[];
+  /** Concise instruction for the specialist goblin telling it what to fix. */
+  specialistFocus: string;
+  severity: "high" | "medium" | "low";
 }
 
 export interface WarrenManifest {

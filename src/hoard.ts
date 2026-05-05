@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { InboxMessage, Loot, OutboxRecord, Quest, Rite } from "./types.js";
+import type {
+  Artifact,
+  InboxMessage,
+  Loot,
+  OutboxRecord,
+  Quest,
+  Rite,
+} from "./types.js";
 
 export class Hoard {
   constructor(private readonly dir: string) {}
@@ -26,17 +33,23 @@ export class Hoard {
     return join(this.dir, "outbox");
   }
 
+  get artifactDir(): string {
+    return join(this.dir, "artifacts");
+  }
+
   async init(): Promise<void> {
     await mkdir(this.lootDir, { recursive: true });
     await mkdir(this.questDir, { recursive: true });
     await mkdir(this.riteDir, { recursive: true });
     await mkdir(this.inboxDir, { recursive: true });
     await mkdir(this.outboxDir, { recursive: true });
+    await mkdir(this.artifactDir, { recursive: true });
   }
 
   async stash(loot: Loot): Promise<string> {
     const id = contentAddress(loot.model, loot.prompt, loot.output);
     loot.id = id;
+    await mkdir(this.lootDir, { recursive: true });
     await writeFile(
       join(this.lootDir, `${id}.json`),
       JSON.stringify(loot, null, 2),
@@ -46,6 +59,7 @@ export class Hoard {
   }
 
   async stashQuest(quest: Quest): Promise<void> {
+    await mkdir(this.questDir, { recursive: true });
     await writeFile(
       join(this.questDir, `${quest.id}.json`),
       JSON.stringify(quest, null, 2),
@@ -87,6 +101,7 @@ export class Hoard {
   }
 
   async stashRite(rite: Rite): Promise<void> {
+    await mkdir(this.riteDir, { recursive: true });
     await writeFile(
       join(this.riteDir, `${rite.id}.json`),
       JSON.stringify(rite, null, 2),
@@ -108,6 +123,7 @@ export class Hoard {
   }
 
   async stashInbox(msg: InboxMessage): Promise<void> {
+    await mkdir(this.inboxDir, { recursive: true });
     await writeFile(
       join(this.inboxDir, `${msg.id}.json`),
       JSON.stringify(msg, null, 2),
@@ -120,6 +136,7 @@ export class Hoard {
   }
 
   async stashOutbox(rec: OutboxRecord): Promise<void> {
+    await mkdir(this.outboxDir, { recursive: true });
     await writeFile(
       join(this.outboxDir, `${rec.id}.json`),
       JSON.stringify(rec, null, 2),
@@ -129,6 +146,33 @@ export class Hoard {
 
   async allOutbox(): Promise<OutboxRecord[]> {
     return readJsonDir<OutboxRecord>(this.outboxDir);
+  }
+
+  async stashArtifact(art: Artifact): Promise<void> {
+    await mkdir(this.artifactDir, { recursive: true });
+    await writeFile(
+      join(this.artifactDir, `${art.id}.json`),
+      JSON.stringify(art, null, 2),
+      "utf8",
+    );
+  }
+
+  async getArtifact(id: string): Promise<Artifact | null> {
+    try {
+      const raw = await readFile(join(this.artifactDir, `${id}.json`), "utf8");
+      return JSON.parse(raw) as Artifact;
+    } catch {
+      return null;
+    }
+  }
+
+  async getArtifactByRiteId(riteId: string): Promise<Artifact | null> {
+    const all = await this.allArtifacts();
+    return all.find((a) => a.riteId === riteId) ?? null;
+  }
+
+  async allArtifacts(): Promise<Artifact[]> {
+    return readJsonDir<Artifact>(this.artifactDir);
   }
 }
 

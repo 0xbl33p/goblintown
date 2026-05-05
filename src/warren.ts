@@ -46,6 +46,10 @@ export async function loadWarren(cwd: string): Promise<Warren> {
     await readFile(manifestPath, "utf8"),
   ) as WarrenManifest;
   const hoard = new Hoard(join(root, WARREN_DIRNAME, "hoard"));
+  // Defensive: ensure all hoard subdirs exist (idempotent). Warrens initialized
+  // before later subdirs were added (e.g. .goblintown/hoard/artifacts) get
+  // upgraded transparently here.
+  await hoard.init();
   return { root, manifestPath, manifest, hoard };
 }
 
