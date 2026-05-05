@@ -5,7 +5,8 @@ try {
   // no .env file — that's fine
 }
 
-import { writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { auditRite } from "./audit.js";
 import { printBanner } from "./banners.js";
 import { compareRites } from "./compare.js";
@@ -79,6 +80,16 @@ Usage:
   goblintown fold [--threshold <N>] [--min-overlap <K>] [--max-cluster <S>] [--min-age-days <D>]
       Phase 6: fold related older artifacts into higher-level summary
       artifacts (Pigeon-Scribe). Defaults: threshold=30, overlap=2, max=6, age=7d.
+
+  goblintown reset [--all|--hoard|--artifacts|--runs] [--yes]
+      Reset the town. Default scope (--all) clears the entire hoard
+      (loot, quests, rites, artifacts, inbox, outbox) and the SSE run
+      log; preserves warren.json and reward.mjs. Asks for "RESET"
+      confirmation unless --yes is passed.
+      Narrower scopes:
+        --hoard      everything in .goblintown/hoard/
+        --artifacts  only .goblintown/hoard/artifacts/
+        --runs       only .goblintown/runs/
 
   goblintown reroll <riteId> [--no-fallback] [--budget <tokens>]
       Re-run an existing rite with identical task / pack / personality / scan.
@@ -179,6 +190,8 @@ async function main(): Promise<void> {
       return cmdPlan(argv.slice(1));
     case "fold":
       return cmdFold(argv.slice(1));
+    case "reset":
+      return cmdReset(argv.slice(1));
     default:
       process.stderr.write(`Unknown command: ${cmd}\n\n${HELP}`);
       process.exitCode = 1;
@@ -991,6 +1004,96 @@ async function cmdExportTrace(args: string[]): Promise<void> {
   } else {
     process.stdout.write(json + "\n");
   }
+}
+
+async function cmdReset(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const yes = flags.yes === "true" || flags.y === "true";
+  const onlyArtifacts = flags.artifacts === "true";
+  const onlyRuns = flags.runs === "true";
+  const onlyHoard = flags.hoard === "true";
+  // Default = --all: hoard + runs.
+  const all = flags.all === "true" || (!onlyArtifacts && !onlyRuns && !onlyHoard);
+
+  const w = await loadWarren(process.cwd());
+  const root = w.root;
+  const targets: { label: string; path: string }[] = [];
+  if (all || onlyHoard) {
+    targets.push(
+      { label: "loot",      path: w.hoard.lootDir },
+      { label: "quests",    path: w.hoard.questDir },
+      { label: "rites",     path: w.hoard.riteDir },
+      { label: "artifacts", path: w.hoard.artifactDir },
+      { label: "inbox",     path: w.hoard.inboxDir },
+      { label: "outbox",    path: w.hoard.outboxDir },
+    );
+  }
+  if (onlyArtifacts) {
+    targets.push({ label: "artifacts", path: w.hoard.artifactDir });
+  }
+  if (all || onlyRuns) {
+    targets.push({ label: "runs", path: join(root, ".goblintown", "runs") });
+  }
+
+  // Show what will be deleted.
+  process.stdout.write(`Reset target(s) under ${root}/.goblintown/:\n`);
+  let totalFiles = 0;
+  for (const t of targets) {
+    const n = await countFiles(t.path);
+    totalFiles += n;
+    process.stdout.write(`  ${t.label.padEnd(10)}  ${n} file(s)  (${t.path})\n`);
+  }
+  if (totalFiles === 0) {
+    process.stdout.write(`Nothing to delete.\n`);
+    return;
+  }
+
+  if (!yes) {
+    process.stdout.write(`\nThis will delete ${totalFiles} file(s). warren.json and reward.mjs are preserved.\n`);
+    process.stdout.write(`Type "RESET" to confirm: `);
+    const answer = await readStdinLine();
+    if (answer.trim() !== "RESET") {
+      process.stdout.write(`Aborted.\n`);
+      return;
+    }
+  }
+
+  for (const t of targets) {
+    try {
+      await rm(t.path, { recursive: true, force: true });
+      await mkdir(t.path, { recursive: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`  warning: failed to reset ${t.label}: ${msg}\n`);
+    }
+  }
+  process.stdout.write(`Town reset (${totalFiles} file(s) cleared).\n`);
+}
+
+async function countFiles(dir: string): Promise<number> {
+  try {
+    const entries = await readdir(dir);
+    return entries.filter((e) => e.endsWith(".json")).length;
+  } catch {
+    return 0;
+  }
+}
+
+function readStdinLine(): Promise<string> {
+  return new Promise((resolve) => {
+    let buf = "";
+    const onData = (chunk: Buffer | string): void => {
+      buf += chunk.toString();
+      const nl = buf.indexOf("\n");
+      if (nl >= 0) {
+        process.stdin.off("data", onData);
+        process.stdin.pause();
+        resolve(buf.slice(0, nl));
+      }
+    };
+    process.stdin.resume();
+    process.stdin.on("data", onData);
+  });
 }
 
 async function cmdFold(args: string[]): Promise<void> {
