@@ -348,6 +348,18 @@ The menu is intentionally an OpenAI-compatible routing layer, not a new
 orchestration engine. Changing providers changes model behavior and quality, but
 the Rite pipeline itself remains the same.
 
+### Local runtime notes (LM Studio/Ollama)
+
+- Local providers are usually less stable at high parallelism than hosted APIs.
+  If you see backend crashes or hangs, lower concurrency:
+  `export GOBLINTOWN_MAX_CONCURRENCY=1`
+- LM Studio auth: if server auth is enabled, Goblintown must send a valid
+  `LM_API_TOKEN` (legacy `LMSTUDIO_API_KEY` is still accepted by Goblintown).
+- LM Studio batched MLX runtimes can reject speculative decoding for some
+  models. If this appears in LM Studio logs, disable speculative decoding for
+  that model/runtime.
+- Ollama model names must match exactly what `ollama list` reports.
+
 ## OpenRouter examples
 
 ### OpenRouter

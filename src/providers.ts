@@ -57,6 +57,22 @@ const OPENAI_MODELS: Record<ModelSlot, string> = {
   embedding: "text-embedding-3-small",
 };
 
+function withChatModel(
+  chatModel: string,
+  embeddingModel: string = OPENAI_MODELS.embedding,
+): Record<ModelSlot, string> {
+  return {
+    goblin: chatModel,
+    gremlin: chatModel,
+    raccoon: chatModel,
+    troll: chatModel,
+    ogre: chatModel,
+    pigeon: chatModel,
+    scribe: chatModel,
+    embedding: embeddingModel,
+  };
+}
+
 export const PROVIDER_PRESETS: Record<ProviderPresetId, ProviderPreset> = {
   openai: {
     id: "openai",
@@ -78,16 +94,7 @@ export const PROVIDER_PRESETS: Record<ProviderPresetId, ProviderPreset> = {
     apiKeyEnv: "OLLAMA_API_KEY",
     local: true,
     dummyApiKey: "ollama",
-    models: {
-      goblin: "llama3.2",
-      gremlin: "llama3.2",
-      raccoon: "llama3.2",
-      troll: "llama3.2",
-      ogre: "llama3.2",
-      pigeon: "llama3.2",
-      scribe: "llama3.2",
-      embedding: "nomic-embed-text",
-    },
+    models: withChatModel("llama3.2", "nomic-embed-text"),
   },
   lmstudio: {
     id: "lmstudio",
@@ -97,48 +104,21 @@ export const PROVIDER_PRESETS: Record<ProviderPresetId, ProviderPreset> = {
     apiKeyEnvAliases: ["LMSTUDIO_API_KEY"],
     local: true,
     dummyApiKey: "",
-    models: {
-      goblin: "local-model",
-      gremlin: "local-model",
-      raccoon: "local-model",
-      troll: "local-model",
-      ogre: "local-model",
-      pigeon: "local-model",
-      scribe: "local-model",
-      embedding: "local-embedding-model",
-    },
+    models: withChatModel("local-model", "local-embedding-model"),
   },
   groq: {
     id: "groq",
     label: "Groq",
     baseURL: "https://api.groq.com/openai/v1",
     apiKeyEnv: "GROQ_API_KEY",
-    models: {
-      goblin: "llama-3.3-70b-versatile",
-      gremlin: "llama-3.3-70b-versatile",
-      raccoon: "llama-3.3-70b-versatile",
-      troll: "llama-3.3-70b-versatile",
-      ogre: "llama-3.3-70b-versatile",
-      pigeon: "llama-3.3-70b-versatile",
-      scribe: "llama-3.3-70b-versatile",
-      embedding: OPENAI_MODELS.embedding,
-    },
+    models: withChatModel("llama-3.3-70b-versatile"),
   },
   together: {
     id: "together",
     label: "Together AI",
     baseURL: "https://api.together.ai/v1",
     apiKeyEnv: "TOGETHER_API_KEY",
-    models: {
-      goblin: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      gremlin: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      raccoon: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      troll: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      ogre: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      pigeon: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      scribe: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      embedding: OPENAI_MODELS.embedding,
-    },
+    models: withChatModel("meta-llama/Llama-3.3-70B-Instruct-Turbo"),
   },
   mistral: {
     id: "mistral",
@@ -162,14 +142,8 @@ export const PROVIDER_PRESETS: Record<ProviderPresetId, ProviderPreset> = {
     baseURL: "https://api.deepseek.com",
     apiKeyEnv: "DEEPSEEK_API_KEY",
     models: {
-      goblin: "deepseek-v4-flash",
-      gremlin: "deepseek-v4-flash",
-      raccoon: "deepseek-v4-flash",
-      troll: "deepseek-v4-flash",
+      ...withChatModel("deepseek-v4-flash"),
       ogre: "deepseek-v4-pro",
-      pigeon: "deepseek-v4-flash",
-      scribe: "deepseek-v4-flash",
-      embedding: OPENAI_MODELS.embedding,
     },
   },
   anthropic: {
@@ -177,16 +151,7 @@ export const PROVIDER_PRESETS: Record<ProviderPresetId, ProviderPreset> = {
     label: "Anthropic",
     baseURL: "https://api.anthropic.com/v1/",
     apiKeyEnv: "ANTHROPIC_API_KEY",
-    models: {
-      goblin: "claude-opus-4-1-20250805",
-      gremlin: "claude-opus-4-1-20250805",
-      raccoon: "claude-opus-4-1-20250805",
-      troll: "claude-opus-4-1-20250805",
-      ogre: "claude-opus-4-1-20250805",
-      pigeon: "claude-opus-4-1-20250805",
-      scribe: "claude-opus-4-1-20250805",
-      embedding: OPENAI_MODELS.embedding,
-    },
+    models: withChatModel("claude-opus-4-1-20250805"),
     note: "Uses Anthropic's OpenAI SDK compatibility layer.",
   },
   gemini: {
@@ -194,16 +159,7 @@ export const PROVIDER_PRESETS: Record<ProviderPresetId, ProviderPreset> = {
     label: "Gemini",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     apiKeyEnv: "GEMINI_API_KEY",
-    models: {
-      goblin: "gemini-3-flash-preview",
-      gremlin: "gemini-3-flash-preview",
-      raccoon: "gemini-3-flash-preview",
-      troll: "gemini-3-flash-preview",
-      ogre: "gemini-3-flash-preview",
-      pigeon: "gemini-3-flash-preview",
-      scribe: "gemini-3-flash-preview",
-      embedding: "gemini-embedding-001",
-    },
+    models: withChatModel("gemini-3-flash-preview", "gemini-embedding-001"),
   },
   custom: {
     id: "custom",
