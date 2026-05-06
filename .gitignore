@@ -3,6 +3,7 @@ dist/
 .env
 .env.local
 *.log
+.superpowers/
 
 # per-project Warren state
 .goblintown/

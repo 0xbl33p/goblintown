@@ -3,7 +3,7 @@ import { measureDrift } from "./drift.js";
 import { callCreature, callCreatureStream } from "./openai-client.js";
 import { makeThinkingRelay } from "./streaming.js";
 import { trollReview } from "./troll-review.js";
-import type { FailureCluster, Loot, TrollVerdict } from "./types.js";
+import type { FailureCluster, Loot, OutputFormat, TrollVerdict } from "./types.js";
 import type { Hoard } from "./hoard.js";
 
 const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 } as const;
@@ -200,6 +200,7 @@ export async function runSpecialistRerite(opts: {
   seedGremlinByGoblinId: Record<string, Loot | undefined>;
   hoard: Hoard;
   maxOutputTokensPerCall?: number;
+  outputFormat?: OutputFormat;
   /** Min absolute score-over-seed to count as a recovery win when no specialist passes outright. Default 0.05. */
   improvementMargin?: number;
   onSpawn?: (index: number, cluster: FailureCluster) => void;
@@ -232,6 +233,7 @@ export async function runSpecialistRerite(opts: {
       const relay = makeThinkingRelay((text) => onThink(i, text));
       const r = await callCreatureStream(specialist, userPrompt, relay.onChunk, {
         maxOutputTokens: opts.maxOutputTokensPerCall,
+        outputFormat: opts.outputFormat,
       });
       relay.done();
       output = r.text;
@@ -239,6 +241,7 @@ export async function runSpecialistRerite(opts: {
     } else {
       const r = await callCreature(specialist, userPrompt, {
         maxOutputTokens: opts.maxOutputTokensPerCall,
+        outputFormat: opts.outputFormat,
       });
       output = r.text;
       usage = r.usage;

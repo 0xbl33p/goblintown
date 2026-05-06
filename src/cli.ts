@@ -32,6 +32,7 @@ import {
   type Personality,
 } from "./types.js";
 import { initWarren, loadWarren } from "./warren.js";
+import { normalizeOutputFormat } from "./formatting.js";
 
 const HELP = `Goblintown — agent management protocol.
 
@@ -46,13 +47,14 @@ Usage:
   goblintown scavenge --task "..." --scan "<glob>" [--scan "<glob>"]...
       Run a Raccoon over matched files and stash the distilled facts.
 
-  goblintown quest "<task>" [--pack <N>] [--personality <p>]
+  goblintown quest "<task>" [--pack <N>] [--personality <p>] [--format freeform|markdown|json]
       Goblin pack with Troll arbitration. Default pack=3. Lightweight.
 
   goblintown rite "<task>" [--pack <N>] [--scan <glob>]... [--personality <p>] [--no-fallback]
                           [--budget <tokens>] [--max-output <tokens>]
                           [--cite <riteId>]... [--remember]
                           [--no-specialist] [--specialist-cap <N>] [--debate]
+                          [--format freeform|markdown|json]
       Full ceremony: Raccoon → Goblin pack → [Debate round] → Gremlin chaos →
                     Troll review → [Specialist re-rite on failure] →
                     Ogre fallback → Scribe.
@@ -67,7 +69,7 @@ Usage:
       Print the artifact lineage for a rite (parents → this → children).
 
   goblintown plan "<task>" [--max-nodes <N>] [--max-replan <N>] [--budget <tokens>]
-                          [--cite <riteId>]... [--remember]
+                          [--cite <riteId>]... [--remember] [--format freeform|markdown|json]
       Use the Planner to decompose the task into a DAG of sub-rites and
       execute them in order (Phase 3). Each sub-rite produces its own artifact;
       dependent sub-rites consume them. On a node failure the planner is
@@ -128,6 +130,8 @@ Usage:
 Environment:
   OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare / ancestry)
   OPENAI_BASE_URL             optional; e.g. https://openrouter.ai/api/v1
+  Provider-specific keys      OPENROUTER_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, MISTRAL_API_KEY,
+                              DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY
   GOBLINTOWN_MODEL_GOBLIN     default: gpt-5.4-mini
   GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
   GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini
@@ -314,6 +318,9 @@ async function cmdQuest(args: string[]): Promise<void> {
   const personality = flags.personality as Personality | undefined;
 
   const w = await loadWarren(process.cwd());
+  const outputFormat = normalizeOutputFormat(
+    flags.format ?? w.manifest.provider?.outputFormat,
+  );
 
   process.stdout.write(
     `Dispatching ${packSize} goblin(s) on quest "${truncate(task, 60)}"...\n`,
@@ -324,6 +331,7 @@ async function cmdQuest(args: string[]): Promise<void> {
     packSize,
     hoard: w.hoard,
     personality,
+    outputFormat,
   });
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
 
@@ -372,6 +380,9 @@ async function cmdRite(args: string[]): Promise<void> {
     : undefined;
 
   const w = await loadWarren(process.cwd());
+  const outputFormat = normalizeOutputFormat(
+    flags.format ?? w.manifest.provider?.outputFormat,
+  );
   const rewardPlugin = await loadRewardPlugin(w.root);
   if (rewardPlugin.source !== "builtin") {
     process.stdout.write(`(reward plugin: ${rewardPlugin.source})\n`);
@@ -422,6 +433,7 @@ async function cmdRite(args: string[]): Promise<void> {
     trollTools,
     budgetTokens,
     maxOutputTokensPerCall,
+    outputFormat,
     parentArtifacts,
     onStep: (s) => process.stdout.write(formatRiteStep(s) + "\n"),
   });
@@ -911,6 +923,9 @@ async function cmdPlan(args: string[]): Promise<void> {
   const maxOutputTokensPerCall = flags["max-output"] ? Number(flags["max-output"]) : undefined;
 
   const w = await loadWarren(process.cwd());
+  const outputFormat = normalizeOutputFormat(
+    flags.format ?? w.manifest.provider?.outputFormat,
+  );
   const rewardPlugin = await loadRewardPlugin(w.root);
 
   const { findRelevantArtifacts } = await import("./artifact.js");
@@ -954,6 +969,7 @@ async function cmdPlan(args: string[]): Promise<void> {
     rewardFn: rewardPlugin.fn,
     budgetTokens,
     maxOutputTokensPerCall,
+    outputFormat,
     parentArtifacts: parents,
     maxReplanDepth: maxReplan,
     onPlanEvent: (ev) => {

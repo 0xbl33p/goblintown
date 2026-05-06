@@ -14,13 +14,22 @@ import {
   type Artifact,
   type CreatureKind,
   type InboxMessage,
+  type OutputFormat,
   type Personality,
+  type ProviderConfig,
 } from "./types.js";
 import { executePlan, type PlanExecutionEvent } from "./plan-executor.js";
 import { planTask } from "./planner.js";
 import { findRelevantArtifacts } from "./artifact.js";
 import { exportRunAsMasTrace } from "./trace-export.js";
-import { loadWarren, type Warren } from "./warren.js";
+import { normalizeOutputFormat } from "./formatting.js";
+import {
+  MODEL_SLOTS,
+  PROVIDER_PRESETS,
+  normalizeProviderConfig,
+  resolveProviderRuntime,
+} from "./providers.js";
+import { loadWarren, saveWarrenManifest, type Warren } from "./warren.js";
 
 export interface ServeOptions {
   cwd: string;
@@ -152,6 +161,29 @@ export async function serve(opts: ServeOptions): Promise<void> {
       drift,
     });
   });
+  app.get("/api/providers", (_req, res) => {
+    res.json({
+      presets: Object.values(PROVIDER_PRESETS).map((p) => ({
+        id: p.id,
+        label: p.label,
+        baseURL: p.baseURL,
+        apiKeyEnv: p.apiKeyEnv,
+        local: !!p.local,
+        models: p.models,
+        note: p.note,
+      })),
+      modelSlots: MODEL_SLOTS,
+    });
+  });
+  app.get("/api/provider", (_req, res) => {
+    res.json(providerPayload(warren));
+  });
+  app.post("/api/provider", async (req, res) => {
+    const config = normalizeProviderConfig(req.body);
+    warren.manifest.provider = config;
+    await saveWarrenManifest(warren);
+    res.json(providerPayload(warren));
+  });
   app.post("/api/inbox", async (req, res) => receiveInboxOverHttp(warren, req, res));
 
   app.use((_req, res) =>
@@ -192,6 +224,7 @@ async function startRiteRun(
     maxOutputTokens?: unknown;
     cite?: unknown;
     remember?: unknown;
+    outputFormat?: unknown;
   };
   if (typeof body.task !== "string" || body.task.trim().length === 0) {
     res.status(400).json({ error: "task is required" });
@@ -226,6 +259,9 @@ async function startRiteRun(
     ? (body.cite.filter((c) => typeof c === "string") as string[])
     : [];
   const remember = !!body.remember;
+  const outputFormat = normalizeOutputFormat(
+    body.outputFormat ?? warren.manifest.provider?.outputFormat,
+  );
 
   const record: RunRecord = {
     runId,
@@ -314,6 +350,7 @@ async function startRiteRun(
     trollTools,
     budgetTokens,
     maxOutputTokensPerCall: maxOutputTokens,
+    outputFormat,
     parentArtifacts,
     onStep: (step: RiteStep) => emit("step", step),
   })
@@ -351,6 +388,7 @@ async function startPlanRun(
     cite?: unknown;
     remember?: unknown;
     budgetTokens?: unknown;
+    outputFormat?: unknown;
   };
   if (typeof body.task !== "string" || body.task.trim().length === 0) {
     res.status(400).json({ error: "task is required" });
@@ -360,6 +398,9 @@ async function startPlanRun(
   const maxNodes = typeof body.maxNodes === "number" ? body.maxNodes : 6;
   const maxReplan = typeof body.maxReplan === "number" ? body.maxReplan : 2;
   const budgetTokens = typeof body.budgetTokens === "number" ? body.budgetTokens : undefined;
+  const outputFormat = normalizeOutputFormat(
+    body.outputFormat ?? warren.manifest.provider?.outputFormat,
+  );
   const cites = Array.isArray(body.cite) ? (body.cite.filter((c) => typeof c === "string") as string[]) : [];
   const remember = !!body.remember;
 
@@ -435,6 +476,7 @@ async function startPlanRun(
         hoard: warren.hoard,
         rewardFn: rewardPlugin.fn,
         budgetTokens,
+        outputFormat,
         parentArtifacts: parents,
         maxReplanDepth: maxReplan,
         onPlanEvent: (ev: PlanExecutionEvent) => emit(ev.kind, ev),
@@ -567,6 +609,36 @@ async function receiveInboxOverHttp(
   }
   await warren.hoard.stashInbox(candidate);
   res.json({ ok: true, id: candidate.id });
+}
+
+function providerPayload(warren: Warren): {
+  config: ProviderConfig;
+  runtime: {
+    id: string;
+    label: string;
+    baseURL?: string;
+    apiKeyEnv: string;
+    hasApiKey: boolean;
+    missingApiKey?: string;
+    outputFormat: OutputFormat;
+    models: Record<string, string>;
+  };
+} {
+  const config = normalizeProviderConfig(warren.manifest.provider);
+  const runtime = resolveProviderRuntime(config);
+  return {
+    config,
+    runtime: {
+      id: runtime.id,
+      label: runtime.label,
+      baseURL: runtime.baseURL,
+      apiKeyEnv: runtime.apiKeyEnv,
+      hasApiKey: runtime.apiKey.length > 0 && !runtime.missingApiKey,
+      missingApiKey: runtime.missingApiKey,
+      outputFormat: runtime.outputFormat,
+      models: runtime.models,
+    },
+  };
 }
 
 
@@ -1032,6 +1104,80 @@ function tankHtml(
   .strip .grow { flex: 1; }
   .strip .clock { color: var(--muted); }
   .strip .tier { color: var(--warn); }
+  .provider-chip {
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    color: var(--fg-bright);
+    border-radius: 999px;
+    padding: 0.32rem 0.65rem;
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .provider-chip[data-missing="true"] { border-color: var(--fail); color: var(--fail); }
+  .provider-chip:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .provider-popover {
+    position: absolute;
+    right: 1rem;
+    top: 2.7rem;
+    width: min(420px, calc(100% - 2rem));
+    z-index: 30;
+    background: rgba(10,14,8,0.98);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    box-shadow: 0 16px 50px rgba(0,0,0,0.75);
+    padding: 1rem;
+    display: none;
+  }
+  .provider-popover.open { display: block; }
+  .provider-popover h3 {
+    margin: 0 0 0.8rem;
+    color: var(--fg-bright);
+    font-size: 0.88rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .provider-popover label {
+    display: block;
+    color: var(--muted);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 0.55rem 0 0.18rem;
+  }
+  .provider-popover input, .provider-popover select {
+    width: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.45rem 0.55rem;
+    font: inherit;
+    font-size: 0.78rem;
+  }
+  .provider-popover input:focus, .provider-popover select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .provider-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; }
+  .provider-status {
+    margin: 0.65rem 0 0;
+    color: var(--muted);
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+  .provider-status strong { color: var(--fg-bright); }
+  .provider-advanced summary {
+    cursor: pointer;
+    color: var(--accent);
+    margin-top: 0.8rem;
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .provider-actions { display: flex; gap: 0.6rem; margin-top: 0.9rem; }
 
   .tank {
     position: relative; overflow: hidden;
@@ -1513,8 +1659,40 @@ function tankHtml(
     <span class="stat"><b id="stat-rites">${riteCount}</b> rites</span>
     <span class="stat">drift <b id="stat-drift">${drift.toFixed(3)}</b></span>
     <span class="grow"></span>
+    <button class="provider-chip" id="provider-chip" type="button">API ▾</button>
     <span class="tier" id="tier-display">tier 0 · empty plot</span>
     <span class="clock" id="clock">idle</span>
+  </div>
+
+  <div class="provider-popover" id="provider-popover">
+    <h3>API Provider</h3>
+    <label for="provider-preset">Preset</label>
+    <select id="provider-preset"></select>
+    <label for="provider-baseurl">Base URL</label>
+    <input id="provider-baseurl" placeholder="https://api.example.com/v1">
+    <div class="provider-grid">
+      <div>
+        <label for="provider-keyenv">Key env var</label>
+        <input id="provider-keyenv" placeholder="OPENAI_API_KEY">
+      </div>
+      <div>
+        <label for="provider-format">Forced format</label>
+        <select id="provider-format">
+          <option value="freeform">freeform</option>
+          <option value="markdown">markdown</option>
+          <option value="json">json object</option>
+        </select>
+      </div>
+    </div>
+    <details class="provider-advanced">
+      <summary>advanced models</summary>
+      <div class="provider-grid" id="provider-models"></div>
+    </details>
+    <p class="provider-status" id="provider-status">Loading provider...</p>
+    <div class="provider-actions">
+      <button class="btn primary" type="button" id="provider-save">Save</button>
+      <button class="btn" type="button" id="provider-cancel">Close</button>
+    </div>
   </div>
 
   <div class="tank" id="tank">
@@ -1740,6 +1918,114 @@ async function refreshStats() {
     if (r.ok) applyStats(await r.json());
   } catch {}
 }
+
+/* Provider menu */
+let providerPresets = [];
+let modelSlots = [];
+const providerChip = $("provider-chip");
+const providerPopover = $("provider-popover");
+const providerPreset = $("provider-preset");
+const providerBaseUrl = $("provider-baseurl");
+const providerKeyEnv = $("provider-keyenv");
+const providerFormat = $("provider-format");
+const providerModels = $("provider-models");
+const providerStatus = $("provider-status");
+
+function providerById(id) {
+  return providerPresets.find((p) => p.id === id) || providerPresets[0];
+}
+function renderProviderModels(models) {
+  providerModels.innerHTML = "";
+  for (const slot of modelSlots) {
+    const wrap = document.createElement("div");
+    const label = document.createElement("label");
+    label.textContent = slot;
+    const input = document.createElement("input");
+    input.dataset.slot = slot;
+    input.value = (models && models[slot]) || "";
+    wrap.appendChild(label);
+    wrap.appendChild(input);
+    providerModels.appendChild(wrap);
+  }
+}
+function applyProviderPayload(payload) {
+  const config = payload.config || {};
+  const runtime = payload.runtime || {};
+  providerPreset.value = config.preset || runtime.id || "openai";
+  providerBaseUrl.value = config.baseURL || runtime.baseURL || "";
+  providerKeyEnv.value = config.apiKeyEnv || runtime.apiKeyEnv || "OPENAI_API_KEY";
+  providerFormat.value = config.outputFormat || runtime.outputFormat || "freeform";
+  renderProviderModels({ ...(runtime.models || {}), ...(config.models || {}) });
+  const missing = runtime.missingApiKey;
+  providerChip.textContent = (runtime.label || "API") + " ▾";
+  providerChip.dataset.missing = missing ? "true" : "false";
+  providerStatus.innerHTML = missing
+    ? "Missing key: set <strong>" + missing + "</strong> in your environment. Keys are not stored here."
+    : "Using <strong>" + (runtime.label || "provider") + "</strong>. Keys stay in environment variables.";
+}
+async function loadProviderMenu() {
+  try {
+    const [providersRes, providerRes] = await Promise.all([
+      fetch("/api/providers"),
+      fetch("/api/provider"),
+    ]);
+    if (providersRes.ok) {
+      const data = await providersRes.json();
+      providerPresets = data.presets || [];
+      modelSlots = data.modelSlots || [];
+      providerPreset.innerHTML = "";
+      for (const preset of providerPresets) {
+        const option = document.createElement("option");
+        option.value = preset.id;
+        option.textContent = preset.label;
+        providerPreset.appendChild(option);
+      }
+    }
+    if (providerRes.ok) applyProviderPayload(await providerRes.json());
+  } catch {
+    providerStatus.textContent = "Provider menu unavailable.";
+  }
+}
+providerPreset.onchange = () => {
+  const preset = providerById(providerPreset.value);
+  if (!preset) return;
+  providerBaseUrl.value = preset.baseURL || "";
+  providerKeyEnv.value = preset.apiKeyEnv || "OPENAI_API_KEY";
+  renderProviderModels(preset.models || {});
+};
+providerChip.onclick = () => {
+  providerPopover.classList.toggle("open");
+};
+$("provider-cancel").onclick = () => providerPopover.classList.remove("open");
+$("provider-save").onclick = async () => {
+  const models = {};
+  providerModels.querySelectorAll("input[data-slot]").forEach((input) => {
+    const value = input.value.trim();
+    if (value) models[input.dataset.slot] = value;
+  });
+  const payload = {
+    preset: providerPreset.value,
+    baseURL: providerBaseUrl.value.trim(),
+    apiKeyEnv: providerKeyEnv.value.trim(),
+    outputFormat: providerFormat.value,
+    models,
+  };
+  providerStatus.textContent = "Saving...";
+  try {
+    const r = await fetch("/api/provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    applyProviderPayload(await r.json());
+    providerPopover.classList.remove("open");
+    setTicker("provider saved: " + providerChip.textContent.replace(" ▾", ""));
+  } catch (err) {
+    providerStatus.textContent = "Save failed: " + (err.message || err);
+  }
+};
+loadProviderMenu();
 
 /* Bubbles */
 const MAX_BUBBLES = 3;

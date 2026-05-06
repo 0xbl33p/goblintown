@@ -16,6 +16,7 @@ import { makeThinkingRelay } from "./streaming.js";
 import type {
   Artifact,
   Loot,
+  OutputFormat,
   Personality,
   Rite,
   TrollVerdict,
@@ -47,6 +48,8 @@ export interface RiteOptions {
   debate?: boolean;
   /** Phase 5: enable verifier tool-use during troll review. */
   trollTools?: boolean;
+  /** Optional formatting constraint for answer-producing calls. */
+  outputFormat?: OutputFormat;
 }
 
 export type RiteStep =
@@ -201,7 +204,10 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
       goblin,
       variantPrompt,
       relay.onChunk,
-      { maxOutputTokens: opts.maxOutputTokensPerCall },
+      {
+        maxOutputTokens: opts.maxOutputTokensPerCall,
+        outputFormat: opts.outputFormat,
+      },
     );
     relay.done();
     const drift = measureDrift(output);
@@ -237,6 +243,7 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
         packLoots: goblinLoot,
         hoard: opts.hoard,
         maxOutputTokensPerCall: opts.maxOutputTokensPerCall,
+        outputFormat: opts.outputFormat,
         onSpawn: (i) => { /* the slot is already a goblin#i */ },
         onDone: (i, l) =>
           onStep({ kind: "debate:goblin", lootId: l.id, index: i, round: 1 }),
@@ -370,6 +377,7 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
             seedGremlinByGoblinId: gremlinByGoblinId,
             hoard: opts.hoard,
             maxOutputTokensPerCall: opts.maxOutputTokensPerCall,
+            outputFormat: opts.outputFormat,
             onSpawn: (i, c) =>
               onStep({ kind: "specialist:spawn", index: i, focus: c.specialistFocus }),
             onDone: (i, l) =>
@@ -417,6 +425,7 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
         chaosByGoblinId: Object.fromEntries(chaosByGoblinId),
         hoard: opts.hoard,
         riteId,
+        outputFormat: opts.outputFormat,
         onThink: (text) => onStep({ kind: "thinking", slot: "ogre", text }),
       });
       budget.charge(ogreLoot.usage);

@@ -459,7 +459,7 @@ npm install -g goblintown
 
 <span class="comment"># or, in a project</span>
 npm install goblintown
-export OPENAI_API_KEY=sk-...
+export OPENAI_API_KEY=sk-...            <span class="comment"># or choose a provider in the Tank UI</span>
 goblintown init</pre>
 </section>
 
@@ -479,7 +479,7 @@ goblintown quest "Write a SQL join: users to last 5 orders" --pack 3
 goblintown rite "Refactor src/quest.ts to share the troll-review helper" \
   --pack 3 --scan "src/quest.ts" \
   --debate --troll-tools --remember \
-  --budget 80000 --max-output 4096
+  --budget 80000 --max-output 4096 --format markdown
 
 <span class="comment"># memory: cite a prior rite or auto-load relevant artifacts</span>
 goblintown rite "Extend the migration plan with rollback paths" \
@@ -489,14 +489,14 @@ goblintown fold --threshold 30           <span class="comment"># compress older 
 
 <span class="comment"># planning: decompose a complex task into a DAG of sub-rites</span>
 goblintown plan "Design and implement a small REST API for a todo \
-  list, with auth, persistence, and tests" --max-nodes 6 --max-replan 2
+  list, with auth, persistence, and tests" --max-nodes 6 --max-replan 2 --format json
 
 <span class="comment"># observability</span>
 goblintown drift
 goblintown audit &lt;riteId&gt;                <span class="comment"># now includes artifact lineage</span>
 goblintown graph &lt;riteId|lootId&gt;
 goblintown export-trace &lt;runId&gt; --out trace.json   <span class="comment"># academic LLM-MAS schema</span>
-goblintown serve --port 7777             <span class="comment"># tank UI + SSE + plan/rite forms</span></pre>
+goblintown serve --port 7777             <span class="comment"># tank UI + provider menu + SSE forms</span></pre>
 </section>
 
 <section id="features">
@@ -513,6 +513,8 @@ goblintown serve --port 7777             <span class="comment"># tank UI + SSE +
     <div class="card"><h3>Context-folding</h3><p>As the Hoard accumulates, <code>goblintown fold</code> merges related older artifacts into higher-level summaries. Recursive abstraction.</p></div>
     <div class="card"><h3>Token streaming</h3><p>Ogre, every goblin, and every specialist stream tokens. Live "thinking" bubbles in the tank UI show what each creature is producing as it produces it.</p></div>
     <div class="card"><h3>Tank UI</h3><p>A tamagotchi-style live diorama at <code>/</code>: each creature has a home, the village grows by tier, the DAG side panel lights up node-by-node, the result panel slides up at the end. <code>?run=&lt;id&gt;</code> attaches to any existing run.</p></div>
+    <div class="card"><h3>Provider menu</h3><p>Choose OpenAI, OpenRouter, Ollama, LM Studio, Groq, Together, Mistral, DeepSeek, Anthropic, Gemini, or a custom OpenAI-compatible endpoint. Keys stay in environment variables.</p></div>
+    <div class="card"><h3>Forced output formats</h3><p>Answer-producing calls can be constrained to Markdown or a single JSON object. JSON output is locally validated and repaired once if malformed.</p></div>
     <div class="card"><h3>Trace export</h3><p>Export any run to the academic <a href="https://github.com/xxzcc/awesome-llm-mas-rl">LLM-MAS Orchestration Trace</a> schema (10 event types, 8 edge types, topology classification).</p></div>
     <div class="card"><h3>Content-addressed Hoard</h3><p>Every Loot drop is keyed by hash. Full causal graph of who-produced-what is recoverable. Audit + graph commands traverse artifact lineage across rites.</p></div>
     <div class="card"><h3>Drift telemetry</h3><p>Goblintown measures cross-creature word frequency. High drift = your reward signal is leaking.</p></div>
@@ -520,7 +522,7 @@ goblintown serve --port 7777             <span class="comment"># tank UI + SSE +
     <div class="card"><h3>Federation</h3><p>Pigeons deliver compressed artifacts between Warrens, over filesystem or HTTP. Signed bodies, optional HMAC.</p></div>
     <div class="card"><h3>Pluggable rewards</h3><p>Drop a .goblintown/reward.mjs to override the default scoring.</p></div>
     <div class="card"><h3>Reroll, export, compare, ancestry</h3><p>Re-run a rite with same params; export to markdown; diff two rites; print artifact lineage.</p></div>
-    <div class="card"><h3>187 tests</h3><p>Pure-function coverage on every protocol invariant: drift, reward, hoard hashing, federation HMAC, audit, graph, planner DAG validation, debate prompt construction, tool dispatch, embeddings ranking math, fold clustering, trace-export schema mapping. No OpenAI calls during testing.</p></div>
+    <div class="card"><h3>203 tests</h3><p>Pure-function coverage on every protocol invariant: drift, reward, hoard hashing, federation HMAC, audit, graph, planner DAG validation, debate prompt construction, tool dispatch, embeddings ranking math, provider routing, output formatting, fold clustering, trace-export schema mapping. No OpenAI calls during testing.</p></div>
   </div>
 </section>
 

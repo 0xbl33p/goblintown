@@ -14,7 +14,7 @@ import { makeGoblin } from "./creatures.js";
 import { measureDrift } from "./drift.js";
 import { callCreature, callCreatureStream } from "./openai-client.js";
 import { makeThinkingRelay } from "./streaming.js";
-import type { Loot, Personality } from "./types.js";
+import type { Loot, OutputFormat, Personality } from "./types.js";
 import type { Hoard } from "./hoard.js";
 
 export function buildDebatePrompt(opts: {
@@ -64,6 +64,7 @@ export async function runDebateRound(opts: {
   packLoots: Loot[];
   hoard: Hoard;
   maxOutputTokensPerCall?: number;
+  outputFormat?: OutputFormat;
   onSpawn?: (index: number) => void;
   onDone?: (index: number, revisedLoot: Loot) => void;
   onThink?: (index: number, cumulativeText: string) => void;
@@ -89,6 +90,7 @@ export async function runDebateRound(opts: {
       const relay = makeThinkingRelay((text) => onThink(i, text));
       const r = await callCreatureStream(goblin, userPrompt, relay.onChunk, {
         maxOutputTokens: opts.maxOutputTokensPerCall,
+        outputFormat: opts.outputFormat,
       });
       relay.done();
       output = r.text;
@@ -96,6 +98,7 @@ export async function runDebateRound(opts: {
     } else {
       const r = await callCreature(goblin, userPrompt, {
         maxOutputTokens: opts.maxOutputTokensPerCall,
+        outputFormat: opts.outputFormat,
       });
       output = r.text;
       usage = r.usage;

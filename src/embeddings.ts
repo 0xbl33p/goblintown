@@ -11,24 +11,41 @@
  */
 import OpenAI from "openai";
 import { scoreArtifact, extractKeywords } from "./artifact.js";
+import {
+  loadProviderConfigFromCwd,
+  providerRuntimeSignature,
+  resolveModelForSlot,
+  resolveProviderRuntime,
+} from "./providers.js";
 import type { Artifact } from "./types.js";
 import type { Hoard } from "./hoard.js";
 
 const EMBED_MODEL = process.env.GOBLINTOWN_EMBEDDING_MODEL ?? "text-embedding-3-small";
 
 let _client: OpenAI | null = null;
+let _clientSignature: string | null = null;
 function getClient(): OpenAI {
-  if (_client) return _client;
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
-  const baseURL = process.env.OPENAI_BASE_URL;
-  _client = new OpenAI({ apiKey, baseURL, maxRetries: 3 });
+  const config = loadProviderConfigFromCwd();
+  const runtime = resolveProviderRuntime(config);
+  if (runtime.missingApiKey) throw new Error(`${runtime.missingApiKey} is not set`);
+  const signature = providerRuntimeSignature(runtime);
+  if (_client && _clientSignature === signature) return _client;
+  _client = new OpenAI({
+    apiKey: runtime.apiKey,
+    baseURL: runtime.baseURL,
+    maxRetries: 3,
+    defaultHeaders: runtime.defaultHeaders,
+  });
+  _clientSignature = signature;
   return _client;
 }
 
 export async function embed(text: string): Promise<number[]> {
   const client = getClient();
-  const r = await client.embeddings.create({ model: EMBED_MODEL, input: text });
+  const r = await client.embeddings.create({
+    model: resolveModelForSlot("embedding", EMBED_MODEL),
+    input: text,
+  });
   const v = r.data[0]?.embedding;
   if (!v) throw new Error("empty embedding response");
   return v;

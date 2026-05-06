@@ -228,7 +228,10 @@ npm install
 npm run build
 ```
 
-`OPENAI_API_KEY` must be set for any command that calls a creature.
+Set a provider API key for any command that calls a creature. Local Ollama uses
+a harmless dummy key if no local key env var is set. LM Studio can run without a
+key only when its server authentication is disabled; if authentication is
+enabled, set `LM_API_TOKEN`.
 
 ## Usage
 
@@ -250,7 +253,7 @@ goblintown quest "Write a SQL join: users to last 5 orders" --pack 3
 goblintown rite "Refactor src/quest.ts to share the troll-review helper" \
   --pack 3 --scan "src/quest.ts" --scan "src/troll-review.ts" \
   --debate --troll-tools --remember \
-  --budget 80000 --max-output 4096
+  --budget 80000 --max-output 4096 --format markdown
 
 # memory: cite a prior rite or auto-load relevant artifacts
 goblintown rite "Extend the migration plan with rollback paths" \
@@ -260,7 +263,7 @@ goblintown fold --threshold 30           # compress older artifacts
 
 # planning: decompose a complex task into a DAG of sub-rites
 goblintown plan "Design and implement a small REST API for a todo list, \
-  with auth, persistence, and tests" --max-nodes 6 --max-replan 2
+  with auth, persistence, and tests" --max-nodes 6 --max-replan 2 --format json
 
 # specialist recovery is on by default; disable / cap with:
 goblintown rite "..." --no-specialist
@@ -302,25 +305,65 @@ Ogre on `gpt-5.5`. Override per creature with environment variables:
 
 `GOBLINTOWN_MAX_CONCURRENCY` (default 5) bounds in-flight OpenAI calls.
 
-## OpenRouter and other providers
+## Providers, local inference, and output formats
 
 Goblintown talks to OpenAI by default, but the underlying client is just the
 `openai` SDK pointed at a base URL. Anything that exposes an OpenAI-compatible
-API works — set `OPENAI_BASE_URL` and use the matching `OPENAI_API_KEY`.
+API works. `goblintown serve` includes a compact **API Provider** menu in the
+Tank top bar. It saves non-secret provider settings to `.goblintown/warren.json`:
+
+- provider preset
+- base URL
+- API key environment variable name
+- per-creature model names
+- default output format: `freeform`, `markdown`, or `json`
+
+API keys are never written to `warren.json`. Set the key in your shell with the
+provider-specific environment variable shown by the menu. `OPENAI_API_KEY` still
+works as a fallback for compatible endpoints.
+
+`--format markdown` and `--format json` can also be passed to `quest`, `rite`,
+and `plan`. Formatting is applied only to answer-producing calls, so internal
+planner/reviewer/scribe JSON stays on its existing protocol. JSON mode requests
+a single JSON object, validates the model output locally, and performs one
+format-repair call if the first answer is malformed.
+
+### Presets
+
+| Preset | Base URL | Key env var |
+| --- | --- | --- |
+| OpenAI | default SDK URL | `OPENAI_API_KEY` |
+| OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
+| Ollama | `http://localhost:11434/v1` | `OLLAMA_API_KEY` (optional; dummy key used if unset) |
+| LM Studio | `http://localhost:1234/v1` | `LM_API_TOKEN` (`LMSTUDIO_API_KEY` is also accepted) |
+| Groq | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` |
+| Together AI | `https://api.together.ai/v1` | `TOGETHER_API_KEY` |
+| Mistral | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` |
+| DeepSeek | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` |
+| Anthropic | `https://api.anthropic.com/v1/` | `ANTHROPIC_API_KEY` |
+| Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | `GEMINI_API_KEY` |
+| Custom | user supplied | user supplied |
+
+The menu is intentionally an OpenAI-compatible routing layer, not a new
+orchestration engine. Changing providers changes model behavior and quality, but
+the Rite pipeline itself remains the same.
+
+## OpenRouter examples
 
 ### OpenRouter
 
 ```bash
-export OPENAI_API_KEY="sk-or-v1-..."
-export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
+export OPENROUTER_API_KEY="sk-or-v1-..."
 
 # Optional analytics headers shown on https://openrouter.ai/activity
 export OPENROUTER_REFERER="https://github.com/yourname/yourproject"
 export OPENROUTER_TITLE="Goblintown"
 ```
 
-That's enough to run with the default models. When `OPENAI_BASE_URL` points
-at OpenRouter, any `GOBLINTOWN_MODEL_*` value without a `/` is auto-namespaced
+That's enough after selecting OpenRouter in the Tank menu. The legacy env-only
+path still works too: set `OPENAI_BASE_URL=https://openrouter.ai/api/v1` and put
+the OpenRouter key in `OPENAI_API_KEY`. When the resolved base URL points
+at OpenRouter, any model value without a `/` is auto-namespaced
 to `openai/`, so the built-in defaults (`gpt-5.4-mini` for the pack, `gpt-5.5`
 for the Ogre) become `openai/gpt-5.4-mini` / `openai/gpt-5.5` automatically.
 
@@ -343,17 +386,16 @@ different vendor without managing multiple API keys.
 
 ```bash
 # Groq
-export OPENAI_BASE_URL="https://api.groq.com/openai/v1"
+export GROQ_API_KEY="gsk_..."
 
 # Together AI
-export OPENAI_BASE_URL="https://api.together.xyz/v1"
+export TOGETHER_API_KEY="..."
 
 # Local Ollama (any non-empty key works)
-export OPENAI_API_KEY="ollama"
-export OPENAI_BASE_URL="http://localhost:11434/v1"
+ollama pull llama3.2
 
 # LM Studio
-export OPENAI_BASE_URL="http://localhost:1234/v1"
+# Start the local server and use the loaded model identifier.
 ```
 
 ### Reasoning models
@@ -437,14 +479,15 @@ interrupted on boot.
 npm test
 ```
 
-184 tests, no OpenAI calls. Pure-function coverage across drift, reward,
+203 tests, no OpenAI calls. Pure-function coverage across drift, reward,
 Hoard content-addressing, federation signatures (incl. HMAC), audit
 aggregation, reward plugin loader, graph rendering, concurrency semaphore,
 budget tracker, run persistence, markdown export, rite comparison, plus the
 newer subsystems: artifact retrieval and JSON parsing, specialist failure
 clustering, planner DAG validation and topological order, debate prompt
 construction, verifier tool dispatch, embeddings ranking math (cosine, RRF
-fusion), context-folding clustering, and trace-export schema mapping.
+fusion), context-folding clustering, provider routing, output formatting, and
+trace-export schema mapping.
 
 ## Phases
 

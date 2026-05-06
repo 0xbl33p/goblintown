@@ -8,6 +8,7 @@ import { planTask, topologicalOrder, validatePlan } from "./planner.js";
 import { performRite, type RiteOptions, type RiteStep } from "./rite.js";
 import type {
   Artifact,
+  OutputFormat,
   Plan,
   PlanNode,
   Rite,
@@ -22,6 +23,7 @@ export interface PlanExecOptions {
   rewardFn?: RiteOptions["rewardFn"];
   budgetTokens?: number;
   maxOutputTokensPerCall?: number;
+  outputFormat?: OutputFormat;
   parentArtifacts?: Artifact[];
   /** Max times to recursively replan on node failure. Default 2. */
   maxReplanDepth?: number;
@@ -95,6 +97,7 @@ export async function executePlan(opts: PlanExecOptions): Promise<PlanExecResult
           rewardFn: opts.rewardFn,
           budgetTokens: opts.budgetTokens,
           maxOutputTokensPerCall: opts.maxOutputTokensPerCall,
+          outputFormat: opts.outputFormat,
           parentArtifacts: inputArtifacts,
           // sub-rites still produce their own artifacts (cheap scribe call)
           skipScribe: false,

@@ -24,6 +24,7 @@ export type Personality =
 
 export interface Creature {
   kind: CreatureKind;
+  modelSlot?: ModelSlot;
   model: string;
   temperature: number;
   personality: Personality;
@@ -218,6 +219,31 @@ export interface FailureCluster {
   severity: "high" | "medium" | "low";
 }
 
+export type ModelSlot = CreatureKind | "scribe" | "embedding";
+
+export type ProviderPresetId =
+  | "openai"
+  | "openrouter"
+  | "ollama"
+  | "lmstudio"
+  | "groq"
+  | "together"
+  | "mistral"
+  | "deepseek"
+  | "anthropic"
+  | "gemini"
+  | "custom";
+
+export type OutputFormat = "freeform" | "markdown" | "json";
+
+export interface ProviderConfig {
+  preset: ProviderPresetId;
+  baseURL?: string;
+  apiKeyEnv?: string;
+  models?: Partial<Record<ModelSlot, string>>;
+  outputFormat?: OutputFormat;
+}
+
 export interface WarrenManifest {
   name: string;
   version: number;
@@ -225,6 +251,7 @@ export interface WarrenManifest {
   defaultModelGoblin: string;
   defaultModelOgre: string;
   defaultModelTroll: string;
+  provider?: ProviderConfig;
   /** Optional shared secret for HMAC-authenticated federation. */
   peerSecret?: string;
 }

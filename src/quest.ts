@@ -5,7 +5,7 @@ import { callCreature } from "./openai-client.js";
 import { packVariant } from "./pack-prompt.js";
 import { shinies } from "./reward.js";
 import { trollReview } from "./troll-review.js";
-import type { Loot, Personality, Quest } from "./types.js";
+import type { Loot, OutputFormat, Personality, Quest } from "./types.js";
 import type { Hoard } from "./hoard.js";
 import type { RewardFn } from "./reward-plugin.js";
 
@@ -15,6 +15,7 @@ export interface DispatchOptions {
   hoard: Hoard;
   personality?: Personality;
   rewardFn?: RewardFn;
+  outputFormat?: OutputFormat;
 }
 
 export interface DispatchResult {
@@ -39,7 +40,9 @@ export async function dispatchQuest(opts: DispatchOptions): Promise<DispatchResu
   const goblin = makeGoblin(personality);
   const goblinJobs = Array.from({ length: opts.packSize }, async (_, i) => {
     const variantPrompt = packVariant(opts.task, i, opts.packSize);
-    const { text: output, usage } = await callCreature(goblin, variantPrompt);
+    const { text: output, usage } = await callCreature(goblin, variantPrompt, {
+      outputFormat: opts.outputFormat,
+    });
     const drift = measureDrift(output);
     const loot: Loot = {
       id: "",

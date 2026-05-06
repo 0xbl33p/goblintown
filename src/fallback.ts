@@ -2,7 +2,7 @@ import { makeOgre } from "./creatures.js";
 import { measureDrift } from "./drift.js";
 import { callCreature, callCreatureStream } from "./openai-client.js";
 import { makeThinkingRelay } from "./streaming.js";
-import type { Loot, Personality, TrollVerdict } from "./types.js";
+import type { Loot, OutputFormat, Personality, TrollVerdict } from "./types.js";
 import type { Hoard } from "./hoard.js";
 
 export interface OgreFallbackOptions {
@@ -13,6 +13,7 @@ export interface OgreFallbackOptions {
   hoard: Hoard;
   personality?: Personality;
   riteId?: string;
+  outputFormat?: OutputFormat;
   /** Optional live-thinking relay; receives the cumulative ogre text as it streams. */
   onThink?: (cumulativeText: string) => void;
 }
@@ -45,12 +46,16 @@ export async function ogreFallback(opts: OgreFallbackOptions): Promise<Loot> {
   let usage;
   if (opts.onThink) {
     const relay = makeThinkingRelay(opts.onThink);
-    const result = await callCreatureStream(ogre, userPrompt, relay.onChunk);
+    const result = await callCreatureStream(ogre, userPrompt, relay.onChunk, {
+      outputFormat: opts.outputFormat,
+    });
     relay.done();
     output = result.text;
     usage = result.usage;
   } else {
-    const result = await callCreature(ogre, userPrompt);
+    const result = await callCreature(ogre, userPrompt, {
+      outputFormat: opts.outputFormat,
+    });
     output = result.text;
     usage = result.usage;
   }

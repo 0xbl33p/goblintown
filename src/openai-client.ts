@@ -1,35 +1,43 @@
 import OpenAI from "openai";
 import { sharedSemaphore } from "./concurrency.js";
-import type { Creature, TokenUsage } from "./types.js";
+import {
+  appendFormatInstruction,
+  assertOutputFormat,
+  buildFormatRepairPrompt,
+  normalizeOutputFormat,
+} from "./formatting.js";
+import {
+  loadProviderConfigFromCwd,
+  providerRuntimeSignature,
+  resolveModelForSlot,
+  resolveProviderRuntime,
+} from "./providers.js";
+import type { Creature, OutputFormat, ProviderConfig, TokenUsage } from "./types.js";
 
 let _client: OpenAI | null = null;
+let _clientSignature: string | null = null;
 
-function getClient(): OpenAI {
-  if (_client) return _client;
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set.");
+function getClient(config: ProviderConfig = loadProviderConfigFromCwd()): OpenAI {
+  const runtime = resolveProviderRuntime(config);
+  if (runtime.missingApiKey) {
+    throw new Error(`${runtime.missingApiKey} is not set.`);
   }
-  const baseURL = process.env.OPENAI_BASE_URL;
-  const referer = process.env.OPENROUTER_REFERER;
-  const defaultHeaders = referer
-    ? {
-        "HTTP-Referer": referer,
-        "X-Title": process.env.OPENROUTER_TITLE ?? "Goblintown",
-      }
-    : undefined;
+  const signature = providerRuntimeSignature(runtime);
+  if (_client && _clientSignature === signature) return _client;
   _client = new OpenAI({
-    apiKey,
-    baseURL,
+    apiKey: runtime.apiKey,
+    baseURL: runtime.baseURL,
     maxRetries: 4,
-    defaultHeaders,
+    defaultHeaders: runtime.defaultHeaders,
   });
+  _clientSignature = signature;
   return _client;
 }
 
 export interface CallOptions {
   maxOutputTokens?: number;
   signal?: AbortSignal;
+  outputFormat?: OutputFormat;
 }
 
 export interface CreatureResponse {
@@ -66,22 +74,32 @@ interface BaseParams {
   temperature?: number;
   max_tokens?: number;
   max_completion_tokens?: number;
+  response_format?: { type: "json_object" };
 }
 
 function buildBaseParams(
   creature: Creature,
   userPrompt: string,
   opts: CallOptions,
+  config: ProviderConfig,
 ): BaseParams {
-  const model = resolveModel(creature.model);
+  const model = resolveModelForSlot(
+    creature.modelSlot ?? creature.kind,
+    creature.model,
+    config,
+  );
   const fixed = isFixedSamplingModel(model);
+  const outputFormat = normalizeOutputFormat(opts.outputFormat);
   const params: BaseParams = {
     model,
     messages: [
       { role: "system", content: creature.systemPrompt },
-      { role: "user", content: userPrompt },
+      { role: "user", content: appendFormatInstruction(userPrompt, outputFormat) },
     ],
   };
+  if (outputFormat === "json") {
+    params.response_format = { type: "json_object" };
+  }
   if (!fixed && creature.temperature !== undefined) {
     params.temperature = creature.temperature;
   }
@@ -97,11 +115,12 @@ export async function callCreature(
   userPrompt: string,
   opts: CallOptions = {},
 ): Promise<CreatureResponse> {
-  const client = getClient();
+  const config = loadProviderConfigFromCwd();
+  const client = getClient(config);
   const sem = sharedSemaphore();
   return sem.run(async () => {
     const completion = await client.chat.completions.create(
-      buildBaseParams(creature, userPrompt, opts),
+      buildBaseParams(creature, userPrompt, opts, config),
       { signal: opts.signal },
     );
     const text = completion.choices[0]?.message?.content;
@@ -110,13 +129,24 @@ export async function callCreature(
         `Creature ${creature.kind} returned an empty response (model=${creature.model}).`,
       );
     }
-    const usage: TokenUsage = {
+    let usage: TokenUsage = {
       promptTokens: completion.usage?.prompt_tokens ?? 0,
       completionTokens: completion.usage?.completion_tokens ?? 0,
       totalTokens: completion.usage?.total_tokens ?? 0,
       model: completion.model ?? creature.model,
     };
-    return { text, usage };
+    const formatted = await ensureFormattedOutput({
+      client,
+      creature,
+      userPrompt,
+      opts,
+      config,
+      text,
+      usage,
+      signal: opts.signal,
+    });
+    usage = formatted.usage;
+    return { text: formatted.text, usage };
   });
 }
 
@@ -126,12 +156,13 @@ export async function callCreatureStream(
   onChunk: (chunk: string) => void,
   opts: CallOptions = {},
 ): Promise<CreatureResponse> {
-  const client = getClient();
+  const config = loadProviderConfigFromCwd();
+  const client = getClient(config);
   const sem = sharedSemaphore();
   return sem.run(async () => {
     const stream = await client.chat.completions.create(
       {
-        ...buildBaseParams(creature, userPrompt, opts),
+        ...buildBaseParams(creature, userPrompt, opts, config),
         stream: true,
         stream_options: { include_usage: true },
       },
@@ -164,6 +195,69 @@ export async function callCreatureStream(
         `Creature ${creature.kind} streamed an empty response (model=${creature.model}).`,
       );
     }
+    const formatted = await ensureFormattedOutput({
+      client,
+      creature,
+      userPrompt,
+      opts,
+      config,
+      text,
+      usage,
+      signal: opts.signal,
+    });
+    text = formatted.text;
+    usage = formatted.usage;
     return { text, usage };
   });
+}
+
+async function ensureFormattedOutput(opts: {
+  client: OpenAI;
+  creature: Creature;
+  userPrompt: string;
+  opts: CallOptions;
+  config: ProviderConfig;
+  text: string;
+  usage: TokenUsage;
+  signal?: AbortSignal;
+}): Promise<CreatureResponse> {
+  const outputFormat = normalizeOutputFormat(opts.opts.outputFormat);
+  if (outputFormat === "freeform") return { text: opts.text, usage: opts.usage };
+  try {
+    return {
+      text: assertOutputFormat(opts.text, outputFormat),
+      usage: opts.usage,
+    };
+  } catch (err) {
+    const repairPrompt = buildFormatRepairPrompt({
+      format: outputFormat,
+      originalPrompt: opts.userPrompt,
+      output: opts.text,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    const repair = await opts.client.chat.completions.create(
+      buildBaseParams(
+        opts.creature,
+        repairPrompt,
+        { ...opts.opts, outputFormat },
+        opts.config,
+      ),
+      { signal: opts.signal },
+    );
+    const repairedText = repair.choices[0]?.message?.content;
+    if (!repairedText) throw err;
+    const repairedUsage: TokenUsage = {
+      promptTokens:
+        opts.usage.promptTokens + (repair.usage?.prompt_tokens ?? 0),
+      completionTokens:
+        opts.usage.completionTokens + (repair.usage?.completion_tokens ?? 0),
+      totalTokens:
+        opts.usage.totalTokens + (repair.usage?.total_tokens ?? 0),
+      model: repair.model ?? opts.usage.model,
+    };
+    return {
+      text: assertOutputFormat(repairedText, outputFormat),
+      usage: repairedUsage,
+    };
+  }
 }
