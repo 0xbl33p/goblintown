@@ -331,9 +331,17 @@ Tank top bar. It saves non-secret provider settings to `.goblintown/warren.json`
 - per-creature provider routes (optional)
 - default output format: `freeform`, `markdown`, or `json`
 
-API keys are never written to `warren.json`. Set the key in your shell with the
-provider-specific environment variable shown by the menu. `OPENAI_API_KEY` still
-works as a fallback for compatible endpoints.
+API keys are never written to `warren.json`. You can either set the key in your
+shell environment, or save it from the Provider menu into a local secret file at
+`.goblintown/provider-secrets.json` (gitignored with the rest of `.goblintown`).
+Key lookup order is:
+
+1. provider-specific env var (for example `GROQ_API_KEY`)
+2. saved local secret for that env var
+3. `OPENAI_API_KEY` (env, then saved local secret)
+
+For local presets, dummy key behavior is unchanged (`ollama` keeps a dummy key;
+`lmstudio` keeps an empty key by default).
 
 `--format markdown` and `--format json` can also be passed to `quest`, `rite`,
 and `plan`. Formatting is applied only to answer-producing calls, so internal

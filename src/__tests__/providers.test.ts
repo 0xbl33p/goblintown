@@ -11,6 +11,12 @@ import {
   resolveProviderRuntimeForSlot,
   resolveProviderRuntime,
 } from "../providers.js";
+import {
+  clearProviderSecretForRoot,
+  providerSecretsPathForRoot,
+  readProviderSecretsForRootSync,
+  setProviderSecretForRoot,
+} from "../provider-secrets.js";
 import { initWarren, loadWarren } from "../warren.js";
 
 let dir: string;
@@ -114,6 +120,26 @@ describe("provider presets", () => {
     assert.equal(fallback.apiKey, "generic-key");
   });
 
+  it("prefers environment keys over saved local secrets", () => {
+    const runtime = resolveProviderRuntime(
+      { preset: "groq" },
+      { GROQ_API_KEY: "env-key" },
+      { GROQ_API_KEY: "stored-key" },
+    );
+    assert.equal(runtime.apiKey, "env-key");
+    assert.equal(runtime.apiKeySource, "env");
+  });
+
+  it("falls back to saved local secrets when env is missing", () => {
+    const runtime = resolveProviderRuntime(
+      { preset: "groq" },
+      {},
+      { GROQ_API_KEY: "stored-key" },
+    );
+    assert.equal(runtime.apiKey, "stored-key");
+    assert.equal(runtime.apiKeySource, "stored");
+  });
+
   it("resolves model slots from explicit config before preset defaults", () => {
     const cfg = normalizeProviderConfig({
       preset: "deepseek",
@@ -172,5 +198,29 @@ describe("Warren provider config", () => {
 
     const loaded = await loadWarren(dir);
     assert.equal(loaded.manifest.provider?.preset, "openai");
+  });
+
+  it("stores and clears provider secrets in a local file outside warren.json", async () => {
+    await initWarren(dir);
+    const secretPath = providerSecretsPathForRoot(dir);
+    await setProviderSecretForRoot(dir, "GROQ_API_KEY", "sk-local");
+    const secrets = readProviderSecretsForRootSync(dir);
+    assert.equal(secrets.GROQ_API_KEY, "sk-local");
+
+    const manifestRaw = await readFile(join(dir, ".goblintown", "warren.json"), "utf8");
+    assert.equal(manifestRaw.includes("sk-local"), false);
+
+    await clearProviderSecretForRoot(dir, "GROQ_API_KEY");
+    const after = readProviderSecretsForRootSync(dir);
+    assert.equal("GROQ_API_KEY" in after, false);
+    const exists = await import("node:fs/promises").then(async ({ access }) => {
+      try {
+        await access(secretPath);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    assert.equal(exists, false);
   });
 });

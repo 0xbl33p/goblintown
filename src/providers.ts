@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { readProviderSecretsFromCwdSync } from "./provider-secrets.js";
 import type {
   ModelSlot,
   OutputFormat,
@@ -41,6 +42,7 @@ export interface ProviderRuntime {
   baseURL?: string;
   apiKeyEnv: string;
   apiKey: string;
+  apiKeySource: "env" | "stored" | "dummy" | "none";
   outputFormat: OutputFormat;
   models: Record<ModelSlot, string>;
   missingApiKey?: string;
@@ -220,11 +222,18 @@ export function normalizeProviderConfig(value: unknown): ProviderConfig {
 export function resolveProviderRuntime(
   config: ProviderConfig | undefined,
   env: Env = process.env,
+  storedApiKeys: Record<string, string> | undefined = undefined,
 ): ProviderRuntime {
   const normalized = normalizeProviderConfig(config);
   const preset = PROVIDER_PRESETS[normalized.preset];
   const apiKeyEnv = normalized.apiKeyEnv ?? preset.apiKeyEnv;
-  const apiKey = resolveApiKey(apiKeyEnv, preset, env);
+  const resolved = resolveApiKey(
+    apiKeyEnv,
+    preset,
+    env,
+    storedApiKeys ?? readProviderSecretsFromCwdSync(),
+  );
+  const apiKey = resolved.apiKey;
   const missingApiKey = apiKey || preset.local ? undefined : apiKeyEnv;
   const baseURL = normalized.baseURL ?? env.OPENAI_BASE_URL;
   const referer = env.OPENROUTER_REFERER;
@@ -242,6 +251,7 @@ export function resolveProviderRuntime(
     baseURL,
     apiKeyEnv,
     apiKey,
+    apiKeySource: resolved.source,
     outputFormat: normalized.outputFormat ?? "freeform",
     models: {
       ...preset.models,
@@ -269,10 +279,11 @@ export function resolveProviderRuntimeForSlot(
   slot: ModelSlot,
   config: ProviderConfig | undefined,
   env: Env = process.env,
+  storedApiKeys: Record<string, string> | undefined = undefined,
 ): ProviderRuntime {
   const normalized = normalizeProviderConfig(config);
   const route = normalized.routes?.[slot];
-  if (!route) return resolveProviderRuntime(normalized, env);
+  if (!route) return resolveProviderRuntime(normalized, env, storedApiKeys);
   const models: Partial<Record<ModelSlot, string>> = {
     ...(normalized.models ?? {}),
   };
@@ -287,6 +298,7 @@ export function resolveProviderRuntimeForSlot(
       models,
     },
     env,
+    storedApiKeys,
   );
 }
 
@@ -321,7 +333,8 @@ function resolveApiKey(
   apiKeyEnv: string,
   preset: ProviderPreset,
   env: Env,
-): string {
+  storedApiKeys: Record<string, string>,
+): { apiKey: string; source: "env" | "stored" | "dummy" | "none" } {
   const candidates = [
     apiKeyEnv,
     preset.apiKeyEnv,
@@ -330,9 +343,15 @@ function resolveApiKey(
   ];
   for (const key of Array.from(new Set(candidates))) {
     const value = stringOrUndefined(env[key]);
-    if (value) return value;
+    if (value) return { apiKey: value, source: "env" };
   }
-  return (preset.local ? preset.dummyApiKey : undefined) ?? "";
+  for (const key of Array.from(new Set(candidates))) {
+    const value = stringOrUndefined(storedApiKeys[key]);
+    if (value) return { apiKey: value, source: "stored" };
+  }
+  const dummy = (preset.local ? preset.dummyApiKey : undefined) ?? "";
+  if (dummy) return { apiKey: dummy, source: "dummy" };
+  return { apiKey: "", source: "none" };
 }
 
 function normalizeProviderRoute(value: unknown): ProviderRouteConfig | null {

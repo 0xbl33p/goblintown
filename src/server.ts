@@ -38,6 +38,11 @@ import {
   normalizeProviderConfig,
   resolveProviderRuntime,
 } from "./providers.js";
+import {
+  clearProviderSecretForRoot,
+  readProviderSecretsForRootSync,
+  setProviderSecretForRoot,
+} from "./provider-secrets.js";
 import { loadWarren, saveWarrenManifest, type Warren } from "./warren.js";
 
 export interface ServeOptions {
@@ -188,8 +193,21 @@ export async function serve(opts: ServeOptions): Promise<void> {
     res.json(providerPayload(warren));
   });
   app.post("/api/provider", async (req, res) => {
-    const config = normalizeProviderConfig(req.body);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const config = normalizeProviderConfig(body);
     warren.manifest.provider = config;
+    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : undefined;
+    const clearApiKey = body.clearApiKey === true;
+    const apiKeyEnv = config.apiKeyEnv ?? "OPENAI_API_KEY";
+    if (apiKey !== undefined) {
+      if (apiKey.length > 0) {
+        await setProviderSecretForRoot(warren.root, apiKeyEnv, apiKey);
+      } else {
+        await clearProviderSecretForRoot(warren.root, apiKeyEnv);
+      }
+    } else if (clearApiKey) {
+      await clearProviderSecretForRoot(warren.root, apiKeyEnv);
+    }
     await saveWarrenManifest(warren);
     res.json(providerPayload(warren));
   });
@@ -672,6 +690,8 @@ function providerPayload(warren: Warren): {
     label: string;
     baseURL?: string;
     apiKeyEnv: string;
+    apiKeySource: "env" | "stored" | "dummy" | "none";
+    hasStoredApiKey: boolean;
     hasApiKey: boolean;
     missingApiKey?: string;
     outputFormat: OutputFormat;
@@ -679,7 +699,8 @@ function providerPayload(warren: Warren): {
   };
 } {
   const config = normalizeProviderConfig(warren.manifest.provider);
-  const runtime = resolveProviderRuntime(config);
+  const storedSecrets = readProviderSecretsForRootSync(warren.root);
+  const runtime = resolveProviderRuntime(config, process.env, storedSecrets);
   return {
     config,
     runtime: {
@@ -687,6 +708,8 @@ function providerPayload(warren: Warren): {
       label: runtime.label,
       baseURL: runtime.baseURL,
       apiKeyEnv: runtime.apiKeyEnv,
+      apiKeySource: runtime.apiKeySource,
+      hasStoredApiKey: !!storedSecrets[runtime.apiKeyEnv],
       hasApiKey: runtime.apiKey.length > 0 && !runtime.missingApiKey,
       missingApiKey: runtime.missingApiKey,
       outputFormat: runtime.outputFormat,
@@ -1450,6 +1473,7 @@ function tankHtml(
     min-height: 0;
     border-bottom: 1px solid var(--line);
   }
+  .workarea.sidebar-collapsed { grid-template-columns: 48px 1fr; }
   .ops-sidebar {
     border-right: 1px solid var(--line);
     background: rgba(8, 12, 8, 0.95);
@@ -1459,12 +1483,44 @@ function tankHtml(
     min-height: 0;
     gap: 0.6rem;
   }
+  .ops-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+  }
   .ops-sidebar h3 {
     margin: 0;
     font-size: 0.74rem;
     color: var(--fg-bright);
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+  .ops-toggle {
+    padding: 0.2rem 0.42rem;
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    color: var(--muted);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.7rem;
+  }
+  .ops-toggle:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .ops-main {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .ops-quick {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.3rem;
+  }
+  .ops-quick .btn {
+    padding: 0.45rem 0.4rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.07em;
   }
   .ops-subtle {
     color: var(--muted);
@@ -1521,6 +1577,20 @@ function tankHtml(
   }
   .ops-output .err { color: var(--fail); }
   .ops-output .ok { color: var(--pass); }
+  .workarea.sidebar-collapsed .ops-main { display: none; }
+  .workarea.sidebar-collapsed .ops-sidebar { padding: 0.7rem 0.35rem; }
+  .workarea.sidebar-collapsed .ops-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .workarea.sidebar-collapsed .ops-sidebar h3 {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    text-align: center;
+    margin: 0 auto;
+    font-size: 0.62rem;
+  }
+  .workarea.sidebar-collapsed .ops-toggle { width: 100%; }
 
   .tank {
     position: relative; overflow: hidden;
@@ -1890,7 +1960,6 @@ function tankHtml(
   .ticker.live .dot { color: var(--accent-hot); animation: pulse-dot 1s ease-in-out infinite; }
   @keyframes pulse-dot { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
 
-  .controls { border-top: 1px solid var(--line); padding: 0.7rem 1rem; display: flex; gap: 0.6rem; background: var(--bg); }
   .btn {
     flex: 1; padding: 0.75rem 1rem;
     border: 1px solid var(--line); background: var(--bg-deep); color: var(--fg-bright);
@@ -2002,7 +2071,7 @@ function tankHtml(
     <span class="stat"><b id="stat-rites">${riteCount}</b> rites</span>
     <span class="stat">drift <b id="stat-drift">${drift.toFixed(3)}</b></span>
     <span class="grow"></span>
-    <button class="country-chip" id="country-chip" type="button">Team ▾</button>
+    <button class="country-chip" id="country-chip" type="button">Country ▾</button>
     <button class="provider-chip" id="provider-chip" type="button">API ▾</button>
     <span class="tier" id="tier-display">tier 0 · empty plot</span>
     <span class="clock" id="clock">idle</span>
@@ -2020,12 +2089,22 @@ function tankHtml(
         <input id="provider-keyenv" placeholder="OPENAI_API_KEY">
       </div>
       <div>
+        <label for="provider-apikey">API key (saved locally)</label>
+        <input id="provider-apikey" type="password" autocomplete="off" placeholder="sk-...">
+      </div>
+    </div>
+    <div class="provider-grid">
+      <div>
         <label for="provider-format">Forced format</label>
         <select id="provider-format">
           <option value="freeform">freeform</option>
           <option value="markdown">markdown</option>
           <option value="json">json object</option>
         </select>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button class="btn" type="button" id="provider-clear-key">Clear Saved Key</button>
       </div>
     </div>
     <details class="provider-advanced">
@@ -2071,31 +2150,41 @@ function tankHtml(
     </div>
   </div>
 
-  <div class="workarea">
+  <div class="workarea" id="workarea">
   <aside class="ops-sidebar" id="ops-sidebar">
-    <h3>Command Sidebar</h3>
-    <div class="ops-subtle">Run any Goblintown CLI command in-app. Use full syntax in the input line.</div>
-    <div class="ops-row">
-      <input class="ops-input" id="ops-line" placeholder='e.g. rite "Refactor planner" --pack 3 --remember'>
-      <button class="btn primary" id="ops-run" type="button">Run</button>
+    <div class="ops-head">
+      <h3>Command Sidebar</h3>
+      <button class="ops-toggle" id="ops-toggle" type="button" aria-expanded="true">◀</button>
     </div>
-    <div class="ops-presets" id="ops-presets">
-      <button type="button" data-line='summon goblin --task "Quick analysis"'>summon</button>
-      <button type="button" data-line='scavenge --task "What changed?" --scan "src/**/*.ts"'>scavenge</button>
-      <button type="button" data-line='quest "Investigate bug" --pack 3'>quest</button>
-      <button type="button" data-line='rite "Investigate bug" --pack 3 --remember'>rite</button>
-      <button type="button" data-line='plan "Ship feature safely" --max-nodes 6 --max-replan 2'>plan</button>
-      <button type="button" data-line='hoard --limit 20'>hoard</button>
-      <button type="button" data-line='drift'>drift</button>
-      <button type="button" data-line='inbox'>inbox</button>
-      <button type="button" data-line='outbox'>outbox</button>
-      <button type="button" data-line='route'>route</button>
-      <button type="button" data-line='country peer ls'>country peers</button>
-      <button type="button" data-line='country run --task "Cross-check this plan" --all'>country run</button>
-      <button type="button" data-line='fold --threshold 30'>fold</button>
-      <button type="button" data-line='reset --all'>reset</button>
+    <div class="ops-main" id="ops-main">
+      <div class="ops-quick">
+        <button class="btn primary" id="btn-rite" type="button">NEW RITE</button>
+        <button class="btn" id="btn-plan" type="button">PLAN</button>
+        <a class="btn" href="/runs">RUNS</a>
+      </div>
+      <div class="ops-subtle">Run any Goblintown CLI command in-app. Use full syntax in the input line.</div>
+      <div class="ops-row">
+        <input class="ops-input" id="ops-line" placeholder='e.g. rite "Refactor planner" --pack 3 --remember'>
+        <button class="btn primary" id="ops-run" type="button">Run</button>
+      </div>
+      <div class="ops-presets" id="ops-presets">
+        <button type="button" data-line='summon goblin --task "Quick analysis"'>summon</button>
+        <button type="button" data-line='scavenge --task "What changed?" --scan "src/**/*.ts"'>scavenge</button>
+        <button type="button" data-line='quest "Investigate bug" --pack 3'>quest</button>
+        <button type="button" data-line='rite "Investigate bug" --pack 3 --remember'>rite</button>
+        <button type="button" data-line='plan "Ship feature safely" --max-nodes 6 --max-replan 2'>plan</button>
+        <button type="button" data-line='hoard --limit 20'>hoard</button>
+        <button type="button" data-line='drift'>drift</button>
+        <button type="button" data-line='inbox'>inbox</button>
+        <button type="button" data-line='outbox'>outbox</button>
+        <button type="button" data-line='route'>route</button>
+        <button type="button" data-line='country peer ls'>country peers</button>
+        <button type="button" data-line='country run --task "Cross-check this plan" --all'>country run</button>
+        <button type="button" data-line='fold --threshold 30'>fold</button>
+        <button type="button" data-line='reset --all'>reset</button>
+      </div>
+      <div class="ops-output" id="ops-output">ready</div>
     </div>
-    <div class="ops-output" id="ops-output">ready</div>
   </aside>
 
   <div class="tank" id="tank">
@@ -2269,13 +2358,6 @@ function tankHtml(
     <span class="dot">●</span> <span id="ticker-text">idle</span>
   </div>
 
-  <div class="controls">
-    <button class="btn primary" id="btn-rite">▶ NEW RITE</button>
-    <button class="btn" id="btn-plan">▶ PLAN</button>
-    <a class="btn" href="/runs">RUNS</a>
-    <a class="btn" href="/drift">DRIFT</a>
-    <a class="btn" href="/inbox">INBOX</a>
-  </div>
 </div>
 
 <script>
@@ -2288,6 +2370,8 @@ const tickerText = $("ticker-text");
 const goblinPile = $("goblin-pile");
 const bubbleLayer = $("bubble-layer");
 const warren = $("warren");
+const workarea = $("workarea");
+const opsToggle = $("ops-toggle");
 const opsLine = $("ops-line");
 const opsRun = $("ops-run");
 const opsOutput = $("ops-output");
@@ -2295,6 +2379,22 @@ const opsOutput = $("ops-output");
 const rand  = (lo, hi) => lo + Math.random() * (hi - lo);
 const irand = (lo, hi) => Math.floor(rand(lo, hi + 1));
 const pick  = (arr)    => arr[Math.floor(Math.random() * arr.length)];
+
+function setSidebarCollapsed(collapsed) {
+  workarea.classList.toggle("sidebar-collapsed", collapsed);
+  opsToggle.textContent = collapsed ? "▶" : "◀";
+  opsToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  try { localStorage.setItem("goblintown.sidebarCollapsed", collapsed ? "1" : "0"); } catch {}
+}
+opsToggle.onclick = () => {
+  const collapsed = !workarea.classList.contains("sidebar-collapsed");
+  setSidebarCollapsed(collapsed);
+};
+try {
+  setSidebarCollapsed(localStorage.getItem("goblintown.sidebarCollapsed") === "1");
+} catch {
+  setSidebarCollapsed(false);
+}
 
 function renderOpsResult(result) {
   const ok = result.ok ? "ok" : "error";
@@ -2391,6 +2491,7 @@ const providerPopover = $("provider-popover");
 const providerPreset = $("provider-preset");
 const providerBaseUrl = $("provider-baseurl");
 const providerKeyEnv = $("provider-keyenv");
+const providerApiKey = $("provider-apikey");
 const providerFormat = $("provider-format");
 const providerModels = $("provider-models");
 const providerStatus = $("provider-status");
@@ -2423,9 +2524,16 @@ function applyProviderPayload(payload) {
   const missing = runtime.missingApiKey;
   providerChip.textContent = (runtime.label || "API") + " ▾";
   providerChip.dataset.missing = missing ? "true" : "false";
-  providerStatus.innerHTML = missing
-    ? "Missing key: set <strong>" + missing + "</strong> in your environment. Keys are not stored here."
-    : "Using <strong>" + (runtime.label || "provider") + "</strong>. Keys stay in environment variables.";
+  providerApiKey.value = "";
+  if (missing) {
+    providerStatus.innerHTML = "Missing key: set <strong>" + missing + "</strong> in env or save locally.";
+    return;
+  }
+  let source = "available";
+  if (runtime.apiKeySource === "env") source = "from environment";
+  else if (runtime.apiKeySource === "stored") source = "from local secret file";
+  else if (runtime.apiKeySource === "dummy") source = "using local dummy key";
+  providerStatus.innerHTML = "Using <strong>" + (runtime.label || "provider") + "</strong>, key " + source + ".";
 }
 async function loadProviderMenu() {
   try {
@@ -2475,6 +2583,8 @@ $("provider-save").onclick = async () => {
     outputFormat: providerFormat.value,
     models,
   };
+  const enteredApiKey = providerApiKey.value.trim();
+  if (enteredApiKey) payload.apiKey = enteredApiKey;
   providerStatus.textContent = "Saving...";
   try {
     const r = await fetch("/api/provider", {
@@ -2488,6 +2598,27 @@ $("provider-save").onclick = async () => {
     setTicker("provider saved: " + providerChip.textContent.replace(" ▾", ""));
   } catch (err) {
     providerStatus.textContent = "Save failed: " + (err.message || err);
+  }
+};
+$("provider-clear-key").onclick = async () => {
+  providerStatus.textContent = "Clearing saved key...";
+  try {
+    const r = await fetch("/api/provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        preset: providerPreset.value,
+        baseURL: providerBaseUrl.value.trim(),
+        apiKeyEnv: providerKeyEnv.value.trim(),
+        outputFormat: providerFormat.value,
+        clearApiKey: true,
+      }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    applyProviderPayload(await r.json());
+    setTicker("saved key cleared");
+  } catch (err) {
+    providerStatus.textContent = "Clear failed: " + (err.message || err);
   }
 };
 loadProviderMenu();
