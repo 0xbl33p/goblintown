@@ -289,6 +289,19 @@ goblintown send --to ../other-warren    --loot <id>
 goblintown send --to https://other:7777 --loot <id>
 goblintown inbox
 goblintown outbox
+
+# per-creature provider routing
+goblintown route
+goblintown route set goblin --preset ollama --model gemma3:27b
+goblintown route set ogre --preset openai --model gpt-5.5
+goblintown route clear goblin
+
+# goblin-country collaboration
+goblintown country peer add --name alpha --url http://localhost:7777
+goblintown country peer add --name beta  --url http://localhost:8888
+goblintown country peer ls
+goblintown country run --task "Audit this migration plan" --all --pack 2
+# (UI flow: Country top-bar menu supports code-based join/discovery + approvals)
 ```
 
 ## Models
@@ -316,11 +329,20 @@ Tank top bar. It saves non-secret provider settings to `.goblintown/warren.json`
 - base URL
 - API key environment variable name
 - per-creature model names
+- per-creature provider routes (optional)
 - default output format: `freeform`, `markdown`, or `json`
 
-API keys are never written to `warren.json`. Set the key in your shell with the
-provider-specific environment variable shown by the menu. `OPENAI_API_KEY` still
-works as a fallback for compatible endpoints.
+API keys are never written to `warren.json`. You can either set the key in your
+shell environment, or save it from the Provider menu into a local secret file at
+`.goblintown/provider-secrets.json` (gitignored with the rest of `.goblintown`).
+Key lookup order is:
+
+1. provider-specific env var (for example `GROQ_API_KEY`)
+2. saved local secret for that env var
+3. `OPENAI_API_KEY` (env, then saved local secret)
+
+For local presets, dummy key behavior is unchanged (`ollama` keeps a dummy key;
+`lmstudio` keeps an empty key by default).
 
 `--format markdown` and `--format json` can also be passed to `quest`, `rite`,
 and `plan`. Formatting is applied only to answer-producing calls, so internal
@@ -347,6 +369,21 @@ format-repair call if the first answer is malformed.
 The menu is intentionally an OpenAI-compatible routing layer, not a new
 orchestration engine. Changing providers changes model behavior and quality, but
 the Rite pipeline itself remains the same.
+
+### Per-creature provider routes
+
+Provider routes let you run different creatures against different backends:
+
+```bash
+goblintown route set goblin --preset ollama --model gemma3:27b
+goblintown route set troll  --preset openrouter --model openai/gpt-4o-mini
+goblintown route set ogre   --preset openai --model gpt-5.5
+goblintown route
+```
+
+Routes are slot-specific (`goblin`, `gremlin`, `raccoon`, `troll`, `ogre`,
+`pigeon`, `scribe`, `embedding`) and override the global provider for that
+slot only.
 
 ### Local runtime notes (LM Studio/Ollama)
 
@@ -436,6 +473,46 @@ The result is clamped to `[0, 1]`.
 signature; if both Warrens set `peerSecret` in their manifests, an HMAC tag
 is also required.
 
+## Goblin-Country
+
+Goblin-Country is a light collaboration layer across multiple Goblintown
+servers. Register peers in `warren.json`, then dispatch one rite task to many
+peers in parallel:
+
+```bash
+goblintown country peer add --name alpha --url http://localhost:7777
+goblintown country peer add --name beta --url http://localhost:8888
+goblintown country run --task "Find schema drift risks" --all --pack 2
+```
+
+`country run` starts `/api/rite` on each peer and polls `/api/runs/:runId`
+until each run completes (or times out).
+
+Team cap is fixed at six total members (lead + up to five peers), matching the
+six rite creature roles. In the Tank UI, Team settings expose a role matrix:
+unassigned roles can auto-fall back to the lead.
+
+### Country lifecycle in the Tank UI
+
+- A country identity is auto-created per Warren (random country name + code).
+- Open **Country ▾** in the top bar, enable **Country Mode**, then **Save Team**
+  to publish your country for discovery.
+- **Join** tab supports:
+  - search by country code, and
+  - random open-country sampling (up to 10 countries with 3 or fewer members).
+- Join requests are approved/denied by the lead in **Pending Join Requests**.
+- **Team** tab controls per-role ownership (goblin/gremlin/raccoon/troll/ogre/pigeon)
+  with optional auto-assignment of unclaimed roles to the lead.
+- When country mode is enabled, rites/plans require all teammates online;
+  otherwise requests are queued until members are reachable.
+
+### Friends & Mail
+
+- **Mail ▾** provides friend requests, threads, and direct messages.
+- Friend requests are code-based in the UI (enter collaborator country code;
+  no manual URL entry required).
+- Opening a thread auto-marks unread messages as read.
+
 ## Browser-driven rites (SSE)
 
 `goblintown serve` exposes `/rite/new` — an HTML form that POSTs to
@@ -483,6 +560,20 @@ interrupted on boot.
 | GET    | `/api/artifacts?limit=N`          | JSON list of artifacts (most recent first) |
 | GET    | `/api/warren/stats`               | `{ loot, rites, drift }` for the tier indicator |
 | GET    | `/api/trace/:runId`               | Run as an LLM-MAS Orchestration Trace |
+| GET    | `/api/providers`, `/api/provider` | Provider presets and active provider config |
+| POST   | `/api/provider`                   | Update provider config and saved local key |
+| GET    | `/api/country`                    | Full country state for current Warren |
+| GET    | `/api/country/public`             | Public country identity for discovery |
+| GET    | `/api/country/discover`           | Discoverable country list + random open sample |
+| POST   | `/api/country/join`               | Send join request to another country's lead |
+| POST   | `/api/country/join-request`       | Receive a join request |
+| POST   | `/api/country/join-approve`       | Approve/deny pending join request |
+| GET    | `/api/friends`                    | Friends, pending requests, thread summaries |
+| POST   | `/api/friends/request`            | Send friend request (country-code or URL path) |
+| POST   | `/api/friends/respond`            | Approve/deny a friend request |
+| POST   | `/api/dm/send`                    | Send direct message to a friend |
+| GET    | `/api/dm/:threadId`               | Read DM thread messages |
+| POST   | `/api/dm/:threadId/read`          | Mark unread messages as read |
 | POST   | `/api/inbox`                      | Federation receiver |
 
 ## Tests
@@ -491,7 +582,7 @@ interrupted on boot.
 npm test
 ```
 
-203 tests, no OpenAI calls. Pure-function coverage across drift, reward,
+214 tests, no OpenAI calls. Pure-function coverage across drift, reward,
 Hoard content-addressing, federation signatures (incl. HMAC), audit
 aggregation, reward plugin loader, graph rendering, concurrency semaphore,
 budget tracker, run persistence, markdown export, rite comparison, plus the

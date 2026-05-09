@@ -15,7 +15,7 @@ import {
   loadProviderConfigFromCwd,
   providerRuntimeSignature,
   resolveModelForSlot,
-  resolveProviderRuntime,
+  resolveProviderRuntimeForSlot,
 } from "./providers.js";
 import type { Artifact } from "./types.js";
 import type { Hoard } from "./hoard.js";
@@ -26,7 +26,7 @@ let _client: OpenAI | null = null;
 let _clientSignature: string | null = null;
 function getClient(): OpenAI {
   const config = loadProviderConfigFromCwd();
-  const runtime = resolveProviderRuntime(config);
+  const runtime = resolveProviderRuntimeForSlot("embedding", config);
   if (runtime.missingApiKey) throw new Error(`${runtime.missingApiKey} is not set`);
   const signature = providerRuntimeSignature(runtime);
   if (_client && _clientSignature === signature) return _client;

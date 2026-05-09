@@ -1,6 +1,28 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import express, { type Request, type Response } from "express";
-import { verifyInbox } from "./federation.js";
+import {
+  MAX_PEERS,
+  MAX_TEAM_MEMBERS,
+  makeCountryName,
+  makeCountryCode,
+  normalizeCountryConfig,
+  normalizeCountryCode,
+  normalizeCountryId,
+  normalizeCountryName,
+  normalizeWarrenPeers,
+  normalizeWarrenPeer,
+  resolveRoleOwners,
+  sampleOpenCountries,
+} from "./country.js";
+import {
+  ensureCountryIdentity,
+  readCountryIdentity,
+  signCountryPayload,
+  verifyCountryPayload,
+} from "./country-identity.js";
+import { verifyHmac, verifyInbox } from "./federation.js";
 import { performRite, type RiteStep } from "./rite.js";
 import { loadRewardPlugin } from "./reward-plugin.js";
 import {
@@ -12,7 +34,13 @@ import {
 import {
   CREATURE_KINDS,
   type Artifact,
+  type CountryJoinRequest,
+  type CountryQueuedRite,
   type CreatureKind,
+  type DirectMessage,
+  type DirectMessageThread,
+  type FriendRecord,
+  type FriendRequest,
   type InboxMessage,
   type OutputFormat,
   type Personality,
@@ -29,7 +57,26 @@ import {
   normalizeProviderConfig,
   resolveProviderRuntime,
 } from "./providers.js";
+import {
+  clearProviderSecretForRoot,
+  readProviderSecretsForRootSync,
+  setProviderSecretForRoot,
+} from "./provider-secrets.js";
 import { loadWarren, saveWarrenManifest, type Warren } from "./warren.js";
+import {
+  directMessagePayload,
+  friendIdFromPublicKey,
+  friendRequestPayload,
+  makeMessagePreview,
+  makeThreadId,
+  normalizeDirectMessage,
+  normalizeFriendRecord,
+  normalizeFriendRequest,
+  normalizeMessageBody,
+  normalizePublicKeyPem,
+  normalizeSocialName,
+  normalizeSocialUrl,
+} from "./social.js";
 
 export interface ServeOptions {
   cwd: string;
@@ -41,8 +88,19 @@ interface RunState {
   subscribers: Set<Response>;
 }
 
+function runSummary(record: RunRecord): Omit<RunRecord, "events"> & { eventCount: number } {
+  const { events, ...rest } = record;
+  return {
+    ...rest,
+    eventCount: events.length,
+  };
+}
+
 export async function serve(opts: ServeOptions): Promise<void> {
   const warren = await loadWarren(opts.cwd);
+  await ensureCountryIdentity(warren.root);
+  ensureCountryDefaults(warren);
+  await saveWarrenManifest(warren);
   const app = express();
   const runs = new Map<string, RunState>();
   const runDir = await ensureRunDir(warren.root);
@@ -92,7 +150,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   app.get("/api/runs", (_req, res) =>
     res.json(
       [...runs.values()]
-        .map((r) => r.record)
+        .map((r) => runSummary(r.record))
         .sort((a, b) => b.startedAt - a.startedAt),
     ),
   );
@@ -102,7 +160,8 @@ export async function serve(opts: ServeOptions): Promise<void> {
       res.status(404).json({ error: "no such run" });
       return;
     }
-    res.json(state.record);
+    const includeEvents = req.query.full === "1";
+    res.json(includeEvents ? state.record : runSummary(state.record));
   });
   app.get("/api/trace/:runId", (req, res) => {
     const state = runs.get(req.params.runId);
@@ -179,10 +238,681 @@ export async function serve(opts: ServeOptions): Promise<void> {
     res.json(providerPayload(warren));
   });
   app.post("/api/provider", async (req, res) => {
-    const config = normalizeProviderConfig(req.body);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const config = normalizeProviderConfig(body);
     warren.manifest.provider = config;
+    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : undefined;
+    const clearApiKey = body.clearApiKey === true;
+    const apiKeyEnv = config.apiKeyEnv ?? "OPENAI_API_KEY";
+    if (apiKey !== undefined) {
+      if (apiKey.length > 0) {
+        await setProviderSecretForRoot(warren.root, apiKeyEnv, apiKey);
+      } else {
+        await clearProviderSecretForRoot(warren.root, apiKeyEnv);
+      }
+    } else if (clearApiKey) {
+      await clearProviderSecretForRoot(warren.root, apiKeyEnv);
+    }
     await saveWarrenManifest(warren);
     res.json(providerPayload(warren));
+  });
+  app.get("/api/friends", async (_req, res) => {
+    const own = await ensureCountryIdentity(warren.root);
+    const ownName = warren.manifest.name;
+    const friends = await warren.hoard.allFriends();
+    const requests = await warren.hoard.allFriendRequests();
+    const threads = await warren.hoard.allDmThreads();
+    const threadRows = await Promise.all(threads.map(async (t) => {
+      const unread = await unreadCountForThread(warren, t.id, ownName);
+      const otherPublicKey = t.participantA === own.publicKeyPem ? t.participantB : t.participantA;
+      const friend = friends.find((f) => f.publicKey === otherPublicKey);
+      return {
+        ...t,
+        unread,
+        friendId: friend?.id ?? "",
+        friendName: friend?.name ?? "unknown",
+      };
+    }));
+    res.json({
+      friends: friends.sort((a, b) => a.name.localeCompare(b.name)),
+      pendingRequests: requests.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+      threads: threadRows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    });
+  });
+  app.post("/api/friends/request", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const requestedCode = normalizeCountryCode(body.countryCode ?? body.code);
+    let targetUrl = normalizeSocialUrl(body.targetUrl);
+    let resolvedCountry: {
+      source: string;
+      countryId: string;
+      countryName: string;
+      countryCode: string;
+      memberCount: number;
+      discoverable: boolean;
+      leadName: string;
+      leadUrl?: string;
+      targetUrl?: string;
+      leaderPublicKey?: string;
+    } | null = null;
+    if (!targetUrl && requestedCode) {
+      const countries = await discoverCountries(warren);
+      const discoverable = filterDiscoverableCountries(warren, countries, requestedCode);
+      resolvedCountry = sampleOpenCountries(discoverable, 1)[0] ?? discoverable[0] ?? null;
+      targetUrl = normalizeSocialUrl(resolvedCountry?.targetUrl);
+      if (!targetUrl) {
+        res.status(404).json({
+          error: `no discoverable country found for code ${requestedCode}`,
+        });
+        return;
+      }
+    }
+    if (!targetUrl) {
+      res.status(400).json({ error: "countryCode or targetUrl required" });
+      return;
+    }
+    const fromUrl = normalizeSocialUrl(process.env.GOBLINTOWN_PUBLIC_URL);
+    if (!fromUrl) {
+      res.status(400).json({ error: "Set GOBLINTOWN_PUBLIC_URL before sending friend requests." });
+      return;
+    }
+    if (fromUrl === targetUrl) {
+      res.status(400).json({ error: "cannot friend yourself" });
+      return;
+    }
+    const own = await ensureCountryIdentity(warren.root);
+    let remotePublic: {
+      leadName: string;
+      leadUrl?: string;
+      leaderPublicKey?: string;
+    } | null = null;
+    try {
+      const pubResp = await fetch(`${targetUrl}/api/country/public`);
+      if (pubResp.ok) {
+        remotePublic = (await pubResp.json()) as {
+          leadName: string;
+          leadUrl?: string;
+          leaderPublicKey?: string;
+        };
+      }
+    } catch {
+      remotePublic = null;
+    }
+    const toName = normalizeSocialName(body.toName) ?? normalizeSocialName(remotePublic?.leadName) ?? "lead";
+    const toUrl =
+      normalizeSocialUrl(body.toUrl) ??
+      normalizeSocialUrl(remotePublic?.leadUrl) ??
+      normalizeSocialUrl(resolvedCountry?.leadUrl) ??
+      targetUrl;
+    const toPublicKey =
+      normalizePublicKeyPem(body.toPublicKey) ??
+      normalizePublicKeyPem(remotePublic?.leaderPublicKey) ??
+      normalizePublicKeyPem(resolvedCountry?.leaderPublicKey);
+    if (!toPublicKey) {
+      res.status(400).json({ error: "target public key unavailable; remote must expose /api/country/public leaderPublicKey" });
+      return;
+    }
+    const requestMsg: FriendRequest = {
+      id: randomUUID().slice(0, 12),
+      fromName: warren.manifest.name,
+      fromUrl,
+      fromPublicKey: own.publicKeyPem,
+      toName,
+      toUrl,
+      createdAt: new Date().toISOString(),
+      signature: "",
+    };
+    requestMsg.signature = signCountryPayload(own.privateKeyPem, friendRequestPayload(requestMsg));
+    const sendResp = await fetch(`${toUrl}/api/friends/receive-request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestMsg),
+    });
+    if (!sendResp.ok) {
+      const text = await sendResp.text().catch(() => "");
+      res.status(502).json({ error: `friend request failed: ${sendResp.status} ${sendResp.statusText} ${text}` });
+      return;
+    }
+    res.json({
+      ok: true,
+      id: requestMsg.id,
+      ...(resolvedCountry
+        ? {
+            country: {
+              code: resolvedCountry.countryCode,
+              name: resolvedCountry.countryName,
+            },
+          }
+        : {}),
+    });
+  });
+  app.post("/api/friends/receive-request", async (req, res) => {
+    const requestMsg = normalizeFriendRequest(req.body);
+    if (!requestMsg) {
+      res.status(400).json({ error: "invalid friend request payload" });
+      return;
+    }
+    const ownUrl = normalizeSocialUrl(process.env.GOBLINTOWN_PUBLIC_URL);
+    if (!ownUrl) {
+      res.status(400).json({ error: "receiver missing GOBLINTOWN_PUBLIC_URL" });
+      return;
+    }
+    if (requestMsg.toName !== warren.manifest.name || requestMsg.toUrl !== ownUrl) {
+      res.status(400).json({ error: "friend request recipient mismatch" });
+      return;
+    }
+    if (!verifyCountryPayload(
+      requestMsg.fromPublicKey,
+      friendRequestPayload(requestMsg),
+      requestMsg.signature,
+    )) {
+      res.status(400).json({ error: "friend request signature invalid" });
+      return;
+    }
+    const pending = await warren.hoard.allFriendRequests();
+    const already = pending.some((p) => p.id === requestMsg.id);
+    if (!already) await warren.hoard.stashFriendRequest(requestMsg);
+    res.json({ ok: true, id: requestMsg.id });
+  });
+  app.post("/api/friends/respond", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const requestId = typeof body.requestId === "string" ? body.requestId.trim() : "";
+    const approve = body.approve !== false;
+    if (!requestId) {
+      res.status(400).json({ error: "requestId required" });
+      return;
+    }
+    const pending = await warren.hoard.allFriendRequests();
+    const requestMsg = pending.find((r) => r.id === requestId);
+    if (!requestMsg) {
+      res.status(404).json({ error: "friend request not found" });
+      return;
+    }
+    await warren.hoard.removeFriendRequest(requestId);
+    if (!approve) {
+      res.json({ ok: true, approved: false });
+      return;
+    }
+    const friend: FriendRecord = {
+      id: friendIdFromPublicKey(requestMsg.fromPublicKey),
+      name: requestMsg.fromName,
+      url: requestMsg.fromUrl,
+      publicKey: requestMsg.fromPublicKey,
+      createdAt: new Date().toISOString(),
+    };
+    await upsertFriend(warren, friend);
+    const own = await ensureCountryIdentity(warren.root);
+    const ownUrl = normalizeSocialUrl(process.env.GOBLINTOWN_PUBLIC_URL);
+    let callbackDelivered = false;
+    let callbackError = "";
+    if (ownUrl) {
+      const approvedMsg: FriendRequest = {
+        id: randomUUID().slice(0, 12),
+        fromName: warren.manifest.name,
+        fromUrl: ownUrl,
+        fromPublicKey: own.publicKeyPem,
+        toName: requestMsg.fromName,
+        toUrl: requestMsg.fromUrl,
+        createdAt: new Date().toISOString(),
+        signature: "",
+      };
+      approvedMsg.signature = signCountryPayload(own.privateKeyPem, friendRequestPayload(approvedMsg));
+      try {
+        const cbResp = await fetch(`${requestMsg.fromUrl}/api/friends/approved`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(approvedMsg),
+        });
+        if (!cbResp.ok) {
+          const text = await cbResp.text().catch(() => "");
+          callbackError = `approval callback failed: ${cbResp.status} ${cbResp.statusText} ${text}`;
+        } else {
+          callbackDelivered = true;
+        }
+      } catch (err) {
+        callbackError = err instanceof Error ? err.message : String(err);
+      }
+    } else {
+      callbackError = "missing GOBLINTOWN_PUBLIC_URL";
+    }
+    res.json({
+      ok: true,
+      approved: true,
+      callback: {
+        delivered: callbackDelivered,
+        ...(callbackError ? { error: callbackError } : {}),
+      },
+    });
+  });
+  app.post("/api/friends/approved", async (req, res) => {
+    const approvedMsg = normalizeFriendRequest(req.body);
+    if (!approvedMsg) {
+      res.status(400).json({ error: "invalid approval payload" });
+      return;
+    }
+    const ownUrl = normalizeSocialUrl(process.env.GOBLINTOWN_PUBLIC_URL);
+    if (!ownUrl) {
+      res.status(400).json({ error: "receiver missing GOBLINTOWN_PUBLIC_URL" });
+      return;
+    }
+    if (approvedMsg.toName !== warren.manifest.name || approvedMsg.toUrl !== ownUrl) {
+      res.status(400).json({ error: "approval recipient mismatch" });
+      return;
+    }
+    if (!verifyCountryPayload(
+      approvedMsg.fromPublicKey,
+      friendRequestPayload(approvedMsg),
+      approvedMsg.signature,
+    )) {
+      res.status(400).json({ error: "approval signature invalid" });
+      return;
+    }
+    await upsertFriend(warren, {
+      id: friendIdFromPublicKey(approvedMsg.fromPublicKey),
+      name: approvedMsg.fromName,
+      url: approvedMsg.fromUrl,
+      publicKey: approvedMsg.fromPublicKey,
+      createdAt: new Date().toISOString(),
+    });
+    res.json({ ok: true });
+  });
+  app.post("/api/friends/:friendId/remove", async (req, res) => {
+    const friendId = req.params.friendId.trim();
+    if (!friendId) {
+      res.status(400).json({ error: "friendId required" });
+      return;
+    }
+    await warren.hoard.removeFriend(friendId);
+    res.json({ ok: true });
+  });
+  app.get("/api/dm/threads", async (_req, res) => {
+    const ownName = warren.manifest.name;
+    const own = await ensureCountryIdentity(warren.root);
+    const friends = await warren.hoard.allFriends();
+    const threads = await warren.hoard.allDmThreads();
+    const rows = await Promise.all(threads.map(async (t) => {
+      const unread = await unreadCountForThread(warren, t.id, ownName);
+      const otherPublicKey = t.participantA === own.publicKeyPem ? t.participantB : t.participantA;
+      const friend = friends.find((f) => f.publicKey === otherPublicKey);
+      return {
+        ...t,
+        unread,
+        friendId: friend?.id ?? "",
+        friendName: friend?.name ?? "unknown",
+      };
+    }));
+    res.json(rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+  });
+  app.get("/api/dm/:threadId", async (req, res) => {
+    const threadId = req.params.threadId.trim();
+    if (!threadId) {
+      res.status(400).json({ error: "threadId required" });
+      return;
+    }
+    const before = typeof req.query.before === "string" ? req.query.before : "";
+    const limitRaw = Number(req.query.limit ?? 100);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 100;
+    const all = (await warren.hoard.allDmMessages(threadId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    let rows = all;
+    if (before) rows = rows.filter((m) => m.createdAt < before);
+    rows = rows.slice(Math.max(0, rows.length - limit));
+    res.json(rows);
+  });
+  app.post("/api/dm/send", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const friendId = typeof body.friendId === "string" ? body.friendId.trim() : "";
+    const textBody = normalizeMessageBody(body.body);
+    if (!friendId || !textBody) {
+      res.status(400).json({ error: "friendId and body required" });
+      return;
+    }
+    const ownUrl = normalizeSocialUrl(process.env.GOBLINTOWN_PUBLIC_URL);
+    if (!ownUrl) {
+      res.status(400).json({ error: "Set GOBLINTOWN_PUBLIC_URL before sending messages." });
+      return;
+    }
+    const friend = (await warren.hoard.allFriends()).find((f) => f.id === friendId);
+    if (!friend) {
+      res.status(404).json({ error: "friend not found" });
+      return;
+    }
+    const own = await ensureCountryIdentity(warren.root);
+    const threadId = makeThreadId(own.publicKeyPem, friend.publicKey);
+    const msg: DirectMessage = {
+      id: randomUUID().slice(0, 12),
+      threadId,
+      fromName: warren.manifest.name,
+      fromUrl: ownUrl,
+      fromPublicKey: own.publicKeyPem,
+      toName: friend.name,
+      toUrl: friend.url,
+      body: textBody,
+      createdAt: new Date().toISOString(),
+      signature: "",
+    };
+    msg.signature = signCountryPayload(own.privateKeyPem, directMessagePayload(msg));
+    await warren.hoard.stashDmMessage(msg);
+    await warren.hoard.stashDmThread({
+      id: threadId,
+      participantA: [own.publicKeyPem, friend.publicKey].sort()[0],
+      participantB: [own.publicKeyPem, friend.publicKey].sort()[1],
+      updatedAt: msg.createdAt,
+      lastMessagePreview: makeMessagePreview(msg.body),
+    });
+    const remoteResp = await fetch(`${friend.url}/api/dm/receive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(msg),
+    });
+    if (!remoteResp.ok) {
+      const text = await remoteResp.text().catch(() => "");
+      res.status(502).json({ error: `delivery failed: ${remoteResp.status} ${remoteResp.statusText} ${text}` });
+      return;
+    }
+    res.json({ ok: true, id: msg.id, threadId });
+  });
+  app.post("/api/dm/receive", async (req, res) => {
+    const msg = normalizeDirectMessage(req.body);
+    if (!msg) {
+      res.status(400).json({ error: "invalid message payload" });
+      return;
+    }
+    const ownUrl = normalizeSocialUrl(process.env.GOBLINTOWN_PUBLIC_URL);
+    if (!ownUrl || msg.toName !== warren.manifest.name || msg.toUrl !== ownUrl) {
+      res.status(400).json({ error: "message recipient mismatch" });
+      return;
+    }
+    if (!verifyCountryPayload(msg.fromPublicKey, directMessagePayload(msg), msg.signature)) {
+      res.status(400).json({ error: "message signature invalid" });
+      return;
+    }
+    const expectedThreadId = makeThreadId(
+      msg.fromPublicKey,
+      (await ensureCountryIdentity(warren.root)).publicKeyPem,
+    );
+    if (expectedThreadId !== msg.threadId) {
+      res.status(400).json({ error: "thread mismatch" });
+      return;
+    }
+    const friend = (await warren.hoard.allFriends()).find((f) => f.publicKey === msg.fromPublicKey);
+    if (!friend) {
+      res.status(403).json({ error: "sender is not in your friends list" });
+      return;
+    }
+    await warren.hoard.stashDmMessage(msg);
+    await warren.hoard.stashDmThread({
+      id: msg.threadId,
+      participantA: [msg.fromPublicKey, friend.publicKey].sort()[0],
+      participantB: [msg.fromPublicKey, friend.publicKey].sort()[1],
+      updatedAt: msg.createdAt,
+      lastMessagePreview: makeMessagePreview(msg.body),
+    });
+    res.json({ ok: true, id: msg.id });
+  });
+  app.post("/api/dm/:threadId/read", async (req, res) => {
+    const threadId = req.params.threadId.trim();
+    if (!threadId) {
+      res.status(400).json({ error: "threadId required" });
+      return;
+    }
+    const ownName = warren.manifest.name;
+    const rows = await warren.hoard.allDmMessages(threadId);
+    const now = new Date().toISOString();
+    await Promise.all(rows.map(async (msg) => {
+      if (msg.toName === ownName && !msg.readAt) {
+        await warren.hoard.stashDmMessage({ ...msg, readAt: now });
+      }
+    }));
+    res.json({ ok: true });
+  });
+  app.get("/api/country", async (_req, res) => {
+    res.json(await countryPayload(warren));
+  });
+  app.get("/api/country/public", async (_req, res) => {
+    res.json(await countryPublicPayload(warren));
+  });
+  app.get("/api/country/presence", async (_req, res) => {
+    const ownName = warren.manifest.name;
+    const [inbox, dmThreads] = await Promise.all([
+      warren.hoard.allInbox(),
+      warren.hoard.allDmThreads(),
+    ]);
+    let unreadDm = 0;
+    for (const t of dmThreads) unreadDm += await unreadCountForThread(warren, t.id, ownName);
+    res.json({
+      online: true,
+      hasMail: inbox.length > 0 || unreadDm > 0,
+      unreadDm,
+      checkedAt: new Date().toISOString(),
+      warren: warren.manifest.name,
+    });
+  });
+  app.get("/api/country/discover", async (_req, res) => {
+    const list = await discoverCountries(warren);
+    const qCode = normalizeCountryCode(_req.query.code) ?? undefined;
+    const discoverable = filterDiscoverableCountries(warren, list, qCode);
+    res.json({
+      countries: discoverable,
+      randomOpen: sampleOpenCountries(discoverable, 10),
+    });
+  });
+  app.post("/api/country/join", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const targetUrl = typeof body.targetUrl === "string" ? body.targetUrl.trim() : "";
+    const countryId = normalizeCountryId(body.countryId);
+    const countryCode = normalizeCountryCode(body.countryCode);
+    if (!targetUrl || !countryId || !countryCode) {
+      res.status(400).json({ error: "targetUrl, countryId, countryCode required" });
+      return;
+    }
+    const own = normalizeCountryConfig(warren.manifest.country);
+    const ownUrl = (process.env.GOBLINTOWN_PUBLIC_URL ?? "").replace(/\/+$/, "");
+    if (ownUrl && targetUrl.replace(/\/+$/, "") === ownUrl) {
+      res.status(400).json({ error: "cannot send join request to your own town URL" });
+      return;
+    }
+    if (
+      own.countryId && own.countryCode &&
+      own.countryId === countryId && own.countryCode === countryCode
+    ) {
+      res.status(400).json({ error: "cannot join your own country" });
+      return;
+    }
+    try {
+      const request = await sendJoinRequestToCountryLeader(
+        warren,
+        targetUrl,
+        countryId,
+        countryCode,
+      );
+      res.json({ ok: true, requestId: request.id });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/country/join-request", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const request = normalizeIncomingJoinRequest(body);
+    if (!request) {
+      res.status(400).json({ error: "invalid join request" });
+      return;
+    }
+    const c = normalizeCountryConfig(warren.manifest.country);
+    if (c.countryId !== request.countryId || c.countryCode !== request.countryCode) {
+      res.status(400).json({ error: "country mismatch" });
+      return;
+    }
+    if (!verifyCountryPayload(request.fromPublicKey, joinRequestMessage(request), request.signature)) {
+      res.status(400).json({ error: "signature invalid" });
+      return;
+    }
+    if ((warren.manifest.peers ?? []).length >= MAX_PEERS) {
+      res.status(409).json({ error: "team full" });
+      return;
+    }
+    const pending = c.pendingJoinRequests ?? [];
+    if (pending.some((r) => r.id === request.id)) {
+      res.json({ ok: true, duplicate: true });
+      return;
+    }
+    warren.manifest.country = normalizeCountryConfig({
+      ...c,
+      pendingJoinRequests: [...pending, request],
+    });
+    await saveWarrenManifest(warren);
+    res.json({ ok: true, id: request.id });
+  });
+  app.post("/api/country/join-approved", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const peer = normalizeWarrenPeer({
+      name: body.name,
+      url: body.url,
+      note: body.note,
+      createdAt: new Date().toISOString(),
+    });
+    const countryId = normalizeCountryId(body.countryId);
+    const countryName = normalizeCountryName(body.countryName);
+    const countryCode = normalizeCountryCode(body.countryCode);
+    const leaderPublicKey = typeof body.leaderPublicKey === "string" ? body.leaderPublicKey.trim() : "";
+    const signature = typeof body.signature === "string" ? body.signature.trim() : "";
+    if (!peer || !countryId || !countryName || !countryCode || !leaderPublicKey || !signature) {
+      res.status(400).json({ error: "invalid approval payload" });
+      return;
+    }
+    const msg = joinApprovalMessage({
+      countryId,
+      countryName,
+      countryCode,
+      peerName: peer.name,
+      peerUrl: peer.url,
+    });
+    if (!verifyCountryPayload(leaderPublicKey, msg, signature)) {
+      res.status(400).json({ error: "approval signature invalid" });
+      return;
+    }
+    const peers = normalizeWarrenPeers([...(warren.manifest.peers ?? []), peer]);
+    const c = normalizeCountryConfig(warren.manifest.country);
+    warren.manifest.peers = peers;
+    warren.manifest.country = normalizeCountryConfig({
+      ...c,
+      enabled: true,
+      countryId,
+      countryName,
+      countryCode,
+      leaderPublicKey,
+    });
+    await saveWarrenManifest(warren);
+    res.json({ ok: true });
+  });
+  app.post("/api/country/join-approve", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const requestId = typeof body.requestId === "string" ? body.requestId.trim() : "";
+    const approve = body.approve !== false;
+    const c = normalizeCountryConfig(warren.manifest.country);
+    const pending = c.pendingJoinRequests ?? [];
+    const reqRow = pending.find((r) => r.id === requestId);
+    if (!reqRow) {
+      res.status(404).json({ error: "request not found" });
+      return;
+    }
+    const remaining = pending.filter((r) => r.id !== requestId);
+    if (!approve) {
+      warren.manifest.country = normalizeCountryConfig({
+        ...c,
+        pendingJoinRequests: remaining,
+      });
+      await saveWarrenManifest(warren);
+      res.json(await countryPayload(warren));
+      return;
+    }
+    const nextPeers = normalizeWarrenPeers([
+      ...(warren.manifest.peers ?? []),
+      {
+        name: reqRow.fromName,
+        url: reqRow.fromUrl,
+        createdAt: new Date().toISOString(),
+        note: `country:${c.countryCode ?? ""}`,
+      },
+    ]);
+    if (nextPeers.length > MAX_PEERS) {
+      res.status(409).json({ error: "team full" });
+      return;
+    }
+    warren.manifest.peers = nextPeers;
+    warren.manifest.country = normalizeCountryConfig({
+      ...c,
+      pendingJoinRequests: remaining,
+    });
+    await saveWarrenManifest(warren);
+    let delivered = false;
+    let deliveryError = "";
+    try {
+      await notifyJoinApproved(warren, reqRow);
+      delivered = true;
+    } catch (err) {
+      deliveryError = err instanceof Error ? err.message : String(err);
+    }
+    res.json({
+      ...(await countryPayload(warren)),
+      delivery: {
+        delivered,
+        ...(deliveryError ? { error: deliveryError } : {}),
+      },
+    });
+  });
+  app.post("/api/country", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const current = normalizeCountryConfig(warren.manifest.country);
+    const peersRaw = Array.isArray(body.peers)
+      ? body.peers
+      : (warren.manifest.peers ?? []);
+    if (Array.isArray(peersRaw) && peersRaw.length > MAX_PEERS) {
+      res
+        .status(400)
+        .json({ error: `team full: max ${MAX_TEAM_MEMBERS} members (lead + ${MAX_PEERS} peers)` });
+      return;
+    }
+    const peers = peersRaw
+      .map((p) => normalizeWarrenPeer(p))
+      .filter((p): p is NonNullable<typeof p> => !!p)
+      .slice(0, MAX_PEERS);
+    const country = normalizeCountryConfig({
+      ...current,
+      ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+      ...(body.countryId !== undefined ? { countryId: body.countryId } : {}),
+      ...(body.countryName !== undefined ? { countryName: body.countryName } : {}),
+      ...(body.countryCode !== undefined ? { countryCode: body.countryCode } : {}),
+      ...(body.leaderPublicKey !== undefined ? { leaderPublicKey: body.leaderPublicKey } : {}),
+      ...(body.discoverable !== undefined ? { discoverable: body.discoverable } : {}),
+      ...(body.roleOwners !== undefined ? { roleOwners: body.roleOwners } : {}),
+      ...(body.autoAssignLeadExtras !== undefined
+        ? { autoAssignLeadExtras: body.autoAssignLeadExtras }
+        : {}),
+      ...(body.pendingJoinRequests !== undefined ? { pendingJoinRequests: body.pendingJoinRequests } : {}),
+      ...(body.riteQueue !== undefined ? { riteQueue: body.riteQueue } : {}),
+    });
+    warren.manifest.peers = peers;
+    warren.manifest.country = country;
+    await saveWarrenManifest(warren);
+    res.json(await countryPayload(warren));
+  });
+  app.post("/api/cli", async (req, res) => {
+    const body = (req.body ?? {}) as { line?: unknown };
+    if (typeof body.line !== "string" || body.line.trim().length === 0) {
+      res.status(400).json({ error: "line is required" });
+      return;
+    }
+    const args = parseCliLine(body.line.trim());
+    if (args.length === 0) {
+      res.status(400).json({ error: "empty command" });
+      return;
+    }
+    if (args[0] === "serve") {
+      res.status(400).json({ error: "`serve` is already running in this UI session." });
+      return;
+    }
+    const result = await runCliLine(warren.root, args);
+    res.json(result);
   });
   app.post("/api/inbox", async (req, res) => receiveInboxOverHttp(warren, req, res));
 
@@ -228,6 +958,16 @@ async function startRiteRun(
   };
   if (typeof body.task !== "string" || body.task.trim().length === 0) {
     res.status(400).json({ error: "task is required" });
+    return;
+  }
+  const countryBlock = await checkCountryExecutionReadiness(
+    warren,
+    "rite",
+    body.task,
+  );
+  if (countryBlock) {
+    await saveWarrenManifest(warren);
+    res.status(409).json(countryBlock);
     return;
   }
   const runId = randomUUID().slice(0, 12);
@@ -392,6 +1132,16 @@ async function startPlanRun(
   };
   if (typeof body.task !== "string" || body.task.trim().length === 0) {
     res.status(400).json({ error: "task is required" });
+    return;
+  }
+  const countryBlock = await checkCountryExecutionReadiness(
+    warren,
+    "plan",
+    body.task,
+  );
+  if (countryBlock) {
+    await saveWarrenManifest(warren);
+    res.status(409).json(countryBlock);
     return;
   }
   const runId = randomUUID().slice(0, 12);
@@ -618,6 +1368,8 @@ function providerPayload(warren: Warren): {
     label: string;
     baseURL?: string;
     apiKeyEnv: string;
+    apiKeySource: "env" | "stored" | "dummy" | "none";
+    hasStoredApiKey: boolean;
     hasApiKey: boolean;
     missingApiKey?: string;
     outputFormat: OutputFormat;
@@ -625,7 +1377,8 @@ function providerPayload(warren: Warren): {
   };
 } {
   const config = normalizeProviderConfig(warren.manifest.provider);
-  const runtime = resolveProviderRuntime(config);
+  const storedSecrets = readProviderSecretsForRootSync(warren.root);
+  const runtime = resolveProviderRuntime(config, process.env, storedSecrets);
   return {
     config,
     runtime: {
@@ -633,12 +1386,481 @@ function providerPayload(warren: Warren): {
       label: runtime.label,
       baseURL: runtime.baseURL,
       apiKeyEnv: runtime.apiKeyEnv,
+      apiKeySource: runtime.apiKeySource,
+      hasStoredApiKey: !!storedSecrets[runtime.apiKeyEnv],
       hasApiKey: runtime.apiKey.length > 0 && !runtime.missingApiKey,
       missingApiKey: runtime.missingApiKey,
       outputFormat: runtime.outputFormat,
       models: runtime.models,
     },
   };
+}
+
+async function upsertFriend(warren: Warren, candidate: FriendRecord): Promise<void> {
+  const normalized = normalizeFriendRecord(candidate);
+  if (!normalized) return;
+  const existing = await warren.hoard.allFriends();
+  const byPublicKey = existing.find((f) => f.publicKey === normalized.publicKey);
+  if (byPublicKey) {
+    await warren.hoard.stashFriend({
+      ...byPublicKey,
+      name: normalized.name,
+      url: normalized.url,
+      publicKey: normalized.publicKey,
+      ...(normalized.note ? { note: normalized.note } : {}),
+    });
+    return;
+  }
+  await warren.hoard.stashFriend(normalized);
+}
+
+async function unreadCountForThread(warren: Warren, threadId: string, ownName: string): Promise<number> {
+  const rows = await warren.hoard.allDmMessages(threadId);
+  return rows.filter((m) => m.toName === ownName && !m.readAt).length;
+}
+
+async function countryPayload(warren: Warren): Promise<{
+  lead: string;
+  modeEnabled: boolean;
+  countryId: string;
+  countryName: string;
+  countryCode: string;
+  identityPublicKey: string;
+  discoverable: boolean;
+  maxMembers: number;
+  maxPeers: number;
+  roles: CreatureKind[];
+  members: Array<{ name: string; url?: string; lead: boolean; online: boolean; hasMail: boolean }>;
+  peers: Array<{ name: string; url: string; note?: string }>;
+  pendingJoinRequests: CountryJoinRequest[];
+  riteQueue: CountryQueuedRite[];
+  config: {
+    autoAssignLeadExtras: boolean;
+    roleOwners: Partial<Record<CreatureKind, string>>;
+  };
+  resolvedRoleOwners: Record<CreatureKind, string>;
+}> {
+  const identity = await ensureCountryIdentity(warren.root);
+  const lead = warren.manifest.name;
+  ensureCountryDefaults(warren);
+  const peers = (warren.manifest.peers ?? []).map((p) => ({
+    name: p.name,
+    url: p.url,
+    ...(p.note ? { note: p.note } : {}),
+  }));
+  const leadHasMail = (await warren.hoard.allInbox()).length > 0;
+  const peerPresence = await Promise.all(
+    peers.map(async (p) => ({
+      peer: p,
+      ...(await probePeerPresence(p.url)),
+    })),
+  );
+  const members = [
+    { name: lead, lead: true, online: true, hasMail: leadHasMail },
+    ...peerPresence.map((p) => ({
+      name: p.peer.name,
+      url: p.peer.url,
+      lead: false,
+      online: p.online,
+      hasMail: p.hasMail,
+    })),
+  ];
+  const config = normalizeCountryConfig(warren.manifest.country);
+  const memberNames = members.map((m) => m.name);
+  return {
+    lead,
+    modeEnabled: config.enabled === true,
+    countryId: config.countryId ?? "",
+    countryName: config.countryName ?? "",
+    countryCode: config.countryCode ?? "",
+    identityPublicKey: identity.publicKeyPem,
+    discoverable: config.discoverable !== false,
+    maxMembers: MAX_TEAM_MEMBERS,
+    maxPeers: MAX_PEERS,
+    roles: [...CREATURE_KINDS],
+    members,
+    peers,
+    pendingJoinRequests: config.pendingJoinRequests ?? [],
+    riteQueue: config.riteQueue ?? [],
+    config: {
+      autoAssignLeadExtras: config.autoAssignLeadExtras !== false,
+      roleOwners: config.roleOwners ?? {},
+    },
+    resolvedRoleOwners: resolveRoleOwners(config, memberNames, lead),
+  };
+}
+
+async function countryPublicPayload(warren: Warren): Promise<{
+  warren: string;
+  countryId: string;
+  countryName: string;
+  countryCode: string;
+  memberCount: number;
+  discoverable: boolean;
+  leadName: string;
+  leadUrl?: string;
+  leaderPublicKey?: string;
+}> {
+  ensureCountryDefaults(warren);
+  const c = normalizeCountryConfig(warren.manifest.country);
+  return {
+    warren: warren.manifest.name,
+    countryId: c.countryId ?? "",
+    countryName: c.countryName ?? "",
+    countryCode: c.countryCode ?? "",
+    memberCount: 1 + (warren.manifest.peers?.length ?? 0),
+    discoverable: c.discoverable !== false,
+    leadName: warren.manifest.name,
+    leadUrl: process.env.GOBLINTOWN_PUBLIC_URL,
+    leaderPublicKey: c.leaderPublicKey,
+  };
+}
+
+async function probePeerPresence(url: string): Promise<{ online: boolean; hasMail: boolean }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1500);
+  try {
+    const r = await fetch(`${url}/api/country/presence`, { signal: controller.signal });
+    if (!r.ok) return { online: false, hasMail: false };
+    const body = (await r.json()) as { online?: boolean; hasMail?: boolean };
+    return {
+      online: body.online === true,
+      hasMail: body.hasMail === true,
+    };
+  } catch {
+    return { online: false, hasMail: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function ensureCountryDefaults(warren: Warren): void {
+  const c = normalizeCountryConfig(warren.manifest.country);
+  if (c.countryId && c.countryName && c.countryCode && c.leaderPublicKey) return;
+  const identity = readCountryIdentity(warren.root);
+  const existing = new Set<string>();
+  if (c.countryName) existing.add(c.countryName);
+  warren.manifest.country = normalizeCountryConfig({
+    ...c,
+    countryId: c.countryId ?? randomUUID().slice(0, 12),
+    countryName: c.countryName ?? makeCountryName(existing),
+    countryCode: c.countryCode ?? makeCountryCode(),
+    leaderPublicKey: c.leaderPublicKey ?? (identity?.publicKeyPem ?? ""),
+    discoverable: c.discoverable !== false,
+  });
+}
+
+function normalizeIncomingJoinRequest(
+  body: Record<string, unknown>,
+): CountryJoinRequest | null {
+  const id = typeof body.id === "string" ? body.id.trim() : "";
+  const countryId = normalizeCountryId(body.countryId);
+  const countryCode = normalizeCountryCode(body.countryCode);
+  const fromName = typeof body.fromName === "string" ? body.fromName.trim() : "";
+  const fromUrl = typeof body.fromUrl === "string" ? body.fromUrl.trim() : "";
+  const fromPublicKey =
+    typeof body.fromPublicKey === "string" ? body.fromPublicKey.trim() : "";
+  const createdAt = typeof body.createdAt === "string" ? body.createdAt : "";
+  const signature = typeof body.signature === "string" ? body.signature.trim() : "";
+  if (
+    !id || !countryId || !countryCode || !fromName || !fromUrl || !fromPublicKey || !createdAt ||
+    !signature
+  ) return null;
+  return {
+    id,
+    countryId,
+    countryCode,
+    fromName,
+    fromUrl,
+    fromPublicKey,
+    createdAt,
+    signature,
+  };
+}
+
+function joinRequestMessage(req: CountryJoinRequest): string {
+  return JSON.stringify({
+    id: req.id,
+    countryId: req.countryId,
+    countryCode: req.countryCode,
+    fromName: req.fromName,
+    fromUrl: req.fromUrl,
+    fromPublicKey: req.fromPublicKey,
+    createdAt: req.createdAt,
+  });
+}
+
+function joinApprovalMessage(data: {
+  countryId: string;
+  countryName: string;
+  countryCode: string;
+  peerName: string;
+  peerUrl: string;
+}): string {
+  return JSON.stringify(data);
+}
+
+async function notifyJoinApproved(warren: Warren, reqRow: CountryJoinRequest): Promise<void> {
+  const identity = await ensureCountryIdentity(warren.root);
+  const c = normalizeCountryConfig(warren.manifest.country);
+  const countryId = c.countryId ?? "";
+  const countryName = c.countryName ?? "";
+  const countryCode = c.countryCode ?? "";
+  const msg = joinApprovalMessage({
+    countryId,
+    countryName,
+    countryCode,
+    peerName: warren.manifest.name,
+    peerUrl: process.env.GOBLINTOWN_PUBLIC_URL ?? "",
+  });
+  const signature = signCountryPayload(identity.privateKeyPem, msg);
+  const resp = await fetch(`${reqRow.fromUrl}/api/country/join-approved`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      countryId,
+      countryName,
+      countryCode,
+      name: warren.manifest.name,
+      url: process.env.GOBLINTOWN_PUBLIC_URL ?? "",
+      leaderPublicKey: identity.publicKeyPem,
+      signature,
+    }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`join approval callback failed: ${resp.status} ${resp.statusText} ${text}`);
+  }
+}
+
+async function discoverCountries(warren: Warren): Promise<
+  Array<{
+    source: string;
+    countryId: string;
+    countryName: string;
+    countryCode: string;
+    memberCount: number;
+    discoverable: boolean;
+    leadName: string;
+    leadUrl?: string;
+    targetUrl?: string;
+    leaderPublicKey?: string;
+  }>
+> {
+  const seen = new Set<string>();
+  const out: Array<{
+    source: string;
+    countryId: string;
+    countryName: string;
+    countryCode: string;
+    memberCount: number;
+    discoverable: boolean;
+    leadName: string;
+    leadUrl?: string;
+    targetUrl?: string;
+    leaderPublicKey?: string;
+  }> = [];
+  const own = await countryPublicPayload(warren);
+  out.push({ source: "self", ...own, targetUrl: own.leadUrl });
+  if (own.countryId) seen.add(own.countryId);
+  const peers = warren.manifest.peers ?? [];
+  const pulls = await Promise.all(
+    peers.map(async (p) => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 2200);
+        const r = await fetch(`${p.url}/api/country/public`, { signal: controller.signal });
+        clearTimeout(timer);
+        if (!r.ok) return null;
+        const data = (await r.json()) as {
+          countryId: string;
+          countryName: string;
+          countryCode: string;
+          memberCount: number;
+          discoverable: boolean;
+          leadName: string;
+          leadUrl?: string;
+          targetUrl?: string;
+          leaderPublicKey?: string;
+        };
+        return {
+          source: p.name,
+          ...data,
+          targetUrl: data.leadUrl || p.url,
+        };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  for (const item of pulls) {
+    if (!item) continue;
+    if (!item.countryId || seen.has(item.countryId)) continue;
+    seen.add(item.countryId);
+    out.push(item);
+  }
+  return out;
+}
+
+function filterDiscoverableCountries(
+  warren: Warren,
+  list: Array<{
+    source: string;
+    countryId: string;
+    countryName: string;
+    countryCode: string;
+    memberCount: number;
+    discoverable: boolean;
+    leadName: string;
+    leadUrl?: string;
+    targetUrl?: string;
+    leaderPublicKey?: string;
+  }>,
+  qCode?: string,
+): Array<{
+  source: string;
+  countryId: string;
+  countryName: string;
+  countryCode: string;
+  memberCount: number;
+  discoverable: boolean;
+  leadName: string;
+  leadUrl?: string;
+  targetUrl?: string;
+  leaderPublicKey?: string;
+}> {
+  const ownCountryId = normalizeCountryConfig(warren.manifest.country).countryId ?? "";
+  const ownUrl = (process.env.GOBLINTOWN_PUBLIC_URL ?? "").replace(/\/+$/, "");
+  return list.filter((c) => {
+    if (!c.discoverable) return false;
+    if (!c.targetUrl) return false;
+    if (c.source === "self") return false;
+    if (ownCountryId && c.countryId === ownCountryId) return false;
+    if (ownUrl && c.targetUrl.replace(/\/+$/, "") === ownUrl) return false;
+    if (qCode && c.countryCode !== qCode) return false;
+    return true;
+  });
+}
+
+async function sendJoinRequestToCountryLeader(
+  warren: Warren,
+  targetUrl: string,
+  countryId: string,
+  countryCode: string,
+): Promise<CountryJoinRequest> {
+  const identity = await ensureCountryIdentity(warren.root);
+  const fromUrl = process.env.GOBLINTOWN_PUBLIC_URL;
+  if (!fromUrl) {
+    throw new Error("Set GOBLINTOWN_PUBLIC_URL before sending join requests.");
+  }
+  const request: CountryJoinRequest = {
+    id: randomUUID().slice(0, 12),
+    countryId,
+    countryCode,
+    fromName: warren.manifest.name,
+    fromUrl,
+    fromPublicKey: identity.publicKeyPem,
+    createdAt: new Date().toISOString(),
+    signature: "",
+  };
+  request.signature = signCountryPayload(identity.privateKeyPem, joinRequestMessage(request));
+  const r = await fetch(`${targetUrl.replace(/\/+$/, "")}/api/country/join-request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`join request failed: ${r.status} ${r.statusText} ${text}`);
+  }
+  return request;
+}
+
+async function checkCountryExecutionReadiness(
+  warren: Warren,
+  mode: "rite" | "plan",
+  task: string,
+): Promise<{ error: string; queued: boolean; queueId: string; offline: string[] } | null> {
+  const c = normalizeCountryConfig(warren.manifest.country);
+  if (c.enabled !== true) return null;
+  const peers = warren.manifest.peers ?? [];
+  if (peers.length === 0) return null;
+  const checks = await Promise.all(
+    peers.map(async (p) => ({
+      name: p.name,
+      ...(await probePeerPresence(p.url)),
+    })),
+  );
+  const offline = checks.filter((c2) => !c2.online).map((c2) => c2.name);
+  if (offline.length === 0) return null;
+  const queue: CountryQueuedRite[] = c.riteQueue ?? [];
+  const queueId = randomUUID().slice(0, 12);
+  queue.push({
+    id: queueId,
+    mode,
+    task: task.trim().slice(0, 240),
+    createdAt: Date.now(),
+  });
+  warren.manifest.country = normalizeCountryConfig({
+    ...c,
+    riteQueue: queue.slice(-64),
+  });
+  return {
+    error: `country mode requires all teammates online (${offline.join(", ")})`,
+    queued: true,
+    queueId,
+    offline,
+  };
+}
+
+function parseCliLine(line: string): string[] {
+  const out: string[] = [];
+  const re = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|`([^`\\]*(?:\\.[^`\\]*)*)`|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line))) {
+    const raw = m[1] ?? m[2] ?? m[3] ?? m[4] ?? "";
+    out.push(raw.replace(/\\(["'`\\])/g, "$1"));
+  }
+  return out;
+}
+
+async function runCliLine(
+  cwd: string,
+  args: string[],
+): Promise<{ ok: boolean; code: number; stdout: string; stderr: string; command: string }> {
+  const cliPath = join(cwd, "dist", "cli.js");
+  const command = ["node", cliPath, ...args].join(" ");
+  return await new Promise((resolve) => {
+    const child = spawn(process.execPath, [cliPath, ...args], {
+      cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+      if (stdout.length > 500_000) stdout = stdout.slice(-500_000);
+    });
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+      if (stderr.length > 200_000) stderr = stderr.slice(-200_000);
+    });
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+    }, 8 * 60_000);
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      const exitCode = typeof code === "number" ? code : 1;
+      resolve({
+        ok: exitCode === 0,
+        code: exitCode,
+        stdout,
+        stderr,
+        command,
+      });
+    });
+  });
 }
 
 
@@ -1081,11 +2303,11 @@ function tankHtml(
       radial-gradient(circle at 20% 0%, rgba(143,207,82,0.05), transparent 40%),
       radial-gradient(circle at 80% 30%, rgba(143,207,82,0.03), transparent 50%);
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    min-height: 100vh; padding: 1rem;
+    min-height: 100vh; padding: 0.45rem;
   }
   .warren {
-    width: min(1200px, 97vw);
-    height: min(780px, 94vh);
+    width: min(1560px, 99.2vw);
+    height: min(900px, 97.5vh);
     background: var(--bg-deep);
     border: 2px solid var(--line);
     border-radius: 8px;
@@ -1178,6 +2400,416 @@ function tankHtml(
     text-transform: uppercase;
   }
   .provider-actions { display: flex; gap: 0.6rem; margin-top: 0.9rem; }
+  .country-chip {
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    color: var(--fg);
+    padding: 0.18rem 0.55rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .country-chip:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .mail-chip {
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    color: var(--fg);
+    padding: 0.18rem 0.55rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .mail-chip[data-unread="true"] {
+    border-color: var(--warn);
+    color: var(--warn);
+  }
+  .mail-chip:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .country-popover {
+    position: absolute;
+    right: 10.4rem;
+    top: 2.1rem;
+    z-index: 30;
+    width: min(860px, calc(100vw - 2rem));
+    max-height: calc(100vh - 4rem);
+    overflow: auto;
+    background: rgba(8, 11, 7, 0.98);
+    border: 1px solid var(--accent);
+    box-shadow: 0 12px 42px rgba(0,0,0,0.6);
+    padding: 0.9rem 1rem;
+    display: none;
+  }
+  .country-popover.open { display: block; }
+  .country-popover h3 {
+    margin: 0 0 0.55rem;
+    font-size: 0.76rem;
+    color: var(--fg-bright);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  .country-subtle { color: var(--muted); font-size: 0.74rem; margin: 0 0 0.65rem; }
+  .country-mode-row {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 0.65rem;
+    font-size: 0.74rem;
+  }
+  .country-mode-row label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--fg);
+  }
+  .country-mode-row input[type="checkbox"] {
+    accent-color: #b6f37a;
+    transform: scale(0.95);
+  }
+  .country-tabs {
+    display: flex;
+    gap: 0.45rem;
+    margin-bottom: 0.65rem;
+  }
+  .country-tab {
+    border: 1px solid var(--line);
+    background: rgba(6,10,6,0.72);
+    color: var(--muted);
+    padding: 0.35rem 0.62rem;
+    font: inherit;
+    font-size: 0.68rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .country-tab:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .country-tab.active {
+    border-color: var(--accent);
+    background: rgba(143,207,82,0.16);
+    color: var(--fg-bright);
+  }
+  .country-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+  .country-panel { display: none; }
+  .country-panel.active { display: block; }
+  .country-pane {
+    border: 1px solid var(--line);
+    background: rgba(12,16,10,0.75);
+    padding: 0.65rem;
+  }
+  .country-pane h4 {
+    margin: 0 0 0.55rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-bright);
+  }
+  .country-row {
+    display: flex;
+    gap: 0.45rem;
+    margin-bottom: 0.42rem;
+  }
+  .country-row input {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--fg);
+    padding: 0.38rem 0.45rem;
+    font-family: inherit;
+    font-size: 0.76rem;
+  }
+  .country-row input:focus { outline: none; border-color: var(--accent); }
+  .country-row input[name="country-search-code"] { flex: 1; min-width: 0; }
+  .country-row #country-search-btn { white-space: nowrap; }
+  .country-list {
+    max-height: 180px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    background: rgba(6,9,5,0.7);
+  }
+  .country-member {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.45rem;
+    align-items: center;
+    padding: 0.35rem 0.45rem;
+    border-bottom: 1px solid rgba(43,60,35,0.55);
+    font-size: 0.74rem;
+  }
+  .country-member:last-child { border-bottom: 0; }
+  .country-member .lead { color: var(--accent); font-size: 0.64rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .country-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 0.35rem;
+    vertical-align: middle;
+    background: #57625b;
+  }
+  .country-dot.online { background: #9dff8f; }
+  .country-dot.mail { background: #ffd163; box-shadow: 0 0 0 2px rgba(255,209,99,0.25); }
+  .country-role-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 0.72rem;
+  }
+  .country-role-table th,
+  .country-role-table td {
+    border: 1px solid rgba(43,60,35,0.7);
+    padding: 0.35rem 0.3rem;
+    text-align: center;
+    vertical-align: middle;
+  }
+  .country-role-table th:first-child,
+  .country-role-table td:first-child {
+    text-align: left;
+    width: 6.3rem;
+    color: var(--fg-bright);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .country-role-table th.member-lead {
+    color: var(--accent-hot);
+  }
+  .country-role-table input[type="checkbox"] {
+    transform: scale(0.95);
+    accent-color: #b6f37a;
+  }
+  .country-actions { display: flex; gap: 0.6rem; margin-top: 0.75rem; align-items: center; }
+  .country-status { color: var(--muted); font-size: 0.72rem; min-height: 1.05rem; }
+  .country-popover .check {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.74rem;
+    color: var(--fg);
+  }
+  .mail-popover {
+    position: absolute;
+    right: 5.8rem;
+    top: 2.1rem;
+    z-index: 30;
+    width: min(860px, calc(100vw - 2rem));
+    max-height: calc(100vh - 4rem);
+    overflow: auto;
+    background: rgba(8, 11, 7, 0.98);
+    border: 1px solid var(--accent);
+    box-shadow: 0 12px 42px rgba(0,0,0,0.6);
+    padding: 0.9rem 1rem;
+    display: none;
+  }
+  .mail-popover.open { display: block; }
+  .mail-popover h3 {
+    margin: 0 0 0.55rem;
+    font-size: 0.76rem;
+    color: var(--fg-bright);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  .mail-subtle { color: var(--muted); font-size: 0.74rem; margin: 0 0 0.65rem; }
+  .mail-grid {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 0.85rem;
+  }
+  .mail-pane {
+    border: 1px solid var(--line);
+    background: rgba(12,16,10,0.75);
+    padding: 0.65rem;
+  }
+  .mail-pane h4 {
+    margin: 0 0 0.55rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-bright);
+  }
+  .mail-row {
+    display: flex;
+    gap: 0.45rem;
+    margin-bottom: 0.42rem;
+  }
+  .mail-row input, .mail-row textarea {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--fg);
+    padding: 0.38rem 0.45rem;
+    font-family: inherit;
+    font-size: 0.76rem;
+  }
+  .mail-row input { flex: 1; min-width: 0; }
+  .mail-row textarea { width: 100%; min-height: 78px; resize: vertical; }
+  .mail-row input:focus, .mail-row textarea:focus { outline: none; border-color: var(--accent); }
+  .mail-list {
+    max-height: 200px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    background: rgba(6,9,5,0.7);
+  }
+  .mail-item {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.45rem;
+    align-items: center;
+    padding: 0.35rem 0.45rem;
+    border-bottom: 1px solid rgba(43,60,35,0.55);
+    font-size: 0.74rem;
+  }
+  .mail-item:last-child { border-bottom: 0; }
+  .mail-item.active {
+    background: rgba(146, 243, 122, 0.08);
+    border-left: 2px solid rgba(146, 243, 122, 0.6);
+  }
+  .mail-item .meta { color: var(--muted); font-size: 0.68rem; }
+  .mail-msg {
+    border-bottom: 1px dashed rgba(43,60,35,0.65);
+    padding: 0.35rem 0;
+    margin-bottom: 0.3rem;
+  }
+  .mail-msg:last-child { border-bottom: 0; margin-bottom: 0; }
+  .mail-msg .head { color: var(--muted); font-size: 0.68rem; margin-bottom: 0.2rem; }
+  .mail-msg .body { white-space: pre-wrap; word-break: break-word; color: var(--fg); font-size: 0.74rem; }
+  .mail-actions { display: flex; gap: 0.6rem; margin-top: 0.75rem; align-items: center; }
+  .mail-status { color: var(--muted); font-size: 0.72rem; min-height: 1.05rem; }
+
+  .workarea {
+    display: grid;
+    grid-template-columns: 290px 1fr;
+    min-height: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .workarea.sidebar-collapsed { grid-template-columns: 44px 1fr; }
+  .ops-sidebar {
+    border-right: 1px solid var(--line);
+    background: rgba(8, 12, 8, 0.95);
+    padding: 0.7rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    gap: 0.6rem;
+    overflow: auto;
+  }
+  .ops-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+  }
+  .ops-sidebar h3 {
+    margin: 0;
+    font-size: 0.74rem;
+    color: var(--fg-bright);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .ops-toggle {
+    padding: 0.2rem 0.42rem;
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    color: var(--muted);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.7rem;
+  }
+  .ops-toggle:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .ops-main {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .ops-quick {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.3rem;
+  }
+  .ops-quick .btn {
+    padding: 0.45rem 0.4rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.07em;
+  }
+  .ops-subtle {
+    color: var(--muted);
+    font-size: 0.7rem;
+    line-height: 1.35;
+  }
+  .ops-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.4rem;
+  }
+  .ops-input, .ops-select {
+    width: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.42rem 0.5rem;
+    font-family: inherit;
+    font-size: 0.76rem;
+  }
+  .ops-input:focus, .ops-select:focus { outline: none; border-color: var(--accent); }
+  .ops-presets {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.3rem;
+  }
+  .ops-presets button {
+    font-size: 0.66rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.35rem 0.4rem;
+    border: 1px solid var(--line);
+    color: var(--fg);
+    background: var(--bg-deep);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ops-presets button:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .ops-examples summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+  .ops-examples[open] summary { margin-bottom: 0.55rem; }
+  .ops-output {
+    min-height: 0;
+    flex: 1;
+    border: 1px solid var(--line);
+    background: rgba(5,8,5,0.85);
+    padding: 0.5rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    color: var(--fg);
+  }
+  .ops-output .err { color: var(--fail); }
+  .ops-output .ok { color: var(--pass); }
+  .workarea.sidebar-collapsed .ops-main { display: none; }
+  .workarea.sidebar-collapsed .ops-sidebar { padding: 0.7rem 0.35rem; }
+  .workarea.sidebar-collapsed .ops-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .workarea.sidebar-collapsed .ops-sidebar h3 {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    text-align: center;
+    margin: 0 auto;
+    font-size: 0.62rem;
+  }
+  .workarea.sidebar-collapsed .ops-toggle { width: 100%; }
 
   .tank {
     position: relative; overflow: hidden;
@@ -1547,7 +3179,6 @@ function tankHtml(
   .ticker.live .dot { color: var(--accent-hot); animation: pulse-dot 1s ease-in-out infinite; }
   @keyframes pulse-dot { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
 
-  .controls { border-top: 1px solid var(--line); padding: 0.7rem 1rem; display: flex; gap: 0.6rem; background: var(--bg); }
   .btn {
     flex: 1; padding: 0.75rem 1rem;
     border: 1px solid var(--line); background: var(--bg-deep); color: var(--fg-bright);
@@ -1615,6 +3246,73 @@ function tankHtml(
   }
   .result-dismiss:hover { border-color: var(--accent); color: var(--accent-hot); }
 
+  .ui-tooltip {
+    position: fixed;
+    z-index: 70;
+    pointer-events: none;
+    max-width: 34ch;
+    background: rgba(8,11,7,0.97);
+    border: 1px solid var(--accent);
+    color: var(--fg-bright);
+    font-size: 0.72rem;
+    line-height: 1.4;
+    padding: 0.42rem 0.55rem;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.6);
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity .12s ease, transform .12s ease;
+  }
+  .ui-tooltip.show { opacity: 1; transform: translateY(0); }
+  .onboard-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 65;
+    background: rgba(8,11,7,0.84);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+  }
+  .onboard-overlay.open { display: flex; }
+  .onboard-card {
+    width: min(560px, calc(100% - 1.2rem));
+    background: rgba(10,14,8,0.98);
+    border: 1px solid var(--accent);
+    box-shadow: 0 14px 44px rgba(0,0,0,0.75);
+    padding: 1rem;
+  }
+  .onboard-title {
+    margin: 0;
+    color: var(--fg-bright);
+    font-size: 0.9rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .onboard-body {
+    margin: 0.6rem 0 0;
+    color: var(--fg);
+    font-size: 0.79rem;
+    line-height: 1.45;
+  }
+  .onboard-progress {
+    margin: 0.35rem 0 0;
+    color: var(--muted);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .onboard-actions {
+    display: flex;
+    gap: 0.55rem;
+    margin-top: 0.85rem;
+  }
+  .onboard-focus {
+    position: relative;
+    z-index: 68;
+    outline: 2px solid rgba(143,207,82,0.72);
+    outline-offset: 2px;
+  }
+
   /* Rite form overlay */
   .rite-overlay {
     position: absolute; inset: 0;
@@ -1659,6 +3357,8 @@ function tankHtml(
     <span class="stat"><b id="stat-rites">${riteCount}</b> rites</span>
     <span class="stat">drift <b id="stat-drift">${drift.toFixed(3)}</b></span>
     <span class="grow"></span>
+    <button class="country-chip" id="country-chip" type="button">Country ▾</button>
+    <button class="mail-chip" id="mail-chip" type="button">Mail ▾</button>
     <button class="provider-chip" id="provider-chip" type="button">API ▾</button>
     <span class="tier" id="tier-display">tier 0 · empty plot</span>
     <span class="clock" id="clock">idle</span>
@@ -1676,12 +3376,22 @@ function tankHtml(
         <input id="provider-keyenv" placeholder="OPENAI_API_KEY">
       </div>
       <div>
+        <label for="provider-apikey">API key (saved locally)</label>
+        <input id="provider-apikey" type="password" autocomplete="off" placeholder="sk-...">
+      </div>
+    </div>
+    <div class="provider-grid">
+      <div>
         <label for="provider-format">Forced format</label>
         <select id="provider-format">
           <option value="freeform">freeform</option>
           <option value="markdown">markdown</option>
           <option value="json">json object</option>
         </select>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button class="btn" type="button" id="provider-clear-key">Clear Saved Key</button>
       </div>
     </div>
     <details class="provider-advanced">
@@ -1694,6 +3404,124 @@ function tankHtml(
       <button class="btn" type="button" id="provider-cancel">Close</button>
     </div>
   </div>
+
+  <div class="country-popover" id="country-popover">
+    <h3>Goblin-Country</h3>
+    <div class="country-mode-row">
+      <label><span>Country Mode</span> <input type="checkbox" id="country-enabled"></label>
+    </div>
+    <p class="country-subtle" id="country-summary">Loading country...</p>
+    <div class="country-tabs" id="country-tabs">
+      <button class="country-tab active" type="button" data-country-tab="overview">Overview</button>
+      <button class="country-tab" type="button" data-country-tab="join">Join</button>
+      <button class="country-tab" type="button" data-country-tab="team">Team</button>
+    </div>
+    <div class="country-grid">
+      <div class="country-panel active" data-country-panel="overview">
+        <div class="country-pane">
+          <h4>Overview</h4>
+          <p class="country-subtle">Your country: <strong id="country-name">-</strong> · ID code: <strong id="country-code">-</strong></p>
+          <h4 style="margin-top:0.75rem;">Online & Mail</h4>
+          <div class="country-list" id="country-members"></div>
+          <h4 style="margin-top:0.75rem;">Queue</h4>
+          <div class="country-list" id="country-queue"></div>
+        </div>
+      </div>
+      <div class="country-panel" data-country-panel="join">
+        <div class="country-pane">
+          <h4>Join A Country</h4>
+          <div class="country-row">
+            <input name="country-search-code" id="country-search-code" placeholder="Search by code (e.g. A7K2Q)">
+            <button class="btn" type="button" id="country-search-btn">Search</button>
+          </div>
+          <div class="country-list" id="country-join-list"></div>
+          <h4 style="margin-top:0.75rem;">Pending Join Requests</h4>
+          <div class="country-list" id="country-requests"></div>
+        </div>
+      </div>
+      <div class="country-panel" data-country-panel="team">
+        <div class="country-pane">
+          <h4>Role Assignment</h4>
+          <p class="country-subtle">Assign each rite role to one member. Unassigned roles default to lead when enabled.</p>
+          <table class="country-role-table" id="country-role-table"></table>
+          <label class="check" style="margin-top:0.6rem;">
+            <input type="checkbox" id="country-auto-lead" checked>
+            Auto-assign unclaimed roles to lead
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="country-actions">
+      <button class="btn primary" type="button" id="country-save">Save Team</button>
+      <span class="country-status" id="country-status"></span>
+    </div>
+  </div>
+
+  <div class="mail-popover" id="mail-popover">
+    <h3>Friends & Mail</h3>
+    <p class="mail-subtle" id="mail-summary">Loading friends...</p>
+    <div class="mail-grid">
+      <div class="mail-pane">
+        <h4>Add Friend</h4>
+        <div class="mail-row">
+          <input id="friend-target-code" placeholder="Country code (e.g. A7K2Q)">
+          <button class="btn" type="button" id="friend-request-btn">Add</button>
+        </div>
+        <p class="mail-subtle">Use a collaborator country code. No direct URL entry needed.</p>
+        <h4>Pending Requests</h4>
+        <div class="mail-list" id="friend-requests-list"></div>
+        <h4 style="margin-top:0.75rem;">Friends</h4>
+        <div class="mail-list" id="friends-list"></div>
+      </div>
+      <div class="mail-pane">
+        <h4>Threads</h4>
+        <div class="mail-list" id="dm-threads-list"></div>
+        <h4 style="margin-top:0.75rem;">Messages</h4>
+        <div class="mail-list" id="dm-messages-list" style="max-height:240px;"></div>
+        <div class="mail-row" style="margin-top:0.5rem;">
+          <textarea id="dm-compose-body" placeholder="Write message..."></textarea>
+        </div>
+        <div class="mail-actions">
+          <button class="btn primary" type="button" id="dm-send-btn">Send</button>
+          <span class="mail-status" id="mail-status"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="workarea" id="workarea">
+  <aside class="ops-sidebar" id="ops-sidebar">
+    <div class="ops-head">
+      <h3>Command Sidebar</h3>
+      <button class="ops-toggle" id="ops-toggle" type="button" aria-expanded="true">◀</button>
+    </div>
+    <div class="ops-main" id="ops-main">
+      <div class="ops-quick">
+        <button class="btn primary" id="btn-rite" type="button">NEW RITE</button>
+        <button class="btn" id="btn-plan" type="button">PLAN</button>
+        <a class="btn" href="/runs">RUNS</a>
+      </div>
+      <div class="ops-subtle">Run any Goblintown CLI command in-app. Use full syntax in the input line.</div>
+      <div class="ops-row">
+        <input class="ops-input" id="ops-line" placeholder='e.g. rite "Refactor planner" --pack 3 --remember'>
+        <button class="btn primary" id="ops-run" type="button">Run</button>
+      </div>
+      <details class="ops-examples" id="ops-examples">
+        <summary>Command Examples</summary>
+        <div class="ops-presets" id="ops-presets">
+          <button type="button" data-line='summon goblin --task "Quick analysis"'>summon</button>
+          <button type="button" data-line='scavenge --task "What changed?" --scan "src/**/*.ts"'>scavenge</button>
+          <button type="button" data-line='quest "Investigate bug" --pack 3'>quest</button>
+          <button type="button" data-line='hoard --limit 20'>hoard</button>
+          <button type="button" data-line='drift'>drift</button>
+          <button type="button" data-line='route'>route</button>
+          <button type="button" data-line='country run --task "Cross-check this plan" --all'>country run</button>
+          <button type="button" data-line='fold --threshold 30'>fold</button>
+        </div>
+      </details>
+      <div class="ops-output" id="ops-output">ready</div>
+    </div>
+  </aside>
 
   <div class="tank" id="tank">
 
@@ -1807,7 +3635,6 @@ function tankHtml(
       <pre class="result-output" id="result-output"></pre>
       <div class="result-actions">
         <a id="result-link" href="#">view full rite ↗</a>
-        <a id="result-loot-link" href="#">view loot ↗</a>
         <span class="grow"></span>
         <button class="result-dismiss" id="result-dismiss">dismiss</button>
       </div>
@@ -1859,19 +3686,26 @@ function tankHtml(
         </div>
       </form>
     </div>
+
+    <div class="onboard-overlay" id="onboard-overlay">
+      <div class="onboard-card">
+        <h4 class="onboard-title" id="onboard-title">Welcome to Goblintown</h4>
+        <p class="onboard-body" id="onboard-body"></p>
+        <p class="onboard-progress" id="onboard-progress">Step 1</p>
+        <div class="onboard-actions">
+          <button class="btn" type="button" id="onboard-back">Back</button>
+          <button class="btn" type="button" id="onboard-skip">Skip</button>
+          <button class="btn primary" type="button" id="onboard-next">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
   </div>
 
   <div class="ticker" id="ticker">
     <span class="dot">●</span> <span id="ticker-text">idle</span>
   </div>
 
-  <div class="controls">
-    <button class="btn primary" id="btn-rite">▶ NEW RITE</button>
-    <button class="btn" id="btn-plan">▶ PLAN</button>
-    <a class="btn" href="/runs">RUNS</a>
-    <a class="btn" href="/drift">DRIFT</a>
-    <a class="btn" href="/inbox">INBOX</a>
-  </div>
 </div>
 
 <script>
@@ -1884,10 +3718,207 @@ const tickerText = $("ticker-text");
 const goblinPile = $("goblin-pile");
 const bubbleLayer = $("bubble-layer");
 const warren = $("warren");
+const workarea = $("workarea");
+const opsToggle = $("ops-toggle");
+const opsLine = $("ops-line");
+const opsRun = $("ops-run");
+const opsOutput = $("ops-output");
 
 const rand  = (lo, hi) => lo + Math.random() * (hi - lo);
 const irand = (lo, hi) => Math.floor(rand(lo, hi + 1));
 const pick  = (arr)    => arr[Math.floor(Math.random() * arr.length)];
+
+function setSidebarCollapsed(collapsed) {
+  workarea.classList.toggle("sidebar-collapsed", collapsed);
+  opsToggle.textContent = collapsed ? "▶" : "◀";
+  opsToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  try { localStorage.setItem("goblintown.sidebarCollapsed", collapsed ? "1" : "0"); } catch {}
+}
+opsToggle.onclick = () => {
+  const collapsed = !workarea.classList.contains("sidebar-collapsed");
+  setSidebarCollapsed(collapsed);
+};
+try {
+  setSidebarCollapsed(localStorage.getItem("goblintown.sidebarCollapsed") === "1");
+} catch {
+  setSidebarCollapsed(false);
+}
+
+/* Tooltips (delegated, works for dynamic content too) */
+const tooltipEl = document.createElement("div");
+tooltipEl.className = "ui-tooltip";
+document.body.appendChild(tooltipEl);
+let tooltipTarget = null;
+function setTip(id, text) {
+  const el = $(id);
+  if (el && text) el.setAttribute("data-tip", text);
+}
+function setTipIfMissing(el, text) {
+  if (!el || !text) return;
+  if (!el.getAttribute("data-tip")) el.setAttribute("data-tip", text);
+}
+function applyFallbackTips() {
+  document.querySelectorAll("button, input, select, textarea, a.btn, summary").forEach((el) => {
+    if (el.getAttribute("data-tip")) return;
+    const fromLabel = (el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder") || "").trim();
+    const fromText = (el.textContent || "").trim().replace(/\s+/g, " ");
+    const tip = fromLabel || fromText;
+    if (tip) el.setAttribute("data-tip", tip);
+  });
+}
+function placeTooltip(target) {
+  if (!target) return;
+  const rect = target.getBoundingClientRect();
+  const tipRect = tooltipEl.getBoundingClientRect();
+  let left = rect.left + rect.width / 2 - tipRect.width / 2;
+  left = Math.max(8, Math.min(window.innerWidth - tipRect.width - 8, left));
+  let top = rect.bottom + 8;
+  if (top + tipRect.height > window.innerHeight - 8) top = rect.top - tipRect.height - 8;
+  top = Math.max(8, top);
+  tooltipEl.style.left = left + "px";
+  tooltipEl.style.top = top + "px";
+}
+function showTooltip(target) {
+  if (!target) return;
+  const text = target.getAttribute("data-tip");
+  if (!text) return;
+  tooltipTarget = target;
+  tooltipEl.textContent = text;
+  tooltipEl.classList.add("show");
+  placeTooltip(target);
+}
+function hideTooltip() {
+  tooltipTarget = null;
+  tooltipEl.classList.remove("show");
+}
+document.addEventListener("mouseover", (ev) => {
+  if (!(ev.target instanceof Element)) return;
+  const target = ev.target.closest("[data-tip]");
+  if (!target) return;
+  showTooltip(target);
+});
+document.addEventListener("mouseout", (ev) => {
+  if (!(ev.target instanceof Element)) return;
+  const from = ev.target.closest("[data-tip]");
+  if (!from) return;
+  const related = ev.relatedTarget instanceof Element ? ev.relatedTarget.closest("[data-tip]") : null;
+  if (from !== related) hideTooltip();
+});
+document.addEventListener("focusin", (ev) => {
+  if (!(ev.target instanceof Element)) return;
+  const target = ev.target.closest("[data-tip]");
+  if (target) showTooltip(target);
+});
+document.addEventListener("focusout", () => hideTooltip());
+window.addEventListener("scroll", () => {
+  if (tooltipTarget) placeTooltip(tooltipTarget);
+}, true);
+window.addEventListener("resize", () => {
+  if (tooltipTarget) placeTooltip(tooltipTarget);
+});
+
+/* Static tooltip copy */
+[
+  ["country-chip", "Open Goblin-Country settings and collaboration panels."],
+  ["mail-chip", "Open friends, requests, and direct-message threads."],
+  ["provider-chip", "Configure local provider, model slots, and API key storage."],
+  ["btn-rite", "Start a new rite run immediately."],
+  ["btn-plan", "Create a planned multi-step rite."],
+  ["ops-toggle", "Collapse or expand the command sidebar."],
+  ["ops-line", "Type a Goblintown CLI command here."],
+  ["ops-run", "Run the command currently entered in the sidebar."],
+  ["country-enabled", "Enable or disable country-mode collaboration."],
+  ["country-search-code", "Search countries by short country ID code."],
+  ["country-search-btn", "Find countries to join using the typed code."],
+  ["country-save", "Save country-mode settings and role assignments."],
+  ["country-auto-lead", "If enabled, unassigned rite roles go to the team lead."],
+  ["friend-target-code", "Enter a collaborator country code to add as friend."],
+  ["friend-request-btn", "Send a friend request using the provided country code."],
+  ["dm-compose-body", "Write a direct message to the selected friend."],
+  ["dm-send-btn", "Send the current direct message."],
+  ["provider-preset", "Select a provider preset (OpenAI, LM Studio, Ollama, etc.)."],
+  ["provider-baseurl", "Base API URL for the active provider preset."],
+  ["provider-keyenv", "Environment variable name used for this provider key."],
+  ["provider-apikey", "Optional key saved in a local secret file on this machine."],
+  ["provider-format", "Force response format mode for downstream parsing."],
+  ["provider-save", "Save provider settings to local config."],
+  ["provider-cancel", "Close provider settings without applying changes now."],
+  ["provider-clear-key", "Delete the locally stored provider API key."],
+  ["rf-task", "Describe the task for this rite."],
+  ["rf-pack", "How many goblins should run in the pack."],
+  ["rf-personality", "Lead goblin personality style for the run."],
+  ["rf-globs", "Optional file globs for scavenger context scan."],
+  ["rf-nofallback", "Prevent ogre fallback if all goblins fail."],
+  ["rf-debate", "Enable an inter-agent debate round before review."],
+  ["rf-troll-tools", "Allow verifier tool usage in troll review."],
+  ["rf-remember", "Load relevant previous artifacts into context."],
+  ["rf-cancel", "Close the rite form."],
+  ["result-link", "Open the full rite detail page."],
+  ["result-dismiss", "Hide the result panel."],
+  ["onboard-back", "Go to the previous onboarding step."],
+  ["onboard-skip", "Dismiss onboarding and continue directly to the app."],
+  ["onboard-next", "Advance to the next onboarding step."],
+].forEach((entry) => setTip(entry[0], entry[1]));
+document.querySelectorAll("[data-country-tab]").forEach((btn) => setTipIfMissing(btn, "Switch country panel."));
+document.querySelectorAll("#ops-presets button[data-line]").forEach((btn) => setTipIfMissing(btn, "Run this example command."));
+applyFallbackTips();
+
+function renderOpsResult(result) {
+  const ok = result.ok ? "ok" : "error";
+  const header = "[" + ok + "] " + result.command + " (exit " + result.code + ")";
+  const stdout = (result.stdout || "").trim();
+  const stderr = (result.stderr || "").trim();
+  let text = header;
+  if (stdout) text += "\\n\\n" + stdout;
+  if (stderr) text += "\\n\\n[stderr]\\n" + stderr;
+  opsOutput.textContent = text;
+  opsOutput.classList.toggle("err", !result.ok);
+  opsOutput.classList.toggle("ok", !!result.ok);
+}
+
+async function runOpsLine() {
+  const line = (opsLine.value || "").trim();
+  if (!line) return;
+  opsOutput.textContent = "running: " + line;
+  opsRun.disabled = true;
+  try {
+    const r = await fetch("/api/cli", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ line }),
+    });
+    const payload = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      opsOutput.textContent = "error: " + (payload.error || "command failed");
+      opsOutput.classList.add("err");
+      opsOutput.classList.remove("ok");
+      return;
+    }
+    renderOpsResult(payload);
+    setTicker("command: " + line, true);
+    setTimeout(() => { refreshStats(); }, 350);
+  } catch (err) {
+    opsOutput.textContent = "error: " + (err.message || err);
+    opsOutput.classList.add("err");
+    opsOutput.classList.remove("ok");
+  } finally {
+    opsRun.disabled = false;
+  }
+}
+
+opsRun.onclick = runOpsLine;
+opsLine.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    runOpsLine();
+  }
+});
+$("ops-presets").querySelectorAll("button[data-line]").forEach((btn) => {
+  btn.onclick = () => {
+    opsLine.value = btn.getAttribute("data-line") || "";
+    runOpsLine();
+  };
+});
 
 /* Town tier from real warren stats */
 function tierOf(rites) {
@@ -1927,9 +3958,11 @@ const providerPopover = $("provider-popover");
 const providerPreset = $("provider-preset");
 const providerBaseUrl = $("provider-baseurl");
 const providerKeyEnv = $("provider-keyenv");
+const providerApiKey = $("provider-apikey");
 const providerFormat = $("provider-format");
 const providerModels = $("provider-models");
 const providerStatus = $("provider-status");
+let countryPopover = null;
 
 function providerById(id) {
   return providerPresets.find((p) => p.id === id) || providerPresets[0];
@@ -1959,9 +3992,16 @@ function applyProviderPayload(payload) {
   const missing = runtime.missingApiKey;
   providerChip.textContent = (runtime.label || "API") + " ▾";
   providerChip.dataset.missing = missing ? "true" : "false";
-  providerStatus.innerHTML = missing
-    ? "Missing key: set <strong>" + missing + "</strong> in your environment. Keys are not stored here."
-    : "Using <strong>" + (runtime.label || "provider") + "</strong>. Keys stay in environment variables.";
+  providerApiKey.value = "";
+  if (missing) {
+    providerStatus.innerHTML = "Missing key: set <strong>" + missing + "</strong> in env or save locally.";
+    return;
+  }
+  let source = "available";
+  if (runtime.apiKeySource === "env") source = "from environment";
+  else if (runtime.apiKeySource === "stored") source = "from local secret file";
+  else if (runtime.apiKeySource === "dummy") source = "using local dummy key";
+  providerStatus.innerHTML = "Using <strong>" + (runtime.label || "provider") + "</strong>, key " + source + ".";
 }
 async function loadProviderMenu() {
   try {
@@ -1994,6 +4034,9 @@ providerPreset.onchange = () => {
   renderProviderModels(preset.models || {});
 };
 providerChip.onclick = () => {
+  if (countryPopover) countryPopover.classList.remove("open");
+  const mailPanel = document.getElementById("mail-popover");
+  if (mailPanel) mailPanel.classList.remove("open");
   providerPopover.classList.toggle("open");
 };
 $("provider-cancel").onclick = () => providerPopover.classList.remove("open");
@@ -2010,6 +4053,8 @@ $("provider-save").onclick = async () => {
     outputFormat: providerFormat.value,
     models,
   };
+  const enteredApiKey = providerApiKey.value.trim();
+  if (enteredApiKey) payload.apiKey = enteredApiKey;
   providerStatus.textContent = "Saving...";
   try {
     const r = await fetch("/api/provider", {
@@ -2025,7 +4070,755 @@ $("provider-save").onclick = async () => {
     providerStatus.textContent = "Save failed: " + (err.message || err);
   }
 };
+$("provider-clear-key").onclick = async () => {
+  providerStatus.textContent = "Clearing saved key...";
+  try {
+    const r = await fetch("/api/provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        preset: providerPreset.value,
+        baseURL: providerBaseUrl.value.trim(),
+        apiKeyEnv: providerKeyEnv.value.trim(),
+        outputFormat: providerFormat.value,
+        clearApiKey: true,
+      }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    applyProviderPayload(await r.json());
+    setTicker("saved key cleared");
+  } catch (err) {
+    providerStatus.textContent = "Clear failed: " + (err.message || err);
+  }
+};
 loadProviderMenu();
+
+/* Country / team menu */
+try {
+let countryData = null;
+let countryPeers = [];
+let countryRoles = [];
+let countryMembers = [];
+let countryMaxMembers = 6;
+let countryDiscover = [];
+const countryChip = $("country-chip");
+countryPopover = $("country-popover");
+const countrySummary = $("country-summary");
+const countryNameEl = $("country-name");
+const countryCodeEl = $("country-code");
+const countryEnabled = $("country-enabled");
+const countryRequestsEl = $("country-requests");
+const countryQueueEl = $("country-queue");
+const countryJoinListEl = $("country-join-list");
+const countryMembersEl = $("country-members");
+const countryRoleTable = $("country-role-table");
+const countryAutoLead = $("country-auto-lead");
+const countryStatus = $("country-status");
+const countryTabButtons = [...document.querySelectorAll("[data-country-tab]")];
+const countryPanels = [...document.querySelectorAll("[data-country-panel]")];
+
+function canonicalName(s) { return (s || "").trim().toLowerCase(); }
+function escHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function renderCountryMembers() {
+  countryMembersEl.innerHTML = "";
+  for (const m of countryMembers) {
+    const row = document.createElement("div");
+    row.className = "country-member";
+    const dot = '<span class="country-dot ' + (m.online ? "online" : "") + " " + (m.hasMail ? "mail" : "") + '"></span>';
+    const badge = (m.online ? "online" : "offline") + (m.hasMail ? " • mail" : "");
+    row.innerHTML =
+      '<span>' + dot + escHtml(m.name) + (m.url ? ' <span class="muted">(' + escHtml(m.url) + ')</span>' : "") + "</span>" +
+      '<span class="lead">' + (m.lead ? "lead" : badge) + "</span><span></span>";
+    countryMembersEl.appendChild(row);
+  }
+}
+
+function rebuildCountryMembers() {
+  const lead = countryData?.lead || "lead";
+  const byName = new Map((countryData?.members || []).map((m) => [canonicalName(m.name), m]));
+  const leadKnown = byName.get(canonicalName(lead));
+  countryMembers = [{
+    name: lead,
+    lead: true,
+    online: leadKnown ? !!leadKnown.online : true,
+    hasMail: leadKnown ? !!leadKnown.hasMail : false,
+  }];
+  countryPeers.forEach((p) => {
+    const known = byName.get(canonicalName(p.name));
+    countryMembers.push({
+      name: p.name,
+      url: p.url,
+      lead: false,
+      online: known ? !!known.online : false,
+      hasMail: known ? !!known.hasMail : false,
+    });
+  });
+  const count = countryMembers.length;
+  countrySummary.textContent =
+    count + "/" + countryMaxMembers + " members · " +
+    countryMembers.filter((m) => m.online).length + " online · queue " +
+    ((countryData?.riteQueue || []).length || 0);
+  countryChip.textContent = "Country " + count + "/" + countryMaxMembers + " ▾";
+}
+
+function currentRoleOwners() {
+  const owners = {};
+  countryRoles.forEach((role) => {
+    const checked = countryRoleTable.querySelector('input[type="checkbox"][data-role="' + role + '"]:checked');
+    if (checked) owners[role] = checked.getAttribute("data-member");
+  });
+  return owners;
+}
+
+function renderCountryRoleTable() {
+  const owners = countryData?.config?.roleOwners || {};
+  let html = "<thead><tr><th>Role</th>";
+  for (const m of countryMembers) {
+    html += '<th class="' + (m.lead ? "member-lead" : "") + '">' + escHtml(m.name) + "</th>";
+  }
+  html += "</tr></thead><tbody>";
+  for (const role of countryRoles) {
+    html += "<tr><td>" + escHtml(role) + "</td>";
+    for (const m of countryMembers) {
+      const checked = canonicalName(owners[role]) === canonicalName(m.name);
+      const tip = "Assign " + role + " to " + m.name + ".";
+      html += '<td><input type="checkbox" data-role="' + escHtml(role) + '" data-member="' + escHtml(m.name) + '" data-tip="' + escHtml(tip) + '"' + (checked ? " checked" : "") + "></td>";
+    }
+    html += "</tr>";
+  }
+  html += "</tbody>";
+  countryRoleTable.innerHTML = html;
+  countryRoleTable.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+    cb.onchange = () => {
+      if (!cb.checked) return;
+      const role = cb.getAttribute("data-role");
+      countryRoleTable
+        .querySelectorAll('input[type="checkbox"][data-role="' + role + '"]')
+        .forEach((other) => {
+          if (other !== cb) other.checked = false;
+        });
+    };
+  });
+}
+
+function renderCountryQueue() {
+  const queue = countryData?.riteQueue || [];
+  if (!queue.length) {
+    countryQueueEl.innerHTML = '<div class="country-member"><span class="muted">No queued rites.</span><span></span><span></span></div>';
+    return;
+  }
+  countryQueueEl.innerHTML = queue
+    .slice()
+    .reverse()
+    .map((q) =>
+      '<div class="country-member"><span>' + escHtml(q.mode.toUpperCase()) + " · " + escHtml(q.task) +
+      '</span><span class="lead">' + new Date(q.createdAt).toLocaleTimeString() + "</span><span></span></div>")
+    .join("");
+}
+
+function renderPendingJoinRequests() {
+  const list = countryData?.pendingJoinRequests || [];
+  if (!list.length) {
+    countryRequestsEl.innerHTML = '<div class="country-member"><span class="muted">No pending requests.</span><span></span><span></span></div>';
+    return;
+  }
+  countryRequestsEl.innerHTML = list.map((r) =>
+    '<div class="country-member">' +
+      '<span>' + escHtml(r.fromName) + ' <span class="muted">(' + escHtml(r.fromUrl) + ")</span></span>" +
+      '<span class="lead">' + new Date(r.createdAt).toLocaleTimeString() + "</span>" +
+      '<span>' +
+        '<button class="btn" data-join-approve="' + escHtml(r.id) + '" type="button" data-tip="Approve this join request">Approve</button> ' +
+        '<button class="btn" data-join-deny="' + escHtml(r.id) + '" type="button" data-tip="Reject this join request">Deny</button>' +
+      "</span>" +
+    "</div>"
+  ).join("");
+  countryRequestsEl.querySelectorAll("button[data-join-approve]").forEach((btn) => {
+    btn.onclick = () => resolveJoinRequest(btn.getAttribute("data-join-approve"), true);
+  });
+  countryRequestsEl.querySelectorAll("button[data-join-deny]").forEach((btn) => {
+    btn.onclick = () => resolveJoinRequest(btn.getAttribute("data-join-deny"), false);
+  });
+}
+
+function renderJoinList(list) {
+  if (!list.length) {
+    countryJoinListEl.innerHTML = '<div class="country-member"><span class="muted">No open countries found.</span><span></span><span></span></div>';
+    return;
+  }
+  countryJoinListEl.innerHTML = list.map((c) =>
+    '<div class="country-member">' +
+      '<span><strong>' + escHtml(c.countryName) + '</strong> <span class="muted">[' + escHtml(c.countryCode) + ']</span></span>' +
+      '<span class="lead">' + c.memberCount + "/6</span>" +
+      '<span><button class="btn" data-join-country="' + escHtml(c.countryId) + '" type="button" data-tip="Send a join request to this country">Join</button></span>' +
+    "</div>"
+  ).join("");
+  countryJoinListEl.querySelectorAll("button[data-join-country]").forEach((btn) => {
+    btn.onclick = () => requestJoinCountry(btn.getAttribute("data-join-country"));
+  });
+}
+
+function applyCountryPayload(payload) {
+  countryData = payload || {};
+  countryPeers = [...(payload.peers || [])];
+  countryNameEl.textContent = payload.countryName || "-";
+  countryCodeEl.textContent = payload.countryCode || "-";
+  countryEnabled.checked = payload.modeEnabled === true;
+  countryRoles = payload.roles || [];
+  countryMaxMembers = payload.maxMembers || 6;
+  countryAutoLead.checked = payload.config?.autoAssignLeadExtras !== false;
+  rebuildCountryMembers();
+  renderCountryMembers();
+  renderPendingJoinRequests();
+  renderCountryQueue();
+  renderCountryRoleTable();
+  countryStatus.textContent = "";
+}
+
+countryEnabled.onchange = () => {
+  countryStatus.textContent = "Country mode " + (countryEnabled.checked ? "enabled" : "disabled") + ". Save to persist.";
+};
+
+function setCountryTab(tab) {
+  const selected = tab || "overview";
+  countryTabButtons.forEach((btn) => {
+    const active = btn.getAttribute("data-country-tab") === selected;
+    btn.classList.toggle("active", active);
+  });
+  countryPanels.forEach((panel) => {
+    const active = panel.getAttribute("data-country-panel") === selected;
+    panel.classList.toggle("active", active);
+  });
+}
+countryTabButtons.forEach((btn) => {
+  btn.onclick = () => setCountryTab(btn.getAttribute("data-country-tab") || "overview");
+});
+
+async function loadCountryMenu() {
+  try {
+    const countryRes = await fetch("/api/country");
+    if (!countryRes.ok) throw new Error(await countryRes.text());
+    applyCountryPayload(await countryRes.json());
+  } catch (err) {
+    countrySummary.textContent = "Team menu unavailable.";
+    countryStatus.textContent = String(err && err.message ? err.message : err);
+  }
+}
+
+async function loadCountryDiscover(code) {
+  const q = code ? ("?code=" + encodeURIComponent(code)) : "";
+  const r = await fetch("/api/country/discover" + q);
+  if (!r.ok) throw new Error(await r.text());
+  const d = await r.json();
+  countryDiscover = d.countries || [];
+  renderJoinList(code ? countryDiscover : (d.randomOpen || []));
+}
+
+countryChip.onclick = () => {
+  providerPopover.classList.remove("open");
+  const mailPanel = document.getElementById("mail-popover");
+  if (mailPanel) mailPanel.classList.remove("open");
+  const willOpen = !countryPopover.classList.contains("open");
+  countryPopover.classList.toggle("open");
+  if (willOpen) {
+    setCountryTab("overview");
+    countryStatus.textContent = "Loading countries...";
+    loadCountryDiscover("")
+      .then(() => { countryStatus.textContent = ""; })
+      .catch((err) => {
+        countryStatus.textContent = "Discovery failed: " + (err.message || err);
+      });
+  }
+};
+async function requestJoinCountry(countryId) {
+  const target = (countryDiscover || []).find((c) => c.countryId === countryId);
+  if (!target) {
+    countryStatus.textContent = "Country not available.";
+    return;
+  }
+  if (!target.targetUrl) {
+    countryStatus.textContent = "Country leader URL unavailable.";
+    return;
+  }
+  countryStatus.textContent = "Sending join request...";
+  try {
+    const r = await fetch("/api/country/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetUrl: target.targetUrl,
+        countryId: target.countryId,
+        countryCode: target.countryCode,
+      }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    countryStatus.textContent = "Join request sent: " + (data.requestId || "?");
+  } catch (err) {
+    countryStatus.textContent = "Join failed: " + (err.message || err);
+  }
+}
+async function resolveJoinRequest(requestId, approve) {
+  if (!requestId) return;
+  countryStatus.textContent = approve ? "Approving..." : "Denying...";
+  try {
+    const r = await fetch("/api/country/join-approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId, approve }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const payload = await r.json();
+    applyCountryPayload(payload);
+    if (approve && payload.delivery && payload.delivery.delivered === false) {
+      countryStatus.textContent =
+        "Approved locally, callback failed: " + (payload.delivery.error || "unknown");
+      return;
+    }
+    countryStatus.textContent = approve ? "Request approved." : "Request denied.";
+  } catch (err) {
+    countryStatus.textContent = "Request failed: " + (err.message || err);
+  }
+}
+$("country-search-btn").onclick = async () => {
+  const code = ($("country-search-code").value || "").trim().toUpperCase();
+  setCountryTab("join");
+  countryStatus.textContent = code ? "Searching..." : "Loading countries...";
+  try {
+    await loadCountryDiscover(code);
+    countryStatus.textContent = "";
+  } catch (err) {
+    countryStatus.textContent = "Search failed: " + (err.message || err);
+  }
+};
+$("country-search-code").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    $("country-search-btn").click();
+  }
+});
+$("country-save").onclick = async () => {
+  countryStatus.textContent = "Saving...";
+  const payload = {
+    peers: countryPeers,
+    enabled: countryEnabled.checked,
+    countryId: countryData?.countryId,
+    countryName: countryData?.countryName,
+    countryCode: countryData?.countryCode,
+    autoAssignLeadExtras: countryAutoLead.checked,
+    roleOwners: currentRoleOwners(),
+  };
+  try {
+    const r = await fetch("/api/country", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    applyCountryPayload(await r.json());
+    countryPopover.classList.remove("open");
+    setTicker("team policy saved");
+  } catch (err) {
+    countryStatus.textContent = "Save failed: " + (err.message || err);
+  }
+};
+
+loadCountryMenu();
+} catch (err) {
+  console.error("country-ui-init-failed", err);
+}
+
+/* Friends + Mail */
+try {
+let socialState = { friends: [], pendingRequests: [], threads: [] };
+let activeThreadId = "";
+let activeFriendId = "";
+let activeThreadFriendName = "";
+const mailChip = $("mail-chip");
+const mailPopover = $("mail-popover");
+const mailSummary = $("mail-summary");
+const mailStatus = $("mail-status");
+const friendsListEl = $("friends-list");
+const friendRequestsListEl = $("friend-requests-list");
+const threadsListEl = $("dm-threads-list");
+const messagesListEl = $("dm-messages-list");
+
+function socialEsc(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function setMailStatus(msg) {
+  mailStatus.textContent = msg || "";
+}
+
+function renderFriends() {
+  const rows = (socialState.friends || []).map((f) =>
+    '<div class="mail-item">' +
+      '<span><strong>' + socialEsc(f.name) + '</strong> <span class="meta">[' + socialEsc(f.id) + ']</span></span>' +
+      '<span>' +
+        '<button class="btn" type="button" data-dm-friend="' + socialEsc(f.id) + '" data-tip="Open composer for this friend">DM</button> ' +
+        '<button class="btn" type="button" data-rm-friend="' + socialEsc(f.id) + '" data-tip="Remove this friend connection">Remove</button>' +
+      "</span>" +
+    "</div>"
+  ).join("");
+  friendsListEl.innerHTML = rows || '<div class="mail-item"><span class="meta">No friends yet.</span><span></span></div>';
+  friendsListEl.querySelectorAll("button[data-dm-friend]").forEach((btn) => {
+    btn.onclick = async () => {
+      activeFriendId = btn.getAttribute("data-dm-friend") || "";
+      const friend = (socialState.friends || []).find((f) => f.id === activeFriendId);
+      activeThreadFriendName = friend ? friend.name : "";
+      setMailStatus(activeThreadFriendName ? ("Composing to " + activeThreadFriendName) : "Compose message");
+    };
+  });
+  friendsListEl.querySelectorAll("button[data-rm-friend]").forEach((btn) => {
+    btn.onclick = async () => {
+      const friendId = btn.getAttribute("data-rm-friend");
+      if (!friendId) return;
+      setMailStatus("Removing friend...");
+      try {
+        const r = await fetch("/api/friends/" + encodeURIComponent(friendId) + "/remove", { method: "POST" });
+        if (!r.ok) throw new Error(await r.text());
+        await loadMailState(true);
+        setMailStatus("Friend removed.");
+      } catch (err) {
+        setMailStatus("Remove failed: " + (err.message || err));
+      }
+    };
+  });
+}
+
+function renderFriendRequests() {
+  const rows = (socialState.pendingRequests || []).map((req) =>
+    '<div class="mail-item">' +
+      '<span><strong>' + socialEsc(req.fromName) + '</strong> <span class="meta">(' + socialEsc(req.fromUrl) + ')</span></span>' +
+      '<span>' +
+        '<button class="btn" type="button" data-friend-approve="' + socialEsc(req.id) + '" data-tip="Accept this friend request">Approve</button> ' +
+        '<button class="btn" type="button" data-friend-deny="' + socialEsc(req.id) + '" data-tip="Reject this friend request">Deny</button>' +
+      "</span>" +
+    "</div>"
+  ).join("");
+  friendRequestsListEl.innerHTML = rows || '<div class="mail-item"><span class="meta">No pending requests.</span><span></span></div>';
+  friendRequestsListEl.querySelectorAll("button[data-friend-approve],button[data-friend-deny]").forEach((btn) => {
+    btn.onclick = async () => {
+      const requestId = btn.getAttribute("data-friend-approve") || btn.getAttribute("data-friend-deny") || "";
+      const approve = btn.hasAttribute("data-friend-approve");
+      if (!requestId) return;
+      setMailStatus(approve ? "Approving..." : "Denying...");
+      try {
+        const r = await fetch("/api/friends/respond", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId, approve }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const data = await r.json();
+        await loadMailState(true);
+        if (approve && data.callback && data.callback.delivered === false) {
+          setMailStatus("Approved locally, callback failed: " + (data.callback.error || "unknown"));
+        } else {
+          setMailStatus(approve ? "Friend approved." : "Friend denied.");
+        }
+      } catch (err) {
+        setMailStatus("Request update failed: " + (err.message || err));
+      }
+    };
+  });
+}
+
+function renderThreads() {
+  const rows = (socialState.threads || []).map((t) => {
+    const unread = t.unread || 0;
+    const active = activeThreadId === t.id ? " active" : "";
+    const badge = unread > 0 ? ('<span class="meta">unread ' + unread + "</span>") : '<span class="meta">read</span>';
+    return (
+      '<div class="mail-item' + active + '">' +
+        '<span><strong>' + socialEsc(t.friendName || "unknown") + '</strong> <span class="meta">' + socialEsc(t.lastMessagePreview || "") + "</span></span>" +
+        '<span>' +
+          badge + ' <button class="btn" type="button" data-open-thread="' + socialEsc(t.id) + '" data-open-friend="' + socialEsc(t.friendId || "") + '" data-tip="Open this thread and mark unread messages as read">Open</button>' +
+        "</span>" +
+      "</div>"
+    );
+  }).join("");
+  threadsListEl.innerHTML = rows || '<div class="mail-item"><span class="meta">No threads yet.</span><span></span></div>';
+  threadsListEl.querySelectorAll("button[data-open-thread]").forEach((btn) => {
+    btn.onclick = async () => {
+      activeThreadId = btn.getAttribute("data-open-thread") || "";
+      activeFriendId = btn.getAttribute("data-open-friend") || "";
+      const row = (socialState.threads || []).find((t) => t.id === activeThreadId);
+      activeThreadFriendName = row ? (row.friendName || "") : "";
+      await loadThreadMessages(activeThreadId);
+      await markThreadRead(activeThreadId, true);
+      await loadMailState(true);
+      renderThreads();
+    };
+  });
+}
+
+function renderMessages(list) {
+  const rows = (list || []).map((m) => (
+    '<div class="mail-msg">' +
+      '<div class="head">' + socialEsc(m.fromName) + " · " + socialEsc(new Date(m.createdAt).toLocaleString()) + (m.readAt ? " · read" : "") + "</div>" +
+      '<div class="body">' + socialEsc(m.body) + "</div>" +
+    "</div>"
+  )).join("");
+  messagesListEl.innerHTML = rows || '<div class="mail-item"><span class="meta">No messages in this thread.</span><span></span></div>';
+}
+
+async function loadThreadMessages(threadId) {
+  if (!threadId) {
+    renderMessages([]);
+    return;
+  }
+  try {
+    const r = await fetch("/api/dm/" + encodeURIComponent(threadId) + "?limit=200");
+    if (!r.ok) throw new Error(await r.text());
+    const rows = await r.json();
+    renderMessages(rows);
+    setMailStatus(activeThreadFriendName ? ("Thread: " + activeThreadFriendName) : "Thread loaded.");
+  } catch (err) {
+    setMailStatus("Load messages failed: " + (err.message || err));
+  }
+}
+
+async function markThreadRead(threadId, silent) {
+  if (!threadId) return;
+  try {
+    const r = await fetch("/api/dm/" + encodeURIComponent(threadId) + "/read", {
+      method: "POST",
+    });
+    if (!r.ok) throw new Error(await r.text());
+    if (!silent) setMailStatus("Marked read.");
+  } catch (err) {
+    if (!silent) setMailStatus("Mark read failed: " + (err.message || err));
+  }
+}
+
+function applyMailState(payload) {
+  socialState = payload || { friends: [], pendingRequests: [], threads: [] };
+  const unread = (socialState.threads || []).reduce((n, t) => n + (t.unread || 0), 0);
+  mailChip.textContent = "Mail" + (unread > 0 ? (" •" + unread) : "") + " ▾";
+  if (unread > 0) mailChip.setAttribute("data-unread", "true");
+  else mailChip.removeAttribute("data-unread");
+  mailSummary.textContent =
+    (socialState.friends || []).length + " friends · " +
+    (socialState.pendingRequests || []).length + " requests · " +
+    (socialState.threads || []).length + " threads";
+  renderFriends();
+  renderFriendRequests();
+  renderThreads();
+}
+
+async function loadMailState(silent) {
+  try {
+    const r = await fetch("/api/friends");
+    if (!r.ok) throw new Error(await r.text());
+    applyMailState(await r.json());
+    if (!silent) setMailStatus("");
+  } catch (err) {
+    setMailStatus("Mail unavailable: " + (err.message || err));
+  }
+}
+
+$("friend-request-btn").onclick = async () => {
+  const countryCode = ($("friend-target-code").value || "").trim().toUpperCase();
+  if (!countryCode) {
+    setMailStatus("Country code required.");
+    return;
+  }
+  setMailStatus("Sending request...");
+  try {
+    const r = await fetch("/api/friends/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ countryCode }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    $("friend-target-code").value = "";
+    setMailStatus("Friend request sent.");
+    await loadMailState(true);
+  } catch (err) {
+    setMailStatus("Friend request failed: " + (err.message || err));
+  }
+};
+$("friend-target-code").addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter") return;
+  ev.preventDefault();
+  $("friend-request-btn").click();
+});
+
+$("dm-send-btn").onclick = async () => {
+  const body = ($("dm-compose-body").value || "").trim();
+  if (!activeFriendId) {
+    setMailStatus("Pick a friend or open a thread first.");
+    return;
+  }
+  if (!body) {
+    setMailStatus("Message body required.");
+    return;
+  }
+  setMailStatus("Sending message...");
+  try {
+    const r = await fetch("/api/dm/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ friendId: activeFriendId, body }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    $("dm-compose-body").value = "";
+    activeThreadId = data.threadId || activeThreadId;
+    await loadMailState(true);
+    await loadThreadMessages(activeThreadId);
+    setMailStatus("Message sent.");
+  } catch (err) {
+    setMailStatus("Send failed: " + (err.message || err));
+  }
+};
+
+mailChip.onclick = () => {
+  providerPopover.classList.remove("open");
+  countryPopover.classList.remove("open");
+  const willOpen = !mailPopover.classList.contains("open");
+  mailPopover.classList.toggle("open");
+  if (willOpen) {
+    setMailStatus("Loading...");
+    loadMailState(true).then(() => setMailStatus("")).catch(() => {});
+  }
+};
+
+setInterval(() => {
+  if (!mailPopover.classList.contains("open")) loadMailState(true);
+}, 15000);
+
+loadMailState(true);
+} catch (err) {
+  console.error("mail-ui-init-failed", err);
+}
+
+/* Onboarding */
+try {
+const onboardOverlay = $("onboard-overlay");
+const onboardTitle = $("onboard-title");
+const onboardBody = $("onboard-body");
+const onboardProgress = $("onboard-progress");
+const onboardBack = $("onboard-back");
+const onboardSkip = $("onboard-skip");
+const onboardNext = $("onboard-next");
+const onboardingStorageKey = "goblintown.onboarding.v2";
+const onboardingSteps = [
+  {
+    title: "Command Sidebar",
+    body: "This sidebar runs Goblintown CLI commands directly in-app, including examples and quick rite controls.",
+    targetId: "ops-sidebar",
+  },
+  {
+    title: "Start a Rite",
+    body: "Use New Rite for direct execution, or Plan to decompose larger work before running.",
+    targetId: "btn-rite",
+  },
+  {
+    title: "Goblin-Country",
+    body: "Country mode handles team membership, join discovery, and per-role assignment across collaborators.",
+    targetId: "country-chip",
+    popover: "country",
+  },
+  {
+    title: "Friends and Mail",
+    body: "Friend requests and DM threads are here. Opening a thread auto-marks unread messages as read.",
+    targetId: "mail-chip",
+    popover: "mail",
+  },
+  {
+    title: "Provider Settings",
+    body: "Choose your local provider, set model slots, and store an API key in the local secret file.",
+    targetId: "provider-chip",
+    popover: "provider",
+  },
+  {
+    title: "You are ready",
+    body: "Run rites from the sidebar and use country + mail to coordinate distributed compute with teammates.",
+    targetId: "ops-run",
+  },
+];
+let onboardingIndex = 0;
+let onboardingFocusEl = null;
+function setTopPopover(name) {
+  const countryPanel = countryPopover || document.getElementById("country-popover");
+  const mailPanel = document.getElementById("mail-popover");
+  providerPopover.classList.remove("open");
+  if (countryPanel) countryPanel.classList.remove("open");
+  if (mailPanel) mailPanel.classList.remove("open");
+  if (name === "provider") providerPopover.classList.add("open");
+  if (name === "country" && countryPanel) countryPanel.classList.add("open");
+  if (name === "mail" && mailPanel) mailPanel.classList.add("open");
+}
+function clearOnboardingFocus() {
+  if (onboardingFocusEl) onboardingFocusEl.classList.remove("onboard-focus");
+  onboardingFocusEl = null;
+}
+function renderOnboardingStep() {
+  const step = onboardingSteps[onboardingIndex];
+  if (!step) return;
+  setTopPopover(step.popover || "");
+  clearOnboardingFocus();
+  const focusEl = step.targetId ? $(step.targetId) : null;
+  if (focusEl) {
+    onboardingFocusEl = focusEl;
+    onboardingFocusEl.classList.add("onboard-focus");
+    onboardingFocusEl.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  onboardTitle.textContent = step.title;
+  onboardBody.textContent = step.body;
+  onboardProgress.textContent = "Step " + (onboardingIndex + 1) + " of " + onboardingSteps.length;
+  onboardBack.disabled = onboardingIndex === 0;
+  onboardNext.textContent = onboardingIndex === onboardingSteps.length - 1 ? "Finish" : "Next";
+}
+function closeOnboarding(markDone) {
+  clearOnboardingFocus();
+  setTopPopover("");
+  onboardOverlay.classList.remove("open");
+  if (markDone) {
+    try { localStorage.setItem(onboardingStorageKey, "done"); } catch {}
+  }
+}
+function maybeStartOnboarding() {
+  let done = false;
+  try { done = localStorage.getItem(onboardingStorageKey) === "done"; } catch {}
+  const params = new URLSearchParams(window.location.search);
+  const forced = params.get("onboarding") === "1";
+  if (done && !forced) return;
+  onboardingIndex = 0;
+  onboardOverlay.classList.add("open");
+  renderOnboardingStep();
+}
+onboardBack.onclick = () => {
+  if (onboardingIndex <= 0) return;
+  onboardingIndex -= 1;
+  renderOnboardingStep();
+};
+onboardNext.onclick = () => {
+  if (onboardingIndex >= onboardingSteps.length - 1) {
+    closeOnboarding(true);
+    return;
+  }
+  onboardingIndex += 1;
+  renderOnboardingStep();
+};
+onboardSkip.onclick = () => closeOnboarding(true);
+setTimeout(maybeStartOnboarding, 120);
+} catch (err) {
+  console.error("onboarding-ui-init-failed", err);
+}
 
 /* Bubbles */
 const MAX_BUBBLES = 3;
@@ -2228,12 +5021,20 @@ function firstLine(s, max) {
   return line.length > max ? line.slice(0, max - 1) + "…" : line;
 }
 
+const lootSnippetCache = new Map();
+
 async function fetchLootSnippet(id, max) {
+  const cached = lootSnippetCache.get(id);
+  if (typeof cached === "string") {
+    return firstLine(cached, max || 80);
+  }
   try {
     const r = await fetch("/api/loot/" + id);
     if (!r.ok) return null;
     const loot = await r.json();
-    return firstLine(loot.output, max || 80);
+    const out = typeof loot.output === "string" ? loot.output : "";
+    lootSnippetCache.set(id, out);
+    return firstLine(out, max || 80);
   } catch { return null; }
 }
 
@@ -2247,8 +5048,6 @@ function showResultPanel(opts) {
   $("result-output").textContent = opts.output || "(no output)";
   $("result-score").textContent = (opts.score != null) ? opts.score.toFixed(2) + " shinies" : "";
   $("result-link").href = opts.riteId ? "/rite/" + opts.riteId : "#";
-  $("result-loot-link").href = opts.lootId ? "/loot/" + opts.lootId : "#";
-  $("result-loot-link").style.display = opts.lootId ? "" : "none";
   $("result-panel").classList.add("open");
 }
 function hideResultPanel() { $("result-panel").classList.remove("open"); }
@@ -2283,8 +5082,15 @@ async function loadLastResult() {
     const runs = await r.json();
     const last = runs.find((rr) => rr.done && rr.finalRiteId);
     if (!last) return;
-    const doneEv = (last.events || []).slice().reverse().find((e) => e.kind === "done");
-    const winnerLootId = doneEv && doneEv.data && doneEv.data.winnerLootId;
+    let winnerLootId = null;
+    try {
+      const full = await fetch("/api/runs/" + last.runId + "?full=1");
+      if (full.ok) {
+        const record = await full.json();
+        const doneEv = (record.events || []).slice().reverse().find((e) => e.kind === "done");
+        winnerLootId = doneEv && doneEv.data && doneEv.data.winnerLootId;
+      }
+    } catch {}
     showResultFromIds(last.finalRiteId, winnerLootId, last.outcome || "winner", last.task);
   } catch {}
 }
@@ -2428,13 +5234,13 @@ function openStream(runId, isPlan, opts) {
         replayLatestThinking[data.step.slot] = data.step.text;
         return;
       }
-      handleStep(data.step);
+      handleStep(data.step, { replay: replaying });
     } else {
       if (replaying && data && data.kind === "thinking") {
         replayLatestThinking[data.slot] = data.text;
         return;
       }
-      handleStep(data);
+      handleStep(data, { replay: replaying });
     }
   });
   es.addEventListener("plan:planning", () => setTicker("planner thinking...", true));
@@ -2509,7 +5315,8 @@ function openStream(runId, isPlan, opts) {
   });
 }
 
-async function handleStep(step) {
+async function handleStep(step, opts) {
+  const replay = !!(opts && opts.replay);
   switch (step.kind) {
     case "thinking":
       updateThinkingBubble(step.slot, step.text);
@@ -2541,10 +5348,12 @@ async function handleStep(step) {
           slot.personality = step.personality;
           slot.tag.textContent = step.personality;
         }
-        hopGoblin(slot.el);
+        if (!replay) hopGoblin(slot.el);
         clearThinkingBubble("goblin#" + step.index);
-        const snippet = await fetchLootSnippet(step.lootId, 70);
-        if (snippet) dispatchBubble(slot.el, snippet);
+        if (!replay) {
+          const snippet = await fetchLootSnippet(step.lootId, 70);
+          if (snippet) dispatchBubble(slot.el, snippet);
+        }
       }
       break;
     }
@@ -2558,8 +5367,10 @@ async function handleStep(step) {
         slot.lootId = step.lootId;
         goblinByLootId[step.lootId] = slot;
         clearThinkingBubble("goblin#" + step.index);
-        const snippet = await fetchLootSnippet(step.lootId, 70);
-        if (snippet) dispatchBubble(slot.el, "↻ " + snippet);
+        if (!replay) {
+          const snippet = await fetchLootSnippet(step.lootId, 70);
+          if (snippet) dispatchBubble(slot.el, "↻ " + snippet);
+        }
       }
       break;
     }
@@ -2572,8 +5383,10 @@ async function handleStep(step) {
       setTicker("gremlin attacking", true);
       break;
     case "chaos:done": {
-      const snippet = await fetchLootSnippet(step.gremlinId, 70);
-      if (snippet) dispatchBubble($("c-gremlin"), snippet, "attack");
+      if (!replay) {
+        const snippet = await fetchLootSnippet(step.gremlinId, 70);
+        if (snippet) dispatchBubble($("c-gremlin"), snippet, "attack");
+      }
       setState("c-gremlin","idle");
       break;
     }
@@ -2624,8 +5437,10 @@ async function handleStep(step) {
       if (slot) {
         slot.tag.textContent = "specialist";
         slot.el.dataset.state = "active";
-        hopGoblin(slot.el);
-        dispatchBubble(slot.el, "focus: " + step.focus.slice(0, 60));
+        if (!replay) {
+          hopGoblin(slot.el);
+          dispatchBubble(slot.el, "focus: " + step.focus.slice(0, 60));
+        }
       }
       setTicker("specialist #" + (step.index + 1) + " spawned", true);
       break;
@@ -2634,7 +5449,7 @@ async function handleStep(step) {
       const slot = specialistByIndex[step.index];
       specialistByLootId[step.lootId] = slot;
       clearThinkingBubble("specialist#" + step.index);
-      if (slot) {
+      if (!replay && slot) {
         const snippet = await fetchLootSnippet(step.lootId, 70);
         if (snippet) dispatchBubble(slot.el, snippet);
       }
@@ -2667,8 +5482,10 @@ async function handleStep(step) {
       break;
     case "fallback:done": {
       clearThinkingBubble("ogre");
-      const snippet = await fetchLootSnippet(step.lootId, 80);
-      if (snippet) dispatchBubble($("c-ogre"), snippet);
+      if (!replay) {
+        const snippet = await fetchLootSnippet(step.lootId, 80);
+        if (snippet) dispatchBubble($("c-ogre"), snippet);
+      }
       setTicker("ogre synthesized result", true);
       break;
     }
@@ -2709,7 +5526,7 @@ async function attachToRunFromUrl() {
     return;
   }
   try {
-    const r = await fetch("/api/runs/" + runId);
+    const r = await fetch("/api/runs/" + runId + "?full=1");
     if (!r.ok) {
       setTicker("run " + runId + " not found");
       loadLastResult();

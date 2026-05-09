@@ -9,29 +9,33 @@ import {
 import {
   loadProviderConfigFromCwd,
   providerRuntimeSignature,
-  resolveModelForSlot,
-  resolveProviderRuntime,
+  type ProviderRuntime,
+  resolveProviderRuntimeForSlot,
 } from "./providers.js";
-import type { Creature, OutputFormat, ProviderConfig, TokenUsage } from "./types.js";
+import type {
+  Creature,
+  ModelSlot,
+  OutputFormat,
+  TokenUsage,
+} from "./types.js";
 
-let _client: OpenAI | null = null;
-let _clientSignature: string | null = null;
+const _clients = new Map<string, OpenAI>();
 
-function getClient(config: ProviderConfig = loadProviderConfigFromCwd()): OpenAI {
-  const runtime = resolveProviderRuntime(config);
+function getClient(runtime: ProviderRuntime): OpenAI {
   if (runtime.missingApiKey) {
     throw new Error(`${runtime.missingApiKey} is not set.`);
   }
   const signature = providerRuntimeSignature(runtime);
-  if (_client && _clientSignature === signature) return _client;
-  _client = new OpenAI({
+  const existing = _clients.get(signature);
+  if (existing) return existing;
+  const client = new OpenAI({
     apiKey: runtime.apiKey,
     baseURL: runtime.baseURL,
     maxRetries: 4,
     defaultHeaders: runtime.defaultHeaders,
   });
-  _clientSignature = signature;
-  return _client;
+  _clients.set(signature, client);
+  return client;
 }
 
 export interface CallOptions {
@@ -79,17 +83,14 @@ interface BaseParams {
 
 function buildBaseParams(
   creature: Creature,
+  slot: ModelSlot,
   userPrompt: string,
   opts: CallOptions,
-  config: ProviderConfig,
+  runtime: ProviderRuntime,
 ): BaseParams {
-  const model = resolveModelForSlot(
-    creature.modelSlot ?? creature.kind,
-    creature.model,
-    config,
-  );
+  const model = resolveModel(runtime.models[slot] || creature.model, runtime.baseURL);
   const fixed = isFixedSamplingModel(model);
-  const outputFormat = normalizeOutputFormat(opts.outputFormat);
+  const outputFormat = normalizeOutputFormat(opts.outputFormat ?? runtime.outputFormat);
   const params: BaseParams = {
     model,
     messages: [
@@ -116,11 +117,13 @@ export async function callCreature(
   opts: CallOptions = {},
 ): Promise<CreatureResponse> {
   const config = loadProviderConfigFromCwd();
-  const client = getClient(config);
+  const slot = creature.modelSlot ?? creature.kind;
+  const runtime = resolveProviderRuntimeForSlot(slot, config);
+  const client = getClient(runtime);
   const sem = sharedSemaphore();
   return sem.run(async () => {
     const completion = await client.chat.completions.create(
-      buildBaseParams(creature, userPrompt, opts, config),
+      buildBaseParams(creature, slot, userPrompt, opts, runtime),
       { signal: opts.signal },
     );
     const text = completion.choices[0]?.message?.content;
@@ -138,9 +141,10 @@ export async function callCreature(
     const formatted = await ensureFormattedOutput({
       client,
       creature,
+      slot,
       userPrompt,
       opts,
-      config,
+      runtime,
       text,
       usage,
       signal: opts.signal,
@@ -157,12 +161,14 @@ export async function callCreatureStream(
   opts: CallOptions = {},
 ): Promise<CreatureResponse> {
   const config = loadProviderConfigFromCwd();
-  const client = getClient(config);
+  const slot = creature.modelSlot ?? creature.kind;
+  const runtime = resolveProviderRuntimeForSlot(slot, config);
+  const client = getClient(runtime);
   const sem = sharedSemaphore();
   return sem.run(async () => {
     const stream = await client.chat.completions.create(
       {
-        ...buildBaseParams(creature, userPrompt, opts, config),
+        ...buildBaseParams(creature, slot, userPrompt, opts, runtime),
         stream: true,
         stream_options: { include_usage: true },
       },
@@ -198,9 +204,10 @@ export async function callCreatureStream(
     const formatted = await ensureFormattedOutput({
       client,
       creature,
+      slot,
       userPrompt,
       opts,
-      config,
+      runtime,
       text,
       usage,
       signal: opts.signal,
@@ -214,9 +221,10 @@ export async function callCreatureStream(
 async function ensureFormattedOutput(opts: {
   client: OpenAI;
   creature: Creature;
+  slot: ModelSlot;
   userPrompt: string;
   opts: CallOptions;
-  config: ProviderConfig;
+  runtime: ProviderRuntime;
   text: string;
   usage: TokenUsage;
   signal?: AbortSignal;
@@ -238,9 +246,10 @@ async function ensureFormattedOutput(opts: {
     const repair = await opts.client.chat.completions.create(
       buildBaseParams(
         opts.creature,
+        opts.slot,
         repairPrompt,
         { ...opts.opts, outputFormat },
-        opts.config,
+        opts.runtime,
       ),
       { signal: opts.signal },
     );

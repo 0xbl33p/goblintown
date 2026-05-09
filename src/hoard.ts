@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   Artifact,
+  DirectMessage,
+  DirectMessageThread,
+  FriendRecord,
+  FriendRequest,
   InboxMessage,
   Loot,
   OutboxRecord,
@@ -37,6 +41,22 @@ export class Hoard {
     return join(this.dir, "artifacts");
   }
 
+  get friendsDir(): string {
+    return join(this.dir, "friends");
+  }
+
+  get friendRequestsDir(): string {
+    return join(this.dir, "friend-requests");
+  }
+
+  get dmThreadsDir(): string {
+    return join(this.dir, "dm-threads");
+  }
+
+  get dmMessagesDir(): string {
+    return join(this.dir, "dm-messages");
+  }
+
   async init(): Promise<void> {
     await mkdir(this.lootDir, { recursive: true });
     await mkdir(this.questDir, { recursive: true });
@@ -44,6 +64,10 @@ export class Hoard {
     await mkdir(this.inboxDir, { recursive: true });
     await mkdir(this.outboxDir, { recursive: true });
     await mkdir(this.artifactDir, { recursive: true });
+    await mkdir(this.friendsDir, { recursive: true });
+    await mkdir(this.friendRequestsDir, { recursive: true });
+    await mkdir(this.dmThreadsDir, { recursive: true });
+    await mkdir(this.dmMessagesDir, { recursive: true });
   }
 
   async stash(loot: Loot): Promise<string> {
@@ -173,6 +197,88 @@ export class Hoard {
 
   async allArtifacts(): Promise<Artifact[]> {
     return readJsonDir<Artifact>(this.artifactDir);
+  }
+
+  async stashFriend(friend: FriendRecord): Promise<void> {
+    await mkdir(this.friendsDir, { recursive: true });
+    await writeFile(
+      join(this.friendsDir, `${friend.id}.json`),
+      JSON.stringify(friend, null, 2),
+      "utf8",
+    );
+  }
+
+  async allFriends(): Promise<FriendRecord[]> {
+    return readJsonDir<FriendRecord>(this.friendsDir);
+  }
+
+  async removeFriend(friendId: string): Promise<void> {
+    await unlink(join(this.friendsDir, `${friendId}.json`)).catch(() => {});
+  }
+
+  async stashFriendRequest(req: FriendRequest): Promise<void> {
+    await mkdir(this.friendRequestsDir, { recursive: true });
+    await writeFile(
+      join(this.friendRequestsDir, `${req.id}.json`),
+      JSON.stringify(req, null, 2),
+      "utf8",
+    );
+  }
+
+  async allFriendRequests(): Promise<FriendRequest[]> {
+    return readJsonDir<FriendRequest>(this.friendRequestsDir);
+  }
+
+  async removeFriendRequest(reqId: string): Promise<void> {
+    await unlink(join(this.friendRequestsDir, `${reqId}.json`)).catch(() => {});
+  }
+
+  async stashDmThread(thread: DirectMessageThread): Promise<void> {
+    await mkdir(this.dmThreadsDir, { recursive: true });
+    await writeFile(
+      join(this.dmThreadsDir, `${thread.id}.json`),
+      JSON.stringify(thread, null, 2),
+      "utf8",
+    );
+  }
+
+  async allDmThreads(): Promise<DirectMessageThread[]> {
+    return readJsonDir<DirectMessageThread>(this.dmThreadsDir);
+  }
+
+  async getDmThread(threadId: string): Promise<DirectMessageThread | null> {
+    try {
+      const raw = await readFile(join(this.dmThreadsDir, `${threadId}.json`), "utf8");
+      return JSON.parse(raw) as DirectMessageThread;
+    } catch {
+      return null;
+    }
+  }
+
+  async stashDmMessage(msg: DirectMessage): Promise<void> {
+    const threadDir = join(this.dmMessagesDir, msg.threadId);
+    await mkdir(threadDir, { recursive: true });
+    await writeFile(
+      join(threadDir, `${msg.id}.json`),
+      JSON.stringify(msg, null, 2),
+      "utf8",
+    );
+  }
+
+  async allDmMessages(threadId: string): Promise<DirectMessage[]> {
+    return readJsonDir<DirectMessage>(join(this.dmMessagesDir, threadId));
+  }
+
+  async getDmMessage(threadId: string, messageId: string): Promise<DirectMessage | null> {
+    try {
+      const raw = await readFile(
+        join(this.dmMessagesDir, threadId, `${messageId}.json`),
+        "utf8",
+      );
+      return JSON.parse(raw) as DirectMessage;
+    } catch {
+      return null;
+    }
   }
 }
 

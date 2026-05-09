@@ -10,6 +10,12 @@ import { join } from "node:path";
 import { auditRite } from "./audit.js";
 import { printBanner } from "./banners.js";
 import { compareRites } from "./compare.js";
+import {
+  dispatchRiteToPeer,
+  MAX_PEERS,
+  normalizeWarrenPeer,
+  selectPeers,
+} from "./country.js";
 import { makeCreature } from "./creatures.js";
 import { measureDrift } from "./drift.js";
 import { exportRiteMarkdown } from "./export.js";
@@ -24,14 +30,16 @@ import { ensureRunDir, loadAllRuns, loadRun } from "./run-store.js";
 import { previewScan, scavenge } from "./scavenge.js";
 import { serve } from "./server.js";
 import { exportRunAsMasTrace } from "./trace-export.js";
+import { MODEL_SLOTS, PROVIDER_PRESETS } from "./providers.js";
 import {
   CREATURE_KINDS,
   type Artifact,
   type CreatureKind,
   type Loot,
   type Personality,
+  type ModelSlot,
 } from "./types.js";
-import { initWarren, loadWarren } from "./warren.js";
+import { initWarren, loadWarren, saveWarrenManifest } from "./warren.js";
 import { normalizeOutputFormat } from "./formatting.js";
 
 const HELP = `Goblintown — agent management protocol.
@@ -124,6 +132,20 @@ Usage:
   goblintown outbox
       List outbox records.
 
+  goblintown route
+      List per-creature provider routes.
+  goblintown route set <slot> --preset <id> [--model <name>] [--base-url <url>] [--api-key-env <ENV>] [--format freeform|markdown|json]
+      Route a specific slot (goblin/ogre/troll/.../embedding) to a provider.
+  goblintown route clear <slot>|--all
+      Remove route overrides.
+
+  goblintown country peer add --name <peer> --url <http://host:port>
+  goblintown country peer rm <peer>
+  goblintown country peer ls
+      Manage Goblin-Country peers in warren.json.
+  goblintown country run --task "..." [--peer <peer>]... [--all] [--pack <N>] [--format freeform|markdown|json]
+      Dispatch a Rite to peer warrens and wait for completion.
+
   goblintown serve [--port <N>]
       Start the Hoard web UI. Default port=7777.
 
@@ -184,6 +206,10 @@ async function main(): Promise<void> {
       return cmdInbox();
     case "outbox":
       return cmdOutbox();
+    case "route":
+      return cmdRoute(argv.slice(1));
+    case "country":
+      return cmdCountry(argv.slice(1));
     case "serve":
       return cmdServe(argv.slice(1));
     case "ancestry":
@@ -900,6 +926,276 @@ async function cmdOutbox(): Promise<void> {
   }
 }
 
+async function cmdRoute(args: string[]): Promise<void> {
+  const sub = args[0];
+  const w = await loadWarren(process.cwd());
+  const routes = w.manifest.provider?.routes ?? {};
+  if (!sub || sub === "ls" || sub === "list") {
+    process.stdout.write(`Per-creature routes:\n`);
+    for (const slot of MODEL_SLOTS) {
+      const route = routes[slot];
+      if (!route) {
+        process.stdout.write(`  ${slot.padEnd(9)} (default provider)\n`);
+        continue;
+      }
+      const bits = [
+        `preset=${route.preset}`,
+        route.model ? `model=${route.model}` : "",
+        route.baseURL ? `base=${route.baseURL}` : "",
+        route.apiKeyEnv ? `key=${route.apiKeyEnv}` : "",
+        route.outputFormat ? `format=${route.outputFormat}` : "",
+      ].filter(Boolean);
+      process.stdout.write(`  ${slot.padEnd(9)} ${bits.join(" ")}\n`);
+    }
+    return;
+  }
+  if (sub === "clear") {
+    const flags = parseFlags(args.slice(1));
+    const slotRaw = args.slice(1).find((a) => !a.startsWith("--"));
+    if (flags.all === "true") {
+      w.manifest.provider = {
+        ...(w.manifest.provider ?? { preset: "openai" }),
+        routes: {},
+      };
+      await saveWarrenManifest(w);
+      process.stdout.write(`Cleared all route overrides.\n`);
+      return;
+    }
+    if (!slotRaw || !isModelSlot(slotRaw)) {
+      process.stderr.write(
+        `usage: goblintown route clear <${MODEL_SLOTS.join("|")}> | --all\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const next = { ...(w.manifest.provider?.routes ?? {}) };
+    delete next[slotRaw];
+    w.manifest.provider = {
+      ...(w.manifest.provider ?? { preset: "openai" }),
+      routes: next,
+    };
+    await saveWarrenManifest(w);
+    process.stdout.write(`Cleared route for ${slotRaw}.\n`);
+    return;
+  }
+  if (sub === "set") {
+    const rest = args.slice(1);
+    const slotRaw = rest.find((a) => !a.startsWith("--"));
+    const flags = parseFlags(rest);
+    if (!slotRaw || !isModelSlot(slotRaw)) {
+      process.stderr.write(
+        `usage: goblintown route set <${MODEL_SLOTS.join("|")}> --preset <${Object.keys(PROVIDER_PRESETS).join("|")}> [--model <name>] [--base-url <url>] [--api-key-env <ENV>] [--format freeform|markdown|json]\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const preset = flags.preset;
+    if (!preset || !(preset in PROVIDER_PRESETS)) {
+      process.stderr.write(
+        `--preset is required and must be one of: ${Object.keys(PROVIDER_PRESETS).join(", ")}\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const route = {
+      preset: preset as keyof typeof PROVIDER_PRESETS,
+      ...(flags.model ? { model: flags.model } : {}),
+      ...(flags["base-url"] ? { baseURL: flags["base-url"] } : {}),
+      ...(flags["api-key-env"] ? { apiKeyEnv: flags["api-key-env"] } : {}),
+      ...(flags.format
+        ? { outputFormat: normalizeOutputFormat(flags.format) }
+        : {}),
+    };
+    w.manifest.provider = {
+      ...(w.manifest.provider ?? { preset: "openai" }),
+      routes: {
+        ...(w.manifest.provider?.routes ?? {}),
+        [slotRaw]: route,
+      },
+    };
+    await saveWarrenManifest(w);
+    process.stdout.write(`Route set for ${slotRaw}: preset=${preset}\n`);
+    return;
+  }
+  process.stderr.write(
+    `usage: goblintown route [list|set|clear]\n` +
+      `  set:   goblintown route set <slot> --preset <id> [--model <name>] [--base-url <url>] [--api-key-env <ENV>] [--format freeform|markdown|json]\n` +
+      `  clear: goblintown route clear <slot>|--all\n`,
+  );
+  process.exitCode = 1;
+}
+
+async function cmdCountry(args: string[]): Promise<void> {
+  const sub = args[0];
+  if (sub === "peer" || sub === "peers") {
+    return cmdCountryPeer(args.slice(1));
+  }
+  if (sub === "run") {
+    return cmdCountryRun(args.slice(1));
+  }
+  process.stderr.write(
+    `usage: goblintown country peer <add|rm|ls> ...\n` +
+      `   or: goblintown country run --task "..." [--peer <name>]... [--all]\n`,
+  );
+  process.exitCode = 1;
+}
+
+async function cmdCountryPeer(args: string[]): Promise<void> {
+  const action = args[0];
+  const w = await loadWarren(process.cwd());
+  const peers = w.manifest.peers ?? [];
+  if (!action || action === "ls" || action === "list") {
+    if (peers.length === 0) {
+      process.stdout.write(`No peers configured.\n`);
+      return;
+    }
+    process.stdout.write(`Peers:\n`);
+    for (const p of peers) {
+      process.stdout.write(
+        `  ${p.name.padEnd(16)} ${p.url}${p.note ? `  (${p.note})` : ""}\n`,
+      );
+    }
+    return;
+  }
+  if (action === "add") {
+    const flags = parseFlags(args.slice(1));
+    const candidate = normalizeWarrenPeer({
+      name: flags.name,
+      url: flags.url,
+      note: flags.note,
+      createdAt: new Date().toISOString(),
+    });
+    if (!candidate) {
+      process.stderr.write(
+        `usage: goblintown country peer add --name <peer> --url <http://host:port> [--note "..."]\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const existing = peers.find(
+      (p) => p.name.toLowerCase() === candidate.name.toLowerCase(),
+    );
+    if (!existing && peers.length >= MAX_PEERS) {
+      process.stderr.write(
+        `Team is full: max ${MAX_PEERS + 1} members total (lead + ${MAX_PEERS} peers).\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const next = existing
+      ? peers.map((p) => (p.name.toLowerCase() === candidate.name.toLowerCase() ? candidate : p))
+      : [...peers, candidate];
+    w.manifest.peers = next;
+    await saveWarrenManifest(w);
+    process.stdout.write(
+      `${existing ? "Updated" : "Added"} peer ${candidate.name} -> ${candidate.url}\n`,
+    );
+    return;
+  }
+  if (action === "rm" || action === "remove" || action === "del") {
+    const name = args[1];
+    if (!name) {
+      process.stderr.write(`usage: goblintown country peer rm <peer>\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const before = peers.length;
+    w.manifest.peers = peers.filter((p) => p.name.toLowerCase() !== name.toLowerCase());
+    if (w.manifest.peers.length === before) {
+      process.stderr.write(`No such peer: ${name}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    await saveWarrenManifest(w);
+    process.stdout.write(`Removed peer ${name}\n`);
+    return;
+  }
+  process.stderr.write(
+    `usage: goblintown country peer <add|rm|ls>\n` +
+      `  add: goblintown country peer add --name <peer> --url <http://host:port>\n`,
+  );
+  process.exitCode = 1;
+}
+
+async function cmdCountryRun(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const task = flags.task;
+  if (!task) {
+    process.stderr.write(
+      `usage: goblintown country run --task "..." [--peer <name>]... [--all] [--pack <N>] [--scan <glob>]... [--format freeform|markdown|json]\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const w = await loadWarren(process.cwd());
+  const peers = w.manifest.peers ?? [];
+  if (peers.length === 0) {
+    process.stderr.write(
+      `No peers configured. Add one with:\n  goblintown country peer add --name alpha --url http://localhost:7777\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const peerRefs = collectFlag(args, "peer");
+  const selection = selectPeers(peers, flags.all === "true" ? [] : peerRefs);
+  if (selection.missing.length > 0) {
+    process.stderr.write(`Unknown peer(s): ${selection.missing.join(", ")}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const targets =
+    flags.all === "true" || peerRefs.length === 0 ? peers : selection.selected;
+  const packSize = flags.pack ? Number(flags.pack) : 3;
+  const scanGlobs = collectFlag(args, "scan");
+  const budgetTokens = flags.budget ? Number(flags.budget) : undefined;
+  const maxOutputTokens = flags["max-output"] ? Number(flags["max-output"]) : undefined;
+  const outputFormat = normalizeOutputFormat(
+    flags.format ?? w.manifest.provider?.outputFormat,
+  );
+
+  process.stdout.write(
+    `Dispatching to ${targets.length} peer(s): ${targets.map((p) => p.name).join(", ")}\n`,
+  );
+  const results = await Promise.allSettled(
+    targets.map((peer) =>
+      dispatchRiteToPeer(
+        peer,
+        {
+          task,
+          packSize,
+          scanGlobs,
+          personality: flags.personality as Personality | undefined,
+          budgetTokens,
+          maxOutputTokens,
+          outputFormat,
+        },
+        {
+          timeoutMs: flags["timeout-ms"] ? Number(flags["timeout-ms"]) : undefined,
+        },
+      ),
+    ),
+  );
+  for (let i = 0; i < results.length; i++) {
+    const peer = targets[i];
+    const r = results[i];
+    if (r.status === "rejected") {
+      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      process.stdout.write(`  ✗ ${peer.name} ${msg}\n`);
+      continue;
+    }
+    const info = r.value;
+    if (info.error) {
+      process.stdout.write(
+        `  ✗ ${peer.name} run=${info.runId} error=${info.error}\n`,
+      );
+      continue;
+    }
+    process.stdout.write(
+      `  ✓ ${peer.name} run=${info.runId} rite=${info.finalRiteId ?? "?"} outcome=${info.outcome ?? "unknown"}\n`,
+    );
+  }
+}
+
 async function cmdServe(args: string[]): Promise<void> {
   const flags = parseFlags(args);
   const port = flags.port ? Number(flags.port) : 7777;
@@ -1229,6 +1525,10 @@ function collectFlag(args: string[], name: string): string[] {
     }
   }
   return out;
+}
+
+function isModelSlot(value: string): value is ModelSlot {
+  return MODEL_SLOTS.includes(value as ModelSlot);
 }
 
 function formatMentions(m: Record<CreatureKind, number>): string {
