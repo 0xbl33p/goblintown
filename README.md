@@ -223,9 +223,18 @@ that future rites can cite.
 
 ## Install
 
+### Local development
+
 ```bash
 npm install
 npm run build
+```
+
+### npm package (after publish)
+
+```bash
+npm install -g goblintown
+goblintown --help
 ```
 
 Set a provider API key for any command that calls a creature. Local Ollama uses
