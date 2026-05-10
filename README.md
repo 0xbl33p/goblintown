@@ -500,9 +500,12 @@ unassigned roles can auto-fall back to the lead.
 - **Join** tab supports:
   - search by country code, and
   - random open-country sampling (up to 10 countries with 3 or fewer members).
+- Discovery results are restricted to countries with 3 or fewer members.
 - Join requests are approved/denied by the lead in **Pending Join Requests**.
 - **Team** tab controls per-role ownership (goblin/gremlin/raccoon/troll/ogre/pigeon)
   with optional auto-assignment of unclaimed roles to the lead.
+- In Firebase mode, user membership state (`solo`, `pending`, `member`, `owner`)
+  is persisted in profile metadata.
 - When country mode is enabled, rites/plans require all teammates online;
   otherwise requests are queued until members are reachable.
 

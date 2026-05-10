@@ -88,12 +88,52 @@ interface RunState {
   subscribers: Set<Response>;
 }
 
+const DISCOVERY_OPEN_MEMBER_LIMIT = 3;
+
 function runSummary(record: RunRecord): Omit<RunRecord, "events"> & { eventCount: number } {
   const { events, ...rest } = record;
   return {
     ...rest,
     eventCount: events.length,
   };
+}
+
+function cspHeaderForRequest(): string {
+  const scriptSrc = [
+    "'self'",
+    "'unsafe-inline'",
+    "'unsafe-eval'",
+    "https://www.gstatic.com",
+    "https://apis.google.com",
+    "https://www.googleapis.com",
+  ].join(" ");
+  const connectSrc = [
+    "'self'",
+    "https://identitytoolkit.googleapis.com",
+    "https://securetoken.googleapis.com",
+    "https://firestore.googleapis.com",
+    "https://www.googleapis.com",
+    "https://*.googleapis.com",
+    "https://*.firebaseio.com",
+    "wss://*.firebaseio.com",
+  ].join(" ");
+  const frameSrc = [
+    "'self'",
+    "https://accounts.google.com",
+    "https://*.google.com",
+    "https://*.firebaseapp.com",
+  ].join(" ");
+  return [
+    "default-src 'self'",
+    `script-src ${scriptSrc}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    `connect-src ${connectSrc}`,
+    `frame-src ${frameSrc}`,
+    "object-src 'none'",
+    "base-uri 'self'",
+  ].join("; ");
 }
 
 export async function serve(opts: ServeOptions): Promise<void> {
@@ -121,8 +161,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
   }
 
   app.use(express.json({ limit: "1mb" }));
+  app.use("/assets", express.static(join(warren.root, "site/assets")));
   app.use((_req, res, next) => {
     res.setHeader("X-Goblintown-Warren", warren.manifest.name);
+    res.setHeader("Content-Security-Policy", cspHeaderForRequest());
     next();
   });
 
@@ -237,6 +279,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
   app.get("/api/provider", (_req, res) => {
     res.json(providerPayload(warren));
   });
+  app.get("/api/firebase/config", (_req, res) => {
+    res.json(firebaseClientConfigPayload());
+  });
   app.post("/api/provider", async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const config = normalizeProviderConfig(body);
@@ -298,7 +343,8 @@ export async function serve(opts: ServeOptions): Promise<void> {
     if (!targetUrl && requestedCode) {
       const countries = await discoverCountries(warren);
       const discoverable = filterDiscoverableCountries(warren, countries, requestedCode);
-      resolvedCountry = sampleOpenCountries(discoverable, 1)[0] ?? discoverable[0] ?? null;
+      const openCountries = filterOpenCountries(discoverable);
+      resolvedCountry = sampleOpenCountries(openCountries, 1)[0] ?? null;
       targetUrl = normalizeSocialUrl(resolvedCountry?.targetUrl);
       if (!targetUrl) {
         res.status(404).json({
@@ -691,9 +737,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
     const list = await discoverCountries(warren);
     const qCode = normalizeCountryCode(_req.query.code) ?? undefined;
     const discoverable = filterDiscoverableCountries(warren, list, qCode);
+    const openCountries = filterOpenCountries(discoverable);
     res.json({
-      countries: discoverable,
-      randomOpen: sampleOpenCountries(discoverable, 10),
+      countries: openCountries,
+      randomOpen: sampleOpenCountries(openCountries, 10),
     });
   });
   app.post("/api/country/join", async (req, res) => {
@@ -878,6 +925,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
       .slice(0, MAX_PEERS);
     const country = normalizeCountryConfig({
       ...current,
+      ...(body.collabBackend !== undefined ? { collabBackend: body.collabBackend } : {}),
       ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
       ...(body.countryId !== undefined ? { countryId: body.countryId } : {}),
       ...(body.countryName !== undefined ? { countryName: body.countryName } : {}),
@@ -1421,6 +1469,7 @@ async function unreadCountForThread(warren: Warren, threadId: string, ownName: s
 
 async function countryPayload(warren: Warren): Promise<{
   lead: string;
+  collabBackend: "local" | "firebase";
   modeEnabled: boolean;
   countryId: string;
   countryName: string;
@@ -1469,6 +1518,7 @@ async function countryPayload(warren: Warren): Promise<{
   const memberNames = members.map((m) => m.name);
   return {
     lead,
+    collabBackend: config.collabBackend === "firebase" ? "firebase" : "local",
     modeEnabled: config.enabled === true,
     countryId: config.countryId ?? "",
     countryName: config.countryName ?? "",
@@ -1488,6 +1538,51 @@ async function countryPayload(warren: Warren): Promise<{
     },
     resolvedRoleOwners: resolveRoleOwners(config, memberNames, lead),
   };
+}
+
+function firebaseClientConfigPayload(): {
+  enabled: boolean;
+  config: {
+    apiKey: string;
+    authDomain: string;
+    projectId: string;
+    appId: string;
+    storageBucket?: string;
+    messagingSenderId?: string;
+    measurementId?: string;
+  } | null;
+} {
+  const apiKey = trimmedEnv("FIREBASE_API_KEY");
+  const authDomain = trimmedEnv("FIREBASE_AUTH_DOMAIN");
+  const projectId = trimmedEnv("FIREBASE_PROJECT_ID");
+  const appId = trimmedEnv("FIREBASE_APP_ID");
+  const enabled = !!(apiKey && authDomain && projectId && appId);
+  if (!enabled) return { enabled: false, config: null };
+  return {
+    enabled: true,
+    config: {
+      apiKey,
+      authDomain,
+      projectId,
+      appId,
+      ...(trimmedEnv("FIREBASE_STORAGE_BUCKET")
+        ? { storageBucket: trimmedEnv("FIREBASE_STORAGE_BUCKET") as string }
+        : {}),
+      ...(trimmedEnv("FIREBASE_MESSAGING_SENDER_ID")
+        ? { messagingSenderId: trimmedEnv("FIREBASE_MESSAGING_SENDER_ID") as string }
+        : {}),
+      ...(trimmedEnv("FIREBASE_MEASUREMENT_ID")
+        ? { measurementId: trimmedEnv("FIREBASE_MEASUREMENT_ID") as string }
+        : {}),
+    },
+  };
+}
+
+function trimmedEnv(name: string): string | null {
+  const v = process.env[name];
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t.length > 0 ? t : null;
 }
 
 async function countryPublicPayload(warren: Warren): Promise<{
@@ -1740,6 +1835,34 @@ function filterDiscoverableCountries(
     if (qCode && c.countryCode !== qCode) return false;
     return true;
   });
+}
+
+function filterOpenCountries(
+  list: Array<{
+    source: string;
+    countryId: string;
+    countryName: string;
+    countryCode: string;
+    memberCount: number;
+    discoverable: boolean;
+    leadName: string;
+    leadUrl?: string;
+    targetUrl?: string;
+    leaderPublicKey?: string;
+  }>,
+): Array<{
+  source: string;
+  countryId: string;
+  countryName: string;
+  countryCode: string;
+  memberCount: number;
+  discoverable: boolean;
+  leadName: string;
+  leadUrl?: string;
+  targetUrl?: string;
+  leaderPublicKey?: string;
+}> {
+  return list.filter((row) => Number.isFinite(row.memberCount) && row.memberCount <= DISCOVERY_OPEN_MEMBER_LIMIT);
 }
 
 async function sendJoinRequestToCountryLeader(
@@ -2411,6 +2534,17 @@ function tankHtml(
     cursor: pointer;
   }
   .country-chip:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .auth-chip {
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    color: var(--fg);
+    padding: 0.18rem 0.55rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .auth-chip:hover { border-color: var(--accent); color: var(--accent-hot); }
   .mail-chip {
     border: 1px solid var(--line);
     background: var(--bg-deep);
@@ -2426,6 +2560,32 @@ function tankHtml(
     color: var(--warn);
   }
   .mail-chip:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .auth-popover {
+    position: absolute;
+    right: 14.8rem;
+    top: 2.1rem;
+    z-index: 30;
+    width: min(420px, calc(100vw - 2rem));
+    background: rgba(8, 11, 7, 0.98);
+    border: 1px solid var(--accent);
+    box-shadow: 0 12px 42px rgba(0,0,0,0.6);
+    padding: 0.9rem 1rem;
+    display: none;
+  }
+  .auth-popover.open { display: block; }
+  .auth-popover h3 {
+    margin: 0 0 0.55rem;
+    font-size: 0.76rem;
+    color: var(--fg-bright);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  .auth-status {
+    color: var(--muted);
+    font-size: 0.74rem;
+    margin: 0 0 0.7rem;
+    line-height: 1.45;
+  }
   .country-popover {
     position: absolute;
     right: 10.4rem;
@@ -2461,6 +2621,14 @@ function tankHtml(
     align-items: center;
     gap: 0.35rem;
     color: var(--fg);
+  }
+  .country-mode-row select {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    padding: 0.2rem 0.35rem;
+    font: inherit;
+    font-size: 0.72rem;
   }
   .country-mode-row input[type="checkbox"] {
     accent-color: #b6f37a;
@@ -3357,6 +3525,7 @@ function tankHtml(
     <span class="stat"><b id="stat-rites">${riteCount}</b> rites</span>
     <span class="stat">drift <b id="stat-drift">${drift.toFixed(3)}</b></span>
     <span class="grow"></span>
+    <button class="auth-chip" id="auth-chip" type="button">Sign In ▾</button>
     <button class="country-chip" id="country-chip" type="button">Country ▾</button>
     <button class="mail-chip" id="mail-chip" type="button">Mail ▾</button>
     <button class="provider-chip" id="provider-chip" type="button">API ▾</button>
@@ -3405,10 +3574,27 @@ function tankHtml(
     </div>
   </div>
 
+  <div class="auth-popover" id="auth-popover">
+    <h3>Sign-in & Cloud Collab</h3>
+    <p class="auth-status" id="auth-status">Loading auth state...</p>
+    <div class="provider-actions">
+      <button class="btn" type="button" id="auth-google-btn">Google</button>
+      <button class="btn" type="button" id="auth-github-btn">GitHub</button>
+      <button class="btn" type="button" id="auth-signout-btn">Sign Out</button>
+    </div>
+    <p class="country-subtle" id="auth-note">Firebase mode needs sign-in and Firebase project config in env vars.</p>
+  </div>
+
   <div class="country-popover" id="country-popover">
     <h3>Goblin-Country</h3>
     <div class="country-mode-row">
       <label><span>Country Mode</span> <input type="checkbox" id="country-enabled"></label>
+      <label><span>Backend</span>
+        <select id="country-backend">
+          <option value="local">Local</option>
+          <option value="firebase">Firebase</option>
+        </select>
+      </label>
     </div>
     <p class="country-subtle" id="country-summary">Loading country...</p>
     <div class="country-tabs" id="country-tabs">
@@ -3749,6 +3935,16 @@ const tooltipEl = document.createElement("div");
 tooltipEl.className = "ui-tooltip";
 document.body.appendChild(tooltipEl);
 let tooltipTarget = null;
+window.addEventListener("securitypolicyviolation", (event) => {
+  try {
+    const statusEl = document.getElementById("auth-status");
+    const blocked = event.blockedURI ? " from " + event.blockedURI : "";
+    const msg = "CSP blocked " + event.violatedDirective + blocked;
+    if (statusEl) statusEl.textContent = msg;
+  } catch {
+    // no-op
+  }
+});
 function setTip(id, text) {
   const el = $(id);
   if (el && text) el.setAttribute("data-tip", text);
@@ -3819,6 +4015,7 @@ window.addEventListener("resize", () => {
 
 /* Static tooltip copy */
 [
+  ["auth-chip", "Sign in with Firebase for cloud collaboration mode."],
   ["country-chip", "Open Goblin-Country settings and collaboration panels."],
   ["mail-chip", "Open friends, requests, and direct-message threads."],
   ["provider-chip", "Configure local provider, model slots, and API key storage."],
@@ -3828,6 +4025,7 @@ window.addEventListener("resize", () => {
   ["ops-line", "Type a Goblintown CLI command here."],
   ["ops-run", "Run the command currently entered in the sidebar."],
   ["country-enabled", "Enable or disable country-mode collaboration."],
+  ["country-backend", "Choose Local peer mode or Firebase cloud mode."],
   ["country-search-code", "Search countries by short country ID code."],
   ["country-search-btn", "Find countries to join using the typed code."],
   ["country-save", "Save country-mode settings and role assignments."],
@@ -3836,6 +4034,9 @@ window.addEventListener("resize", () => {
   ["friend-request-btn", "Send a friend request using the provided country code."],
   ["dm-compose-body", "Write a direct message to the selected friend."],
   ["dm-send-btn", "Send the current direct message."],
+  ["auth-google-btn", "Sign in with Google via Firebase Authentication."],
+  ["auth-github-btn", "Sign in with GitHub via Firebase Authentication."],
+  ["auth-signout-btn", "Sign out from Firebase and disable cloud write operations."],
   ["provider-preset", "Select a provider preset (OpenAI, LM Studio, Ollama, etc.)."],
   ["provider-baseurl", "Base API URL for the active provider preset."],
   ["provider-keyenv", "Environment variable name used for this provider key."],
@@ -4034,6 +4235,8 @@ providerPreset.onchange = () => {
   renderProviderModels(preset.models || {});
 };
 providerChip.onclick = () => {
+  const authPanel = document.getElementById("auth-popover");
+  if (authPanel) authPanel.classList.remove("open");
   if (countryPopover) countryPopover.classList.remove("open");
   const mailPanel = document.getElementById("mail-popover");
   if (mailPanel) mailPanel.classList.remove("open");
@@ -4093,6 +4296,519 @@ $("provider-clear-key").onclick = async () => {
 };
 loadProviderMenu();
 
+/* Auth + Firebase collab */
+const authChip = $("auth-chip");
+const authPopover = $("auth-popover");
+const authStatus = $("auth-status");
+const authNote = $("auth-note");
+const authGoogleBtn = $("auth-google-btn");
+const authGithubBtn = $("auth-github-btn");
+const authSignoutBtn = $("auth-signout-btn");
+const FIREBASE_JS_VERSION = "10.12.5";
+const COUNTRY_DISCOVERY_MEMBER_LIMIT = 3;
+const COUNTRY_DISCOVERY_SAMPLE_LIMIT = 10;
+const MEMBERSHIP_STATE_VALUES = new Set(["solo", "pending", "member", "owner"]);
+let firebaseState = {
+  enabled: false,
+  initialized: false,
+  app: null,
+  auth: null,
+  db: null,
+  user: null,
+  userProfile: null,
+  sdk: null,
+  chatKeys: null,
+  bootPromise: null,
+};
+let countryMenuReload = null;
+let mailMenuReload = null;
+let redirectResultChecked = false;
+
+function isFirebaseBackendSelected() {
+  const select = $("country-backend");
+  return !!select && select.value === "firebase";
+}
+function randomAlphaNum(length) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < length; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+function maybeName(input) {
+  const s = String(input || "").trim();
+  if (!s) return "";
+  return s.slice(0, 48);
+}
+function normalizeMembershipState(value) {
+  const state = String(value || "").trim().toLowerCase();
+  return MEMBERSHIP_STATE_VALUES.has(state) ? state : "";
+}
+function inferMembershipState(profile) {
+  const explicit = normalizeMembershipState(profile && profile.membershipState);
+  if (explicit) return explicit;
+  if (String((profile && profile.pendingCountryId) || "").trim()) return "pending";
+  if (String((profile && profile.countryId) || "").trim()) return "member";
+  return "solo";
+}
+function makeCountryName() {
+  const left = ["Amber", "Briar", "Cinder", "Dawn", "Ember", "Frost", "Gloom", "Hearth", "Iron", "Juniper", "Kite", "Lumen", "Moss", "Night", "Oak", "Pine", "Quartz", "Rune", "Silver", "Thorn", "Umber", "Vale", "Wild", "Yarrow", "Zephyr"];
+  const right = ["Borough", "Hold", "Roost", "Keep", "March", "Vale", "Harbor", "Crest", "Forge", "Crossing", "Grove", "Hollow", "Spire", "Reach", "Dunes", "Watch"];
+  return left[Math.floor(Math.random() * left.length)] + " " + right[Math.floor(Math.random() * right.length)];
+}
+function shuffleArray(arr) {
+  const copy = arr.slice();
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = copy[i];
+    copy[i] = copy[j];
+    copy[j] = tmp;
+  }
+  return copy;
+}
+function bytesToBase64(bytes) {
+  const chunkSize = 0x8000;
+  let out = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    out += String.fromCharCode.apply(null, Array.from(chunk));
+  }
+  return btoa(out);
+}
+function base64ToBytes(text) {
+  const bin = atob(text);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function updateAuthUi() {
+  const signedIn = !!firebaseState.user;
+  const enabled = !!firebaseState.enabled;
+  authGoogleBtn.disabled = !enabled;
+  authGithubBtn.disabled = !enabled;
+  authSignoutBtn.disabled = !enabled || !signedIn;
+  if (!enabled) {
+    authChip.textContent = "Sign In ▾";
+    authStatus.textContent = "Firebase is not configured on this server.";
+    authNote.textContent =
+      "Set FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID, and FIREBASE_APP_ID, then reload.";
+    return;
+  }
+  if (!signedIn) {
+    authChip.textContent = "Sign In ▾";
+    authStatus.textContent = "Signed out.";
+    authNote.textContent = "Sign in to use Firebase collaboration and cloud friend/code flows.";
+    return;
+  }
+  const profileName = maybeName(firebaseState.userProfile && firebaseState.userProfile.username);
+  const display = profileName || maybeName(firebaseState.user.displayName) || "user";
+  const code = firebaseState.userProfile && firebaseState.userProfile.friendCode
+    ? " · code " + firebaseState.userProfile.friendCode
+    : "";
+  const state = normalizeMembershipState(firebaseState.userProfile && firebaseState.userProfile.membershipState);
+  const stateText = state ? " · " + state : "";
+  authChip.textContent = display + " ▾";
+  authStatus.textContent = "Signed in as " + display + code + stateText;
+  authNote.textContent = "Cloud mode stores usernames, membership/discovery metadata, and encrypted DM payloads.";
+}
+
+async function loadFirebaseSdk() {
+  if (firebaseState.sdk) return firebaseState.sdk;
+  const appMod = await import(
+    "https://www.gstatic.com/firebasejs/" + FIREBASE_JS_VERSION + "/firebase-app.js"
+  );
+  const authMod = await import(
+    "https://www.gstatic.com/firebasejs/" + FIREBASE_JS_VERSION + "/firebase-auth.js"
+  );
+  const storeMod = await import(
+    "https://www.gstatic.com/firebasejs/" + FIREBASE_JS_VERSION + "/firebase-firestore.js"
+  );
+  firebaseState.sdk = {
+    app: appMod,
+    auth: authMod,
+    store: storeMod,
+  };
+  return firebaseState.sdk;
+}
+
+async function ensureFirebaseReady() {
+  if (firebaseState.bootPromise) return firebaseState.bootPromise;
+  firebaseState.bootPromise = (async () => {
+    const configRes = await fetch("/api/firebase/config");
+    const cfg = await configRes.json().catch(() => ({ enabled: false, config: null }));
+    firebaseState.enabled = !!cfg.enabled && !!cfg.config;
+    if (!firebaseState.enabled) {
+      updateAuthUi();
+      return false;
+    }
+    const sdk = await loadFirebaseSdk();
+    const app = sdk.app.initializeApp(cfg.config);
+    const auth = sdk.auth.getAuth(app);
+    const db = sdk.store.getFirestore(app);
+    try {
+      if (sdk.auth.browserLocalPersistence) {
+        await sdk.auth.setPersistence(auth, sdk.auth.browserLocalPersistence);
+      }
+    } catch (err) {
+      console.warn("firebase-persistence-setup-failed", err);
+    }
+    firebaseState.app = app;
+    firebaseState.auth = auth;
+    firebaseState.db = db;
+    sdk.auth.onAuthStateChanged(auth, async (user) => {
+      firebaseState.user = user || null;
+      firebaseState.chatKeys = null;
+      if (firebaseState.user) {
+        try {
+          await ensureFirebaseProfile(false);
+        } catch (err) {
+          console.error("firebase-profile-init-failed", err);
+        }
+      } else {
+        firebaseState.userProfile = null;
+      }
+      updateAuthUi();
+      if (countryMenuReload) void countryMenuReload();
+      if (mailMenuReload) void mailMenuReload(true);
+    });
+    if (!redirectResultChecked) {
+      redirectResultChecked = true;
+      try {
+        const redirectResult = await sdk.auth.getRedirectResult(auth);
+        if (redirectResult && redirectResult.user) {
+          const providerId = (redirectResult.providerId || "provider").replace(".com", "");
+          authStatus.textContent = "Redirect sign-in complete (" + providerId + ").";
+        }
+      } catch (err) {
+        const code = err && err.code ? String(err.code) : "";
+        const hint = authErrorHint(code);
+        authStatus.textContent =
+          "Redirect sign-in failed" + (code ? " (" + code + ")" : "") + (hint ? " — " + hint : "");
+      }
+    }
+    firebaseState.initialized = true;
+    updateAuthUi();
+    return true;
+  })().catch((err) => {
+    firebaseState.enabled = false;
+    firebaseState.initialized = false;
+    firebaseState.bootPromise = null;
+    updateAuthUi();
+    throw err;
+  });
+  return firebaseState.bootPromise;
+}
+
+async function ensureChatKeys() {
+  if (!firebaseState.user) return null;
+  if (firebaseState.chatKeys) return firebaseState.chatKeys;
+  const sdk = firebaseState.sdk;
+  if (!sdk) return null;
+  const storageKey = "goblintown.chat-ecdh.v1." + firebaseState.user.uid;
+  const saved = localStorage.getItem(storageKey);
+  let privateKey = null;
+  let publicKey = null;
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      privateKey = await crypto.subtle.importKey(
+        "jwk",
+        parsed.privateJwk,
+        { name: "ECDH", namedCurve: "P-256" },
+        true,
+        ["deriveBits"],
+      );
+      publicKey = await crypto.subtle.importKey(
+        "jwk",
+        parsed.publicJwk,
+        { name: "ECDH", namedCurve: "P-256" },
+        true,
+        [],
+      );
+      firebaseState.chatKeys = {
+        privateKey,
+        publicKey,
+        publicJwk: parsed.publicJwk,
+      };
+      return firebaseState.chatKeys;
+    } catch {
+      localStorage.removeItem(storageKey);
+    }
+  }
+  const generated = await crypto.subtle.generateKey(
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    ["deriveBits"],
+  );
+  privateKey = generated.privateKey;
+  publicKey = generated.publicKey;
+  const privateJwk = await crypto.subtle.exportKey("jwk", privateKey);
+  const publicJwk = await crypto.subtle.exportKey("jwk", publicKey);
+  localStorage.setItem(storageKey, JSON.stringify({ privateJwk, publicJwk }));
+  firebaseState.chatKeys = { privateKey, publicKey, publicJwk };
+  return firebaseState.chatKeys;
+}
+
+async function ensureFirebaseProfile(forceRefresh) {
+  if (!firebaseState.user || !firebaseState.db || !firebaseState.sdk) return null;
+  if (firebaseState.userProfile && !forceRefresh) return firebaseState.userProfile;
+  const store = firebaseState.sdk.store;
+  const uid = firebaseState.user.uid;
+  const ref = store.doc(firebaseState.db, "users", uid);
+  const snap = await store.getDoc(ref);
+  const usernameFallback = maybeName(firebaseState.user.displayName) || maybeName(INITIAL.warren) || "goblin";
+  let profile = null;
+  const chatKeys = await ensureChatKeys();
+  const publicJwk = chatKeys ? chatKeys.publicJwk : null;
+  if (!snap.exists()) {
+    profile = {
+      uid,
+      username: usernameFallback,
+      friendCode: randomAlphaNum(6),
+      countryId: "",
+      countryName: "",
+      countryCode: "",
+      pendingCountryId: "",
+      pendingCountryName: "",
+      pendingCountryCode: "",
+      membershipState: "solo",
+      countryModeEnabled: false,
+      chatPublicJwk: publicJwk,
+    };
+    await store.setDoc(ref, {
+      ...profile,
+      createdAt: store.serverTimestamp(),
+      updatedAt: store.serverTimestamp(),
+    });
+  } else {
+    profile = snap.data();
+    const patch = {};
+    if (!profile.username) patch.username = usernameFallback;
+    if (!profile.friendCode) patch.friendCode = randomAlphaNum(6);
+    if (!Object.prototype.hasOwnProperty.call(profile, "countryModeEnabled")) patch.countryModeEnabled = false;
+    if (!profile.countryId) patch.countryId = "";
+    if (!profile.countryName) patch.countryName = "";
+    if (!profile.countryCode) patch.countryCode = "";
+    if (typeof profile.pendingCountryId !== "string") patch.pendingCountryId = "";
+    if (typeof profile.pendingCountryName !== "string") patch.pendingCountryName = "";
+    if (typeof profile.pendingCountryCode !== "string") patch.pendingCountryCode = "";
+    const membershipState = inferMembershipState(profile);
+    if (normalizeMembershipState(profile.membershipState) !== membershipState) {
+      patch.membershipState = membershipState;
+    }
+    if (publicJwk && JSON.stringify(profile.chatPublicJwk || null) !== JSON.stringify(publicJwk)) {
+      patch.chatPublicJwk = publicJwk;
+    }
+    if (Object.keys(patch).length > 0) {
+      patch.updatedAt = store.serverTimestamp();
+      await store.updateDoc(ref, patch);
+      profile = { ...profile, ...patch };
+    }
+  }
+  profile = {
+    ...profile,
+    membershipState: inferMembershipState(profile),
+    pendingCountryId: String(profile.pendingCountryId || ""),
+    pendingCountryName: String(profile.pendingCountryName || ""),
+    pendingCountryCode: String(profile.pendingCountryCode || ""),
+  };
+  firebaseState.userProfile = profile;
+  updateAuthUi();
+  return profile;
+}
+
+async function encryptDmBody(plainText, recipientPublicJwk) {
+  if (!recipientPublicJwk) return { mode: "plain", body: plainText };
+  const keys = await ensureChatKeys();
+  if (!keys) return { mode: "plain", body: plainText };
+  const recipientPublicKey = await crypto.subtle.importKey(
+    "jwk",
+    recipientPublicJwk,
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    [],
+  );
+  const sharedBits = await crypto.subtle.deriveBits(
+    { name: "ECDH", public: recipientPublicKey },
+    keys.privateKey,
+    256,
+  );
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    sharedBits,
+    "HKDF",
+    false,
+    ["deriveKey"],
+  );
+  const aesKey = await crypto.subtle.deriveKey(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt,
+      info: new TextEncoder().encode("goblintown-dm-v1"),
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt"],
+  );
+  const cipherBuf = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    aesKey,
+    new TextEncoder().encode(plainText),
+  );
+  return {
+    mode: "ecdh-aes-gcm-v1",
+    ciphertext: bytesToBase64(new Uint8Array(cipherBuf)),
+    iv: bytesToBase64(iv),
+    salt: bytesToBase64(salt),
+    body: "",
+  };
+}
+
+async function decryptDmBody(message, senderPublicJwk) {
+  if (!message || message.mode !== "ecdh-aes-gcm-v1") return message && message.body ? message.body : "";
+  if (!senderPublicJwk) return "[encrypted]";
+  const keys = await ensureChatKeys();
+  if (!keys) return "[encrypted]";
+  try {
+    const senderPublicKey = await crypto.subtle.importKey(
+      "jwk",
+      senderPublicJwk,
+      { name: "ECDH", namedCurve: "P-256" },
+      true,
+      [],
+    );
+    const sharedBits = await crypto.subtle.deriveBits(
+      { name: "ECDH", public: senderPublicKey },
+      keys.privateKey,
+      256,
+    );
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw",
+      sharedBits,
+      "HKDF",
+      false,
+      ["deriveKey"],
+    );
+    const aesKey = await crypto.subtle.deriveKey(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: base64ToBytes(message.salt),
+        info: new TextEncoder().encode("goblintown-dm-v1"),
+      },
+      keyMaterial,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"],
+    );
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64ToBytes(message.iv) },
+      aesKey,
+      base64ToBytes(message.ciphertext),
+    );
+    return new TextDecoder().decode(plain);
+  } catch {
+    return "[encrypted]";
+  }
+}
+
+authChip.onclick = () => {
+  providerPopover.classList.remove("open");
+  if (countryPopover) countryPopover.classList.remove("open");
+  const mailPanel = document.getElementById("mail-popover");
+  if (mailPanel) mailPanel.classList.remove("open");
+  authPopover.classList.toggle("open");
+};
+function authErrorHint(code) {
+  if (code === "auth/unauthorized-domain") {
+    return "Add localhost to Firebase Auth authorized domains.";
+  }
+  if (code === "auth/operation-not-allowed") {
+    return "Enable this provider in Firebase Authentication > Sign-in method.";
+  }
+  if (code === "auth/configuration-not-found") {
+    return "Firebase Auth is not provisioned. In Firebase Console open Authentication, click Get started, then enable Google/GitHub.";
+  }
+  if (code === "auth/popup-blocked") {
+    return "Allow popups for localhost, or use redirect sign-in fallback.";
+  }
+  if (code === "auth/popup-closed-by-user") {
+    return "Popup closed before completion; trying redirect sign-in may help.";
+  }
+  if (code === "auth/cancelled-popup-request") {
+    return "Another popup was already open. Retry once.";
+  }
+  if (code === "auth/auth-domain-config-required") {
+    return "Auth domain config is missing or invalid.";
+  }
+  if (code === "auth/network-request-failed") {
+    return "Network failure during auth flow.";
+  }
+  return "";
+}
+function isPopupHostileRuntime() {
+  const ua = (navigator.userAgent || "").toLowerCase();
+  return ua.includes("wv") ||
+    ua.includes("fban") ||
+    ua.includes("fbav") ||
+    ua.includes("instagram") ||
+    ua.includes("line/") ||
+    ua.includes("electron") ||
+    ua.includes("codex");
+}
+async function signInWithProvider(kind) {
+  const ready = await ensureFirebaseReady();
+  if (!ready || !firebaseState.auth || !firebaseState.sdk) return;
+  const provider = kind === "github"
+    ? new firebaseState.sdk.auth.GithubAuthProvider()
+    : new firebaseState.sdk.auth.GoogleAuthProvider();
+  const label = kind === "github" ? "GitHub" : "Google";
+  const shouldRedirectFirst = isPopupHostileRuntime() || !firebaseState.initialized;
+  if (shouldRedirectFirst) {
+    authStatus.textContent = label + " sign-in via redirect...";
+    await firebaseState.sdk.auth.signInWithRedirect(firebaseState.auth, provider);
+    return;
+  }
+  try {
+    await firebaseState.sdk.auth.signInWithPopup(firebaseState.auth, provider);
+    return;
+  } catch (err) {
+    const code = (err && err.code) ? String(err.code) : "";
+    const hint = authErrorHint(code);
+    const message = err && err.message ? String(err.message) : "";
+    authStatus.textContent = label + " popup failed" + (code ? " (" + code + ")" : "") +
+      (hint ? " — " + hint : "");
+    if (message && !code) authStatus.textContent += " — " + message;
+    const fatal = new Set([
+      "auth/unauthorized-domain",
+      "auth/operation-not-allowed",
+      "auth/auth-domain-config-required",
+    ]);
+    if (!fatal.has(code)) {
+      authStatus.textContent += " Redirecting...";
+      await firebaseState.sdk.auth.signInWithRedirect(firebaseState.auth, provider);
+      return;
+    }
+  }
+}
+authGoogleBtn.onclick = () => signInWithProvider("google");
+authGithubBtn.onclick = () => signInWithProvider("github");
+authSignoutBtn.onclick = async () => {
+  try {
+    if (!firebaseState.auth || !firebaseState.sdk) return;
+    await firebaseState.sdk.auth.signOut(firebaseState.auth);
+  } catch (err) {
+    authStatus.textContent = "Sign-out failed: " + (err.message || err);
+  }
+};
+updateAuthUi();
+void ensureFirebaseReady().catch((err) => {
+  authStatus.textContent = "Firebase init failed: " + (err && err.message ? err.message : String(err));
+});
+
 /* Country / team menu */
 try {
 let countryData = null;
@@ -4114,6 +4830,7 @@ const countryMembersEl = $("country-members");
 const countryRoleTable = $("country-role-table");
 const countryAutoLead = $("country-auto-lead");
 const countryStatus = $("country-status");
+const countryBackendSelect = $("country-backend");
 const countryTabButtons = [...document.querySelectorAll("[data-country-tab]")];
 const countryPanels = [...document.querySelectorAll("[data-country-panel]")];
 
@@ -4270,6 +4987,9 @@ function applyCountryPayload(payload) {
   countryNameEl.textContent = payload.countryName || "-";
   countryCodeEl.textContent = payload.countryCode || "-";
   countryEnabled.checked = payload.modeEnabled === true;
+  if (countryBackendSelect && payload.collabBackend) {
+    countryBackendSelect.value = payload.collabBackend;
+  }
   countryRoles = payload.roles || [];
   countryMaxMembers = payload.maxMembers || 6;
   countryAutoLead.checked = payload.config?.autoAssignLeadExtras !== false;
@@ -4300,18 +5020,192 @@ countryTabButtons.forEach((btn) => {
   btn.onclick = () => setCountryTab(btn.getAttribute("data-country-tab") || "overview");
 });
 
+async function loadCountryMenuLocal() {
+  const countryRes = await fetch("/api/country");
+  if (!countryRes.ok) throw new Error(await countryRes.text());
+  const payload = await countryRes.json();
+  applyCountryPayload(payload);
+}
+
+async function loadCountryMenuFirebase() {
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user) throw new Error("Sign in to use Firebase country mode.");
+  if (!firebaseState.sdk || !firebaseState.db) throw new Error("Firebase SDK not ready.");
+  const store = firebaseState.sdk.store;
+  let profile = await ensureFirebaseProfile(true);
+  const localRes = await fetch("/api/country");
+  if (!localRes.ok) throw new Error(await localRes.text());
+  const localPayload = await localRes.json();
+  const uid = firebaseState.user.uid;
+
+  if (!profile.countryId) {
+    const approvedQ = store.query(
+      store.collection(firebaseState.db, "countryJoinRequests"),
+      store.where("fromUid", "==", uid),
+      store.where("status", "==", "approved"),
+      store.orderBy("resolvedAt", "desc"),
+      store.limit(1),
+    );
+    const approvedRows = await store.getDocs(approvedQ);
+    if (!approvedRows.empty) {
+      const row = approvedRows.docs[0].data();
+      if (row.countryId && row.countryName && row.countryCode) {
+        await store.updateDoc(
+          store.doc(firebaseState.db, "users", uid),
+          {
+            countryId: row.countryId,
+            countryName: row.countryName,
+            countryCode: row.countryCode,
+            pendingCountryId: "",
+            pendingCountryName: "",
+            pendingCountryCode: "",
+            membershipState: "member",
+            updatedAt: store.serverTimestamp(),
+          },
+        );
+        profile = await ensureFirebaseProfile(true);
+      }
+    }
+  }
+
+  let members = [{
+    name: profile.username || maybeName(firebaseState.user.displayName) || localPayload.lead || "lead",
+    lead: true,
+    online: true,
+    hasMail: false,
+  }];
+  let pendingJoinRequests = [];
+  let queue = [];
+  let ownerUid = uid;
+  let roleOwners = localPayload.config?.roleOwners || {};
+  let autoAssignLeadExtras = localPayload.config?.autoAssignLeadExtras !== false;
+  let countryName = profile.countryName || "";
+  let countryCode = profile.countryCode || "";
+  let countryId = profile.countryId || "";
+  let membershipState = inferMembershipState(profile);
+  let discoverable = true;
+
+  if (countryId) {
+    const countryRef = store.doc(firebaseState.db, "countries", countryId);
+    const countrySnap = await store.getDoc(countryRef);
+    if (countrySnap.exists()) {
+      const c = countrySnap.data();
+      ownerUid = c.ownerUid || ownerUid;
+      countryName = c.countryName || countryName;
+      countryCode = c.countryCode || countryCode;
+      discoverable = c.discoverable !== false;
+      roleOwners = c.roleOwners || roleOwners;
+      autoAssignLeadExtras = c.autoAssignLeadExtras !== false;
+      queue = Array.isArray(c.riteQueue) ? c.riteQueue : [];
+      membershipState = ownerUid === uid ? "owner" : "member";
+    }
+    const memberSnap = await store.getDocs(
+      store.query(
+        store.collection(firebaseState.db, "countries", countryId, "members"),
+        store.orderBy("joinedAt", "asc"),
+        store.limit(12),
+      ),
+    );
+    if (!memberSnap.empty) {
+      members = memberSnap.docs.map((d) => {
+        const row = d.data();
+        const isLead = row.uid === ownerUid;
+        return {
+          name: row.username || row.uid,
+          lead: isLead,
+          online: true,
+          hasMail: false,
+          uid: row.uid,
+        };
+      });
+    }
+    const pendingSnap = await store.getDocs(
+      store.query(
+        store.collection(firebaseState.db, "countryJoinRequests"),
+        store.where("countryId", "==", countryId),
+        store.where("status", "==", "pending"),
+        store.where("toOwnerUid", "==", uid),
+        store.orderBy("createdAt", "desc"),
+        store.limit(20),
+      ),
+    );
+    pendingJoinRequests = pendingSnap.docs.map((d) => {
+      const row = d.data();
+      return {
+        id: d.id,
+        countryId: row.countryId,
+        countryCode: row.countryCode,
+        fromName: row.fromName || row.fromUid || "member",
+        fromUrl: row.fromCode ? ("code:" + row.fromCode) : "firebase",
+        fromPublicKey: row.fromUid || "",
+        createdAt: row.createdAt && row.createdAt.toDate ? row.createdAt.toDate().toISOString() : new Date().toISOString(),
+        signature: "firebase",
+      };
+    });
+  }
+  if (!countryId && membershipState !== "pending") {
+    membershipState = "solo";
+  }
+  const membershipPatch = {};
+  if (normalizeMembershipState(profile.membershipState) !== membershipState) {
+    membershipPatch.membershipState = membershipState;
+  }
+  if (membershipState !== "pending") {
+    const pendingId = String(profile.pendingCountryId || "");
+    const pendingName = String(profile.pendingCountryName || "");
+    const pendingCode = String(profile.pendingCountryCode || "");
+    if (pendingId || pendingName || pendingCode) {
+      membershipPatch.pendingCountryId = "";
+      membershipPatch.pendingCountryName = "";
+      membershipPatch.pendingCountryCode = "";
+    }
+  }
+  if (Object.keys(membershipPatch).length > 0) {
+    membershipPatch.updatedAt = store.serverTimestamp();
+    await store.updateDoc(store.doc(firebaseState.db, "users", uid), membershipPatch);
+    profile = await ensureFirebaseProfile(true);
+  }
+
+  const lead = members.find((m) => m.lead) || members[0];
+  const peers = members
+    .filter((m) => m.name !== lead.name)
+    .map((m) => ({ name: m.name, url: "" }));
+  const modeEnabled = profile.countryModeEnabled === true;
+  applyCountryPayload({
+    ...localPayload,
+    collabBackend: "firebase",
+    modeEnabled,
+    countryId,
+    countryName,
+    countryCode,
+    discoverable,
+    lead: lead ? lead.name : localPayload.lead,
+    members,
+    peers,
+    pendingJoinRequests,
+    riteQueue: queue,
+    config: {
+      autoAssignLeadExtras,
+      roleOwners,
+    },
+  });
+}
+
 async function loadCountryMenu() {
   try {
-    const countryRes = await fetch("/api/country");
-    if (!countryRes.ok) throw new Error(await countryRes.text());
-    applyCountryPayload(await countryRes.json());
+    if (isFirebaseBackendSelected()) {
+      await loadCountryMenuFirebase();
+      return;
+    }
+    await loadCountryMenuLocal();
   } catch (err) {
     countrySummary.textContent = "Team menu unavailable.";
     countryStatus.textContent = String(err && err.message ? err.message : err);
   }
 }
 
-async function loadCountryDiscover(code) {
+async function loadCountryDiscoverLocal(code) {
   const q = code ? ("?code=" + encodeURIComponent(code)) : "";
   const r = await fetch("/api/country/discover" + q);
   if (!r.ok) throw new Error(await r.text());
@@ -4320,7 +5214,67 @@ async function loadCountryDiscover(code) {
   renderJoinList(code ? countryDiscover : (d.randomOpen || []));
 }
 
+async function loadCountryDiscoverFirebase(code) {
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in to discover countries.");
+  }
+  await ensureFirebaseProfile(false);
+  const store = firebaseState.sdk.store;
+  let rows = [];
+  if (code) {
+    const byCode = await store.getDocs(
+      store.query(
+        store.collection(firebaseState.db, "countries"),
+        store.where("countryCode", "==", code),
+        store.limit(10),
+      ),
+    );
+    rows = byCode.docs;
+  } else {
+    const openRows = await store.getDocs(
+      store.query(
+        store.collection(firebaseState.db, "countries"),
+        store.where("discoverable", "==", true),
+        store.limit(100),
+      ),
+    );
+    rows = openRows.docs;
+  }
+  const mapped = rows.map((d) => {
+    const row = d.data();
+    return {
+      source: "firebase",
+      countryId: d.id,
+      countryName: row.countryName || "Unnamed Country",
+      countryCode: row.countryCode || "",
+      memberCount: Number(row.memberCount || 0),
+      discoverable: row.discoverable !== false,
+      leadName: row.ownerName || "lead",
+      ownerUid: row.ownerUid || "",
+      targetUrl: "",
+    };
+  }).filter((c) => c.discoverable && c.memberCount <= COUNTRY_DISCOVERY_MEMBER_LIMIT);
+  countryDiscover = mapped;
+  if (code) {
+    renderJoinList(mapped);
+  } else {
+    renderJoinList(shuffleArray(mapped).slice(0, COUNTRY_DISCOVERY_SAMPLE_LIMIT));
+  }
+}
+
+async function loadCountryDiscover(code) {
+  if (isFirebaseBackendSelected()) {
+    await loadCountryDiscoverFirebase(code);
+    return;
+  }
+  await loadCountryDiscoverLocal(code);
+}
+
 countryChip.onclick = () => {
+  const authPanel = document.getElementById("auth-popover");
+  if (authPanel) authPanel.classList.remove("open");
   providerPopover.classList.remove("open");
   const mailPanel = document.getElementById("mail-popover");
   if (mailPanel) mailPanel.classList.remove("open");
@@ -4337,6 +5291,10 @@ countryChip.onclick = () => {
   }
 };
 async function requestJoinCountry(countryId) {
+  if (isFirebaseBackendSelected()) {
+    await requestJoinCountryFirebase(countryId);
+    return;
+  }
   const target = (countryDiscover || []).find((c) => c.countryId === countryId);
   if (!target) {
     countryStatus.textContent = "Country not available.";
@@ -4364,7 +5322,72 @@ async function requestJoinCountry(countryId) {
     countryStatus.textContent = "Join failed: " + (err.message || err);
   }
 }
+
+async function requestJoinCountryFirebase(countryId) {
+  const target = (countryDiscover || []).find((c) => c.countryId === countryId);
+  if (!target) {
+    countryStatus.textContent = "Country not available.";
+    return;
+  }
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in before joining a country.");
+  }
+  const profile = await ensureFirebaseProfile(false);
+  if (profile.countryId) {
+    countryStatus.textContent = "Leave current country before joining another.";
+    return;
+  }
+  if (!target.ownerUid) {
+    countryStatus.textContent = "Country owner unavailable.";
+    return;
+  }
+  const store = firebaseState.sdk.store;
+  const dupe = await store.getDocs(
+    store.query(
+      store.collection(firebaseState.db, "countryJoinRequests"),
+      store.where("countryId", "==", target.countryId),
+      store.where("fromUid", "==", firebaseState.user.uid),
+      store.where("status", "==", "pending"),
+      store.limit(1),
+    ),
+  );
+  if (!dupe.empty) {
+    countryStatus.textContent = "Join request already pending.";
+    return;
+  }
+  await store.addDoc(
+    store.collection(firebaseState.db, "countryJoinRequests"),
+    {
+      countryId: target.countryId,
+      countryCode: target.countryCode || "",
+      countryName: target.countryName || "",
+      toOwnerUid: target.ownerUid,
+      fromUid: firebaseState.user.uid,
+      fromName: profile.username || maybeName(firebaseState.user.displayName) || "member",
+      fromCode: profile.friendCode || "",
+      status: "pending",
+      createdAt: store.serverTimestamp(),
+      resolvedAt: null,
+    },
+  );
+  await store.updateDoc(store.doc(firebaseState.db, "users", firebaseState.user.uid), {
+    membershipState: "pending",
+    pendingCountryId: target.countryId || "",
+    pendingCountryName: target.countryName || "",
+    pendingCountryCode: target.countryCode || "",
+    updatedAt: store.serverTimestamp(),
+  });
+  await ensureFirebaseProfile(true);
+  countryStatus.textContent = "Join request sent.";
+}
+
 async function resolveJoinRequest(requestId, approve) {
+  if (isFirebaseBackendSelected()) {
+    await resolveJoinRequestFirebase(requestId, approve);
+    return;
+  }
   if (!requestId) return;
   countryStatus.textContent = approve ? "Approving..." : "Denying...";
   try {
@@ -4386,6 +5409,106 @@ async function resolveJoinRequest(requestId, approve) {
     countryStatus.textContent = "Request failed: " + (err.message || err);
   }
 }
+
+async function resolveJoinRequestFirebase(requestId, approve) {
+  if (!requestId) return;
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in before resolving requests.");
+  }
+  const store = firebaseState.sdk.store;
+  const db = firebaseState.db;
+  const uid = firebaseState.user.uid;
+  const requestRef = store.doc(db, "countryJoinRequests", requestId);
+  countryStatus.textContent = approve ? "Approving..." : "Denying...";
+  if (!approve) {
+    const reqSnap = await store.getDoc(requestRef);
+    const reqRow = reqSnap.exists() ? reqSnap.data() : null;
+    await store.updateDoc(requestRef, {
+      status: "denied",
+      resolvedAt: store.serverTimestamp(),
+      resolvedBy: uid,
+    });
+    if (reqRow && reqRow.fromUid) {
+      const requesterRef = store.doc(db, "users", reqRow.fromUid);
+      const requesterSnap = await store.getDoc(requesterRef);
+      if (requesterSnap.exists()) {
+        const requester = requesterSnap.data();
+        const pendingCountryId = String(requester.pendingCountryId || "");
+        if (pendingCountryId && pendingCountryId === String(reqRow.countryId || "")) {
+          await store.updateDoc(requesterRef, {
+            membershipState: requester.countryId ? "member" : "solo",
+            pendingCountryId: "",
+            pendingCountryName: "",
+            pendingCountryCode: "",
+            updatedAt: store.serverTimestamp(),
+          });
+        }
+      }
+    }
+    await loadCountryMenu();
+    countryStatus.textContent = "Request denied.";
+    return;
+  }
+  await store.runTransaction(db, async (tx) => {
+    const reqSnap = await tx.get(requestRef);
+    if (!reqSnap.exists()) throw new Error("request not found");
+    const reqRow = reqSnap.data();
+    if (reqRow.status !== "pending") throw new Error("request already resolved");
+    if (reqRow.toOwnerUid !== uid) throw new Error("only country owner can approve");
+    const countryRef = store.doc(db, "countries", reqRow.countryId);
+    const countrySnap = await tx.get(countryRef);
+    if (!countrySnap.exists()) throw new Error("country not found");
+    const country = countrySnap.data();
+    const memberCount = Number(country.memberCount || 0);
+    if (memberCount >= 6) throw new Error("team full");
+    const memberRef = store.doc(db, "countries", reqRow.countryId, "members", reqRow.fromUid);
+    tx.set(memberRef, {
+      uid: reqRow.fromUid,
+      username: reqRow.fromName || reqRow.fromUid,
+      friendCode: reqRow.fromCode || "",
+      joinedAt: store.serverTimestamp(),
+    }, { merge: true });
+    tx.update(countryRef, {
+      memberCount: store.increment(1),
+      updatedAt: store.serverTimestamp(),
+    });
+    tx.update(store.doc(db, "users", reqRow.fromUid), {
+      countryId: reqRow.countryId,
+      countryName: reqRow.countryName || country.countryName || "",
+      countryCode: reqRow.countryCode || country.countryCode || "",
+      membershipState: "member",
+      pendingCountryId: "",
+      pendingCountryName: "",
+      pendingCountryCode: "",
+      countryModeEnabled: true,
+      updatedAt: store.serverTimestamp(),
+    });
+    tx.update(requestRef, {
+      status: "approved",
+      resolvedAt: store.serverTimestamp(),
+      resolvedBy: uid,
+    });
+    const ownProfile = firebaseState.userProfile || {};
+    const myFriendRef = store.doc(db, "users", uid, "friends", reqRow.fromUid);
+    const theirFriendRef = store.doc(db, "users", reqRow.fromUid, "friends", uid);
+    tx.set(myFriendRef, {
+      id: reqRow.fromUid,
+      name: reqRow.fromName || reqRow.fromUid,
+      friendCode: reqRow.fromCode || "",
+      createdAt: store.serverTimestamp(),
+    }, { merge: true });
+    tx.set(theirFriendRef, {
+      id: uid,
+      name: ownProfile.username || maybeName(firebaseState.user.displayName) || "lead",
+      friendCode: ownProfile.friendCode || "",
+      createdAt: store.serverTimestamp(),
+    }, { merge: true });
+  });
+  await loadCountryMenu();
+  countryStatus.textContent = "Request approved.";
+}
 $("country-search-btn").onclick = async () => {
   const code = ($("country-search-code").value || "").trim().toUpperCase();
   setCountryTab("join");
@@ -4405,29 +5528,155 @@ $("country-search-code").addEventListener("keydown", (ev) => {
 });
 $("country-save").onclick = async () => {
   countryStatus.textContent = "Saving...";
-  const payload = {
-    peers: countryPeers,
-    enabled: countryEnabled.checked,
-    countryId: countryData?.countryId,
-    countryName: countryData?.countryName,
-    countryCode: countryData?.countryCode,
-    autoAssignLeadExtras: countryAutoLead.checked,
-    roleOwners: currentRoleOwners(),
-  };
   try {
-    const r = await fetch("/api/country", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    applyCountryPayload(await r.json());
+    if (isFirebaseBackendSelected()) {
+      await saveCountryFirebase();
+    } else {
+      const payload = {
+        peers: countryPeers,
+        enabled: countryEnabled.checked,
+        countryId: countryData?.countryId,
+        countryName: countryData?.countryName,
+        countryCode: countryData?.countryCode,
+        autoAssignLeadExtras: countryAutoLead.checked,
+        roleOwners: currentRoleOwners(),
+        collabBackend: "local",
+      };
+      const r = await fetch("/api/country", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      applyCountryPayload(await r.json());
+    }
     countryPopover.classList.remove("open");
     setTicker("team policy saved");
   } catch (err) {
     countryStatus.textContent = "Save failed: " + (err.message || err);
   }
 };
+
+async function saveCountryFirebase() {
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in before saving country mode.");
+  }
+  const store = firebaseState.sdk.store;
+  const db = firebaseState.db;
+  const uid = firebaseState.user.uid;
+  let profile = await ensureFirebaseProfile(false);
+  const roleOwners = currentRoleOwners();
+  const localSync = await fetch("/api/country", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      enabled: countryEnabled.checked,
+      collabBackend: "firebase",
+      autoAssignLeadExtras: countryAutoLead.checked,
+      roleOwners,
+    }),
+  });
+  if (!localSync.ok) throw new Error(await localSync.text());
+  if (!countryEnabled.checked) {
+    await store.updateDoc(store.doc(db, "users", uid), {
+      countryModeEnabled: false,
+      updatedAt: store.serverTimestamp(),
+    });
+    await ensureFirebaseProfile(true);
+    await loadCountryMenu();
+    return;
+  }
+  if (!profile.countryId) {
+    const countryName = makeCountryName();
+    let countryCode = "";
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const candidate = randomAlphaNum(5);
+      const existing = await store.getDocs(
+        store.query(
+          store.collection(db, "countries"),
+          store.where("countryCode", "==", candidate),
+          store.limit(1),
+        ),
+      );
+      if (existing.empty) {
+        countryCode = candidate;
+        break;
+      }
+    }
+    if (!countryCode) countryCode = randomAlphaNum(5);
+    const countryRef = store.doc(store.collection(db, "countries"));
+    await store.setDoc(countryRef, {
+      countryName,
+      countryCode,
+      ownerUid: uid,
+      ownerName: profile.username || maybeName(firebaseState.user.displayName) || "lead",
+      discoverable: true,
+      memberCount: 1,
+      autoAssignLeadExtras: countryAutoLead.checked,
+      roleOwners,
+      riteQueue: [],
+      createdAt: store.serverTimestamp(),
+      updatedAt: store.serverTimestamp(),
+    });
+    await store.setDoc(
+      store.doc(db, "countries", countryRef.id, "members", uid),
+      {
+        uid,
+        username: profile.username || maybeName(firebaseState.user.displayName) || "lead",
+        friendCode: profile.friendCode || "",
+        joinedAt: store.serverTimestamp(),
+      },
+    );
+    await store.updateDoc(store.doc(db, "users", uid), {
+      countryId: countryRef.id,
+      countryName,
+      countryCode,
+      membershipState: "owner",
+      pendingCountryId: "",
+      pendingCountryName: "",
+      pendingCountryCode: "",
+      countryModeEnabled: true,
+      updatedAt: store.serverTimestamp(),
+    });
+  } else {
+    const countryRef = store.doc(db, "countries", profile.countryId);
+    let membershipState = "member";
+    const countrySnap = await store.getDoc(countryRef);
+    if (countrySnap.exists()) {
+      const country = countrySnap.data();
+      if (country.ownerUid === uid) {
+        membershipState = "owner";
+        await store.updateDoc(countryRef, {
+          autoAssignLeadExtras: countryAutoLead.checked,
+          roleOwners,
+          updatedAt: store.serverTimestamp(),
+        });
+      }
+    }
+    await store.updateDoc(store.doc(db, "users", uid), {
+      membershipState,
+      pendingCountryId: "",
+      pendingCountryName: "",
+      pendingCountryCode: "",
+      countryModeEnabled: true,
+      updatedAt: store.serverTimestamp(),
+    });
+  }
+  profile = await ensureFirebaseProfile(true);
+  await loadCountryMenu();
+}
+
+if (countryBackendSelect) {
+  countryBackendSelect.onchange = () => {
+    const mode = countryBackendSelect.value === "firebase" ? "Firebase" : "Local";
+    countryStatus.textContent = "Backend set to " + mode + ". Save to persist.";
+    void loadCountryMenu();
+  };
+}
+
+countryMenuReload = loadCountryMenu;
 
 loadCountryMenu();
 } catch (err) {
@@ -4461,6 +5710,339 @@ function setMailStatus(msg) {
   mailStatus.textContent = msg || "";
 }
 
+function threadIdForUsers(a, b) {
+  return [String(a || ""), String(b || "")].sort().join("__");
+}
+
+function toIso(value) {
+  if (!value) return new Date().toISOString();
+  if (typeof value === "string") return value;
+  if (value.toDate) return value.toDate().toISOString();
+  return new Date().toISOString();
+}
+
+async function loadMailStateLocal(silent) {
+  const r = await fetch("/api/friends");
+  if (!r.ok) throw new Error(await r.text());
+  applyMailState(await r.json());
+  if (!silent) setMailStatus("");
+}
+
+async function loadMailStateFirebase(silent) {
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in to use cloud friends and mail.");
+  }
+  const store = firebaseState.sdk.store;
+  const db = firebaseState.db;
+  const uid = firebaseState.user.uid;
+  await ensureFirebaseProfile(true);
+  const friendsSnap = await store.getDocs(
+    store.query(
+      store.collection(db, "users", uid, "friends"),
+      store.limit(200),
+    ),
+  );
+  const friends = friendsSnap.docs.map((d) => {
+    const row = d.data();
+    return {
+      id: d.id,
+      name: row.name || d.id,
+      friendCode: row.friendCode || "",
+      chatPublicJwk: row.chatPublicJwk || null,
+      createdAt: toIso(row.createdAt),
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  const friendById = new Map(friends.map((f) => [f.id, f]));
+
+  const reqSnap = await store.getDocs(
+    store.query(
+      store.collection(db, "friendRequests"),
+      store.where("toUid", "==", uid),
+      store.where("status", "==", "pending"),
+      store.orderBy("createdAt", "desc"),
+      store.limit(100),
+    ),
+  );
+  const pendingRequests = reqSnap.docs.map((d) => {
+    const row = d.data();
+    return {
+      id: d.id,
+      fromName: row.fromName || row.fromUid || "member",
+      fromUrl: row.fromCode ? ("code:" + row.fromCode) : "firebase",
+      fromUid: row.fromUid || "",
+      fromCode: row.fromCode || "",
+      fromChatPublicJwk: row.fromChatPublicJwk || null,
+      createdAt: toIso(row.createdAt),
+    };
+  });
+
+  const threadsSnap = await store.getDocs(
+    store.query(
+      store.collection(db, "threads"),
+      store.where("participants", "array-contains", uid),
+      store.limit(300),
+    ),
+  );
+  const threads = threadsSnap.docs.map((d) => {
+    const row = d.data();
+    const participants = Array.isArray(row.participants) ? row.participants : [];
+    const friendId = participants.find((id) => id !== uid) || "";
+    const friend = friendById.get(friendId);
+    const unread = row.unreadBy && typeof row.unreadBy[uid] === "number" ? row.unreadBy[uid] : 0;
+    return {
+      id: d.id,
+      friendId,
+      friendName: friend ? friend.name : (row.friendNames && row.friendNames[friendId]) || "unknown",
+      lastMessagePreview: row.lastMessagePreview || "Encrypted message",
+      unread,
+      updatedAt: toIso(row.updatedAt),
+    };
+  }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  applyMailState({ friends, pendingRequests, threads });
+  if (!silent) setMailStatus("");
+}
+
+async function firebaseSendFriendRequestByCode(code) {
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in before sending a friend request.");
+  }
+  const store = firebaseState.sdk.store;
+  const db = firebaseState.db;
+  const uid = firebaseState.user.uid;
+  const profile = await ensureFirebaseProfile(false);
+  const byCode = await store.getDocs(
+    store.query(
+      store.collection(db, "users"),
+      store.where("friendCode", "==", code),
+      store.limit(1),
+    ),
+  );
+  if (byCode.empty) throw new Error("No user found for that code.");
+  const targetDoc = byCode.docs[0];
+  if (targetDoc.id === uid) throw new Error("That is your own code.");
+  const target = targetDoc.data();
+  const existing = await store.getDocs(
+    store.query(
+      store.collection(db, "friendRequests"),
+      store.where("fromUid", "==", uid),
+      store.where("toUid", "==", targetDoc.id),
+      store.where("status", "==", "pending"),
+      store.limit(1),
+    ),
+  );
+  if (!existing.empty) throw new Error("Request already pending.");
+  const reverse = await store.getDocs(
+    store.query(
+      store.collection(db, "friendRequests"),
+      store.where("fromUid", "==", targetDoc.id),
+      store.where("toUid", "==", uid),
+      store.where("status", "==", "pending"),
+      store.limit(1),
+    ),
+  );
+  if (!reverse.empty) throw new Error("They already sent you a request. Approve it from pending requests.");
+  await store.addDoc(
+    store.collection(db, "friendRequests"),
+    {
+      fromUid: uid,
+      fromName: profile.username || maybeName(firebaseState.user.displayName) || "member",
+      fromCode: profile.friendCode || "",
+      fromChatPublicJwk: profile.chatPublicJwk || null,
+      toUid: targetDoc.id,
+      toName: target.username || "member",
+      status: "pending",
+      createdAt: store.serverTimestamp(),
+      resolvedAt: null,
+    },
+  );
+}
+
+async function firebaseRespondFriendRequest(requestId, approve) {
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in before responding.");
+  }
+  const store = firebaseState.sdk.store;
+  const db = firebaseState.db;
+  const uid = firebaseState.user.uid;
+  const ownProfile = await ensureFirebaseProfile(false);
+  const reqRef = store.doc(db, "friendRequests", requestId);
+  if (!approve) {
+    await store.updateDoc(reqRef, {
+      status: "denied",
+      resolvedAt: store.serverTimestamp(),
+      resolvedBy: uid,
+    });
+    return;
+  }
+  await store.runTransaction(db, async (tx) => {
+    const reqSnap = await tx.get(reqRef);
+    if (!reqSnap.exists()) throw new Error("Request not found.");
+    const req = reqSnap.data();
+    if (req.status !== "pending") throw new Error("Request already resolved.");
+    if (req.toUid !== uid) throw new Error("Request recipient mismatch.");
+    const friendRefA = store.doc(db, "users", uid, "friends", req.fromUid);
+    const friendRefB = store.doc(db, "users", req.fromUid, "friends", uid);
+    tx.set(friendRefA, {
+      id: req.fromUid,
+      name: req.fromName || req.fromUid,
+      friendCode: req.fromCode || "",
+      chatPublicJwk: req.fromChatPublicJwk || null,
+      createdAt: store.serverTimestamp(),
+    }, { merge: true });
+    tx.set(friendRefB, {
+      id: uid,
+      name: ownProfile.username || maybeName(firebaseState.user.displayName) || "member",
+      friendCode: ownProfile.friendCode || "",
+      chatPublicJwk: ownProfile.chatPublicJwk || null,
+      createdAt: store.serverTimestamp(),
+    }, { merge: true });
+    tx.update(reqRef, {
+      status: "approved",
+      resolvedAt: store.serverTimestamp(),
+      resolvedBy: uid,
+    });
+  });
+}
+
+async function firebaseRemoveFriend(friendId) {
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in before removing a friend.");
+  }
+  const store = firebaseState.sdk.store;
+  const db = firebaseState.db;
+  const uid = firebaseState.user.uid;
+  const batch = store.writeBatch(db);
+  batch.delete(store.doc(db, "users", uid, "friends", friendId));
+  batch.delete(store.doc(db, "users", friendId, "friends", uid));
+  await batch.commit();
+}
+
+async function loadThreadMessagesFirebase(threadId) {
+  if (!threadId) {
+    renderMessages([]);
+    return;
+  }
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in to open cloud threads.");
+  }
+  const store = firebaseState.sdk.store;
+  const db = firebaseState.db;
+  const uid = firebaseState.user.uid;
+  const friend = (socialState.friends || []).find((f) => f.id === activeFriendId);
+  const counterpartJwk = friend ? friend.chatPublicJwk : null;
+  const snap = await store.getDocs(
+    store.query(
+      store.collection(db, "threads", threadId, "messages"),
+      store.orderBy("createdAt", "asc"),
+      store.limit(300),
+    ),
+  );
+  const rows = [];
+  for (const d of snap.docs) {
+    const row = d.data();
+    const decrypted = await decryptDmBody(row, counterpartJwk);
+    rows.push({
+      id: d.id,
+      threadId,
+      fromName: row.fromName || (row.fromUid === uid ? "you" : activeThreadFriendName || "friend"),
+      body: decrypted,
+      createdAt: toIso(row.createdAt),
+      readAt: row.readAt ? toIso(row.readAt) : null,
+      fromUid: row.fromUid || "",
+      toUid: row.toUid || "",
+    });
+  }
+  renderMessages(rows);
+}
+
+async function markThreadReadFirebase(threadId, silent) {
+  if (!threadId) return;
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in to mark read.");
+  }
+  const store = firebaseState.sdk.store;
+  const db = firebaseState.db;
+  const uid = firebaseState.user.uid;
+  const unreadRows = await store.getDocs(
+    store.query(
+      store.collection(db, "threads", threadId, "messages"),
+      store.where("toUid", "==", uid),
+      store.where("readAt", "==", null),
+      store.limit(300),
+    ),
+  );
+  const batch = store.writeBatch(db);
+  unreadRows.docs.forEach((d) => {
+    batch.update(d.ref, { readAt: store.serverTimestamp() });
+  });
+  const patch = {};
+  patch["unreadBy." + uid] = 0;
+  batch.set(store.doc(db, "threads", threadId), patch, { merge: true });
+  await batch.commit();
+  if (!silent) setMailStatus("Marked read.");
+}
+
+async function firebaseSendDm(friendId, body) {
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in before sending messages.");
+  }
+  const store = firebaseState.sdk.store;
+  const db = firebaseState.db;
+  const uid = firebaseState.user.uid;
+  const ownProfile = await ensureFirebaseProfile(false);
+  const friend = (socialState.friends || []).find((f) => f.id === friendId);
+  if (!friend) throw new Error("Friend not found.");
+  const threadId = threadIdForUsers(uid, friendId);
+  const encrypted = await encryptDmBody(body, friend.chatPublicJwk || null);
+  const threadRef = store.doc(db, "threads", threadId);
+  const msgRef = store.doc(store.collection(db, "threads", threadId, "messages"));
+  const unreadPatch = {};
+  unreadPatch["unreadBy." + uid] = 0;
+  unreadPatch["unreadBy." + friendId] = (socialState.threads.find((t) => t.id === threadId)?.unread || 0) + 1;
+  const friendNames = {};
+  friendNames[uid] = ownProfile.username || maybeName(firebaseState.user.displayName) || "you";
+  friendNames[friendId] = friend.name || friendId;
+  await store.setDoc(threadRef, {
+    id: threadId,
+    participants: [uid, friendId].sort(),
+    friendNames,
+    lastMessagePreview: "Encrypted message",
+    updatedAt: store.serverTimestamp(),
+    ...unreadPatch,
+  }, { merge: true });
+  await store.setDoc(msgRef, {
+    id: msgRef.id,
+    threadId,
+    fromUid: uid,
+    toUid: friendId,
+    fromName: ownProfile.username || maybeName(firebaseState.user.displayName) || "you",
+    toName: friend.name || friendId,
+    mode: encrypted.mode || "plain",
+    body: encrypted.body || "",
+    ciphertext: encrypted.ciphertext || "",
+    iv: encrypted.iv || "",
+    salt: encrypted.salt || "",
+    createdAt: store.serverTimestamp(),
+    readAt: null,
+  });
+  return threadId;
+}
+
 function renderFriends() {
   const rows = (socialState.friends || []).map((f) =>
     '<div class="mail-item">' +
@@ -4486,8 +6068,12 @@ function renderFriends() {
       if (!friendId) return;
       setMailStatus("Removing friend...");
       try {
-        const r = await fetch("/api/friends/" + encodeURIComponent(friendId) + "/remove", { method: "POST" });
-        if (!r.ok) throw new Error(await r.text());
+        if (isFirebaseBackendSelected()) {
+          await firebaseRemoveFriend(friendId);
+        } else {
+          const r = await fetch("/api/friends/" + encodeURIComponent(friendId) + "/remove", { method: "POST" });
+          if (!r.ok) throw new Error(await r.text());
+        }
         await loadMailState(true);
         setMailStatus("Friend removed.");
       } catch (err) {
@@ -4515,19 +6101,24 @@ function renderFriendRequests() {
       if (!requestId) return;
       setMailStatus(approve ? "Approving..." : "Denying...");
       try {
-        const r = await fetch("/api/friends/respond", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ requestId, approve }),
-        });
-        if (!r.ok) throw new Error(await r.text());
-        const data = await r.json();
-        await loadMailState(true);
-        if (approve && data.callback && data.callback.delivered === false) {
-          setMailStatus("Approved locally, callback failed: " + (data.callback.error || "unknown"));
+        if (isFirebaseBackendSelected()) {
+          await firebaseRespondFriendRequest(requestId, approve);
         } else {
-          setMailStatus(approve ? "Friend approved." : "Friend denied.");
+          const r = await fetch("/api/friends/respond", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ requestId, approve }),
+          });
+          if (!r.ok) throw new Error(await r.text());
+          const data = await r.json();
+          if (approve && data.callback && data.callback.delivered === false) {
+            setMailStatus("Approved locally, callback failed: " + (data.callback.error || "unknown"));
+          } else {
+            setMailStatus(approve ? "Friend approved." : "Friend denied.");
+          }
         }
+        await loadMailState(true);
+        if (isFirebaseBackendSelected()) setMailStatus(approve ? "Friend approved." : "Friend denied.");
       } catch (err) {
         setMailStatus("Request update failed: " + (err.message || err));
       }
@@ -4580,10 +6171,14 @@ async function loadThreadMessages(threadId) {
     return;
   }
   try {
-    const r = await fetch("/api/dm/" + encodeURIComponent(threadId) + "?limit=200");
-    if (!r.ok) throw new Error(await r.text());
-    const rows = await r.json();
-    renderMessages(rows);
+    if (isFirebaseBackendSelected()) {
+      await loadThreadMessagesFirebase(threadId);
+    } else {
+      const r = await fetch("/api/dm/" + encodeURIComponent(threadId) + "?limit=200");
+      if (!r.ok) throw new Error(await r.text());
+      const rows = await r.json();
+      renderMessages(rows);
+    }
     setMailStatus(activeThreadFriendName ? ("Thread: " + activeThreadFriendName) : "Thread loaded.");
   } catch (err) {
     setMailStatus("Load messages failed: " + (err.message || err));
@@ -4593,6 +6188,10 @@ async function loadThreadMessages(threadId) {
 async function markThreadRead(threadId, silent) {
   if (!threadId) return;
   try {
+    if (isFirebaseBackendSelected()) {
+      await markThreadReadFirebase(threadId, silent);
+      return;
+    }
     const r = await fetch("/api/dm/" + encodeURIComponent(threadId) + "/read", {
       method: "POST",
     });
@@ -4620,10 +6219,11 @@ function applyMailState(payload) {
 
 async function loadMailState(silent) {
   try {
-    const r = await fetch("/api/friends");
-    if (!r.ok) throw new Error(await r.text());
-    applyMailState(await r.json());
-    if (!silent) setMailStatus("");
+    if (isFirebaseBackendSelected()) {
+      await loadMailStateFirebase(silent);
+    } else {
+      await loadMailStateLocal(silent);
+    }
   } catch (err) {
     setMailStatus("Mail unavailable: " + (err.message || err));
   }
@@ -4637,12 +6237,16 @@ $("friend-request-btn").onclick = async () => {
   }
   setMailStatus("Sending request...");
   try {
-    const r = await fetch("/api/friends/request", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ countryCode }),
-    });
-    if (!r.ok) throw new Error(await r.text());
+    if (isFirebaseBackendSelected()) {
+      await firebaseSendFriendRequestByCode(countryCode);
+    } else {
+      const r = await fetch("/api/friends/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ countryCode }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+    }
     $("friend-target-code").value = "";
     setMailStatus("Friend request sent.");
     await loadMailState(true);
@@ -4668,15 +6272,19 @@ $("dm-send-btn").onclick = async () => {
   }
   setMailStatus("Sending message...");
   try {
-    const r = await fetch("/api/dm/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ friendId: activeFriendId, body }),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    const data = await r.json();
+    if (isFirebaseBackendSelected()) {
+      activeThreadId = await firebaseSendDm(activeFriendId, body);
+    } else {
+      const r = await fetch("/api/dm/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ friendId: activeFriendId, body }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      activeThreadId = data.threadId || activeThreadId;
+    }
     $("dm-compose-body").value = "";
-    activeThreadId = data.threadId || activeThreadId;
     await loadMailState(true);
     await loadThreadMessages(activeThreadId);
     setMailStatus("Message sent.");
@@ -4686,6 +6294,8 @@ $("dm-send-btn").onclick = async () => {
 };
 
 mailChip.onclick = () => {
+  const authPanel = document.getElementById("auth-popover");
+  if (authPanel) authPanel.classList.remove("open");
   providerPopover.classList.remove("open");
   countryPopover.classList.remove("open");
   const willOpen = !mailPopover.classList.contains("open");
@@ -4700,6 +6310,7 @@ setInterval(() => {
   if (!mailPopover.classList.contains("open")) loadMailState(true);
 }, 15000);
 
+mailMenuReload = loadMailState;
 loadMailState(true);
 } catch (err) {
   console.error("mail-ui-init-failed", err);

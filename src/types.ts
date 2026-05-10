@@ -303,6 +303,8 @@ export interface WarrenPeer {
 }
 
 export interface CountryConfig {
+  /** Collaboration backend mode. local=peer URLs, firebase=cloud code-based flow. */
+  collabBackend?: "local" | "firebase";
   /** Enable collaborative country mode for rite/plan execution preflights. */
   enabled?: boolean;
   /** Stable country id (shared by all members). */
