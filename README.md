@@ -300,6 +300,14 @@ goblintown route clear goblin
 goblintown country peer add --name alpha --url http://localhost:7777
 goblintown country peer add --name beta  --url http://localhost:8888
 goblintown country peer ls
+goblintown country show
+goblintown country set --enabled true --backend local --discoverable true
+goblintown country discover
+goblintown country discover --code A7K2Q
+# join request flow (uses server API; start `goblintown serve` first)
+goblintown country join --country-id <id> --country-code <code> --target-url <url>
+goblintown country requests ls
+goblintown country requests approve <requestId>
 goblintown country run --task "Audit this migration plan" --all --pack 2
 # (UI flow: Country top-bar menu supports code-based join/discovery + approvals)
 ```

@@ -13,6 +13,7 @@ import { compareRites } from "./compare.js";
 import {
   dispatchRiteToPeer,
   MAX_PEERS,
+  normalizeCountryConfig,
   normalizeWarrenPeer,
   selectPeers,
 } from "./country.js";
@@ -143,6 +144,18 @@ Usage:
   goblintown country peer rm <peer>
   goblintown country peer ls
       Manage Goblin-Country peers in warren.json.
+  goblintown country show
+      Show current country config (backend/mode/code/discoverability/pending requests).
+  goblintown country set [--enabled <true|false>] [--backend <local|firebase>] [--discoverable <true|false>]
+      Update country-mode config in warren.json.
+  goblintown country discover [--code <A1B2C>] [--server <http://host:port>]
+      Query discoverable open countries (3 or fewer members) from a running Goblintown server.
+  goblintown country join --country-id <id> --country-code <code> [--target-url <url>] [--server <http://host:port>]
+      Send join request to a discovered country via server API.
+  goblintown country requests ls [--server <http://host:port>]
+  goblintown country requests approve <requestId> [--server <http://host:port>]
+  goblintown country requests deny <requestId> [--server <http://host:port>]
+      List/resolve pending join requests through server API.
   goblintown country run --task "..." [--peer <peer>]... [--all] [--pack <N>] [--format freeform|markdown|json]
       Dispatch a Rite to peer warrens and wait for completion.
 
@@ -161,6 +174,7 @@ Environment:
   GOBLINTOWN_EMBEDDING_MODEL  default: text-embedding-3-small  (artifact retrieval, Phase 6)
   GOBLINTOWN_TOOLS_HTTP       set to 1 to enable http.head verifier tool (default disabled)
   GOBLINTOWN_MAX_CONCURRENCY  default: 5 (in-flight API calls)
+  GOBLINTOWN_SERVER_URL       default base URL for country discover/join/requests commands
   (also: GREMLIN, RACCOON, PIGEON)
 
 "OpenAI tried to put the goblins back in the box. We built the box for them."
@@ -1030,12 +1044,33 @@ async function cmdCountry(args: string[]): Promise<void> {
   if (sub === "peer" || sub === "peers") {
     return cmdCountryPeer(args.slice(1));
   }
+  if (sub === "show") {
+    return cmdCountryShow(args.slice(1));
+  }
+  if (sub === "set") {
+    return cmdCountrySet(args.slice(1));
+  }
+  if (sub === "discover") {
+    return cmdCountryDiscover(args.slice(1));
+  }
+  if (sub === "join") {
+    return cmdCountryJoin(args.slice(1));
+  }
+  if (sub === "requests" || sub === "req") {
+    return cmdCountryRequests(args.slice(1));
+  }
   if (sub === "run") {
     return cmdCountryRun(args.slice(1));
   }
   process.stderr.write(
-    `usage: goblintown country peer <add|rm|ls> ...\n` +
-      `   or: goblintown country run --task "..." [--peer <name>]... [--all]\n`,
+    `usage: goblintown country <peer|show|set|discover|join|requests|run> ...\n` +
+      `  peer:     goblintown country peer <add|rm|ls>\n` +
+      `  show:     goblintown country show\n` +
+      `  set:      goblintown country set [--enabled true|false] [--backend local|firebase] [--discoverable true|false]\n` +
+      `  discover: goblintown country discover [--code A1B2C] [--server http://localhost:7777]\n` +
+      `  join:     goblintown country join --country-id <id> --country-code <code> [--target-url <url>]\n` +
+      `  requests: goblintown country requests <ls|approve|deny> [requestId] [--server http://localhost:7777]\n` +
+      `  run:      goblintown country run --task "..." [--peer <name>]... [--all]\n`,
   );
   process.exitCode = 1;
 }
@@ -1113,6 +1148,231 @@ async function cmdCountryPeer(args: string[]): Promise<void> {
   process.stderr.write(
     `usage: goblintown country peer <add|rm|ls>\n` +
       `  add: goblintown country peer add --name <peer> --url <http://host:port>\n`,
+  );
+  process.exitCode = 1;
+}
+
+async function cmdCountryShow(_args: string[]): Promise<void> {
+  const w = await loadWarren(process.cwd());
+  const cfg = normalizeCountryConfig(w.manifest.country);
+  const peers = w.manifest.peers ?? [];
+  const pending = cfg.pendingJoinRequests ?? [];
+  process.stdout.write(
+    `Country config:\n` +
+      `  lead:          ${w.manifest.name}\n` +
+      `  backend:       ${cfg.collabBackend === "firebase" ? "firebase" : "local"}\n` +
+      `  enabled:       ${cfg.enabled === true ? "true" : "false"}\n` +
+      `  discoverable:  ${cfg.discoverable !== false ? "true" : "false"}\n` +
+      `  country id:    ${cfg.countryId ?? "(unset)"}\n` +
+      `  country name:  ${cfg.countryName ?? "(unset)"}\n` +
+      `  country code:  ${cfg.countryCode ?? "(unset)"}\n` +
+      `  team members:  ${1 + peers.length}/6\n` +
+      `  pending joins: ${pending.length}\n`,
+  );
+  if (pending.length > 0) {
+    process.stdout.write(`\nPending requests:\n`);
+    for (const req of pending) {
+      process.stdout.write(
+        `  ${req.id}  from=${req.fromName}  url=${req.fromUrl}  at=${req.createdAt}\n`,
+      );
+    }
+  }
+}
+
+async function cmdCountrySet(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const w = await loadWarren(process.cwd());
+  const current = normalizeCountryConfig(w.manifest.country);
+  const patch: Record<string, unknown> = {};
+
+  if (flags.enabled !== undefined) {
+    const enabled = parseBoolFlag(flags.enabled, "enabled");
+    if (enabled === null) return;
+    patch.enabled = enabled;
+  }
+  if (flags.discoverable !== undefined) {
+    const discoverable = parseBoolFlag(flags.discoverable, "discoverable");
+    if (discoverable === null) return;
+    patch.discoverable = discoverable;
+  }
+  if (flags.backend !== undefined) {
+    if (flags.backend !== "local" && flags.backend !== "firebase") {
+      process.stderr.write(`--backend must be "local" or "firebase"\n`);
+      process.exitCode = 1;
+      return;
+    }
+    patch.collabBackend = flags.backend;
+  }
+  if (flags["country-id"] !== undefined) patch.countryId = flags["country-id"];
+  if (flags["country-name"] !== undefined) patch.countryName = flags["country-name"];
+  if (flags["country-code"] !== undefined) patch.countryCode = flags["country-code"];
+
+  if (Object.keys(patch).length === 0) {
+    process.stderr.write(
+      `usage: goblintown country set [--enabled true|false] [--backend local|firebase] [--discoverable true|false] [--country-id <id>] [--country-name <name>] [--country-code <code>]\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  w.manifest.country = normalizeCountryConfig({ ...current, ...patch });
+  await saveWarrenManifest(w);
+  process.stdout.write(`Country config updated.\n`);
+  await cmdCountryShow([]);
+}
+
+async function cmdCountryDiscover(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const baseUrl = resolveCountryServerUrl(flags);
+  const code = flags.code ? String(flags.code).trim().toUpperCase() : "";
+  const q = code ? `?code=${encodeURIComponent(code)}` : "";
+  const data = await fetchJsonOrThrow<{
+    countries?: Array<{
+      countryId: string;
+      countryName: string;
+      countryCode: string;
+      memberCount: number;
+      discoverable: boolean;
+      leadName: string;
+      targetUrl?: string;
+    }>;
+    randomOpen?: Array<{
+      countryId: string;
+      countryName: string;
+      countryCode: string;
+      memberCount: number;
+      discoverable: boolean;
+      leadName: string;
+      targetUrl?: string;
+    }>;
+  }>(`${baseUrl}/api/country/discover${q}`);
+  const countries = Array.isArray(data.countries) ? data.countries : [];
+  const randomOpen = Array.isArray(data.randomOpen) ? data.randomOpen : [];
+  const rows = code ? countries : randomOpen;
+  if (rows.length === 0) {
+    process.stdout.write(`No open countries found.\n`);
+    return;
+  }
+  const overLimit = rows.filter((r) => Number(r.memberCount) > 3);
+  process.stdout.write(
+    `Open countries (${rows.length}${code ? ` for code ${code}` : ""}) via ${baseUrl}:\n`,
+  );
+  for (const row of rows) {
+    process.stdout.write(
+      `  ${row.countryName} [${row.countryCode}] id=${row.countryId} members=${row.memberCount}/6 lead=${row.leadName}${row.targetUrl ? ` target=${row.targetUrl}` : ""}\n`,
+    );
+  }
+  if (overLimit.length > 0) {
+    process.stderr.write(
+      `warning: server returned ${overLimit.length} country row(s) above open-team limit (3).\n`,
+    );
+  }
+}
+
+async function cmdCountryJoin(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const baseUrl = resolveCountryServerUrl(flags);
+  let targetUrl = flags["target-url"] ? String(flags["target-url"]).trim() : "";
+  const countryId = flags["country-id"] ? String(flags["country-id"]).trim() : "";
+  const countryCode = flags["country-code"] ? String(flags["country-code"]).trim().toUpperCase() : "";
+  if (!countryId || !countryCode) {
+    process.stderr.write(
+      `usage: goblintown country join --country-id <id> --country-code <code> [--target-url <url>] [--server <url>]\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (!targetUrl) {
+    const discovered = await fetchJsonOrThrow<{
+      countries?: Array<{
+        countryId: string;
+        countryCode: string;
+        targetUrl?: string;
+      }>;
+    }>(`${baseUrl}/api/country/discover?code=${encodeURIComponent(countryCode)}`);
+    const matches = (discovered.countries ?? []).filter((c) => c.countryId === countryId);
+    if (matches.length !== 1 || !matches[0].targetUrl) {
+      process.stderr.write(
+        `Could not resolve target URL for ${countryId}/${countryCode}. Pass --target-url explicitly.\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    targetUrl = matches[0].targetUrl;
+  }
+  const result = await fetchJsonOrThrow<{ requestId?: string }>(
+    `${baseUrl}/api/country/join`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetUrl,
+        countryId,
+        countryCode,
+      }),
+    },
+  );
+  process.stdout.write(
+    `Join request sent${result.requestId ? ` (id=${result.requestId})` : ""}.\n`,
+  );
+}
+
+async function cmdCountryRequests(args: string[]): Promise<void> {
+  const action = args[0] ?? "ls";
+  const flags = parseFlags(args);
+  const baseUrl = resolveCountryServerUrl(flags);
+  if (action === "ls" || action === "list") {
+    const payload = await fetchJsonOrThrow<{
+      countryName?: string;
+      countryCode?: string;
+      pendingJoinRequests?: Array<{
+        id: string;
+        fromName: string;
+        fromUrl: string;
+        createdAt: string;
+      }>;
+    }>(`${baseUrl}/api/country`);
+    const pending = payload.pendingJoinRequests ?? [];
+    process.stdout.write(
+      `Pending join requests for ${payload.countryName ?? "country"} [${payload.countryCode ?? "?"}]: ${pending.length}\n`,
+    );
+    for (const row of pending) {
+      process.stdout.write(
+        `  ${row.id}  from=${row.fromName}  url=${row.fromUrl}  at=${row.createdAt}\n`,
+      );
+    }
+    return;
+  }
+
+  if (action === "approve" || action === "deny") {
+    const requestId = args[1] || flags.id;
+    if (!requestId) {
+      process.stderr.write(`usage: goblintown country requests ${action} <requestId> [--server <url>]\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const approve = action === "approve";
+    const response = await fetchJsonOrThrow<{
+      delivery?: { delivered?: boolean; error?: string };
+      pendingJoinRequests?: Array<{ id: string }>;
+    }>(
+      `${baseUrl}/api/country/join-approve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, approve }),
+      },
+    );
+    process.stdout.write(
+      `${approve ? "Approved" : "Denied"} request ${requestId}. Remaining pending: ${(response.pendingJoinRequests ?? []).length}\n`,
+    );
+    if (approve && response.delivery?.delivered === false) {
+      process.stdout.write(`  delivery warning: ${response.delivery.error ?? "unknown"}\n`);
+    }
+    return;
+  }
+
+  process.stderr.write(
+    `usage: goblintown country requests <ls|approve|deny> [requestId] [--server <url>]\n`,
   );
   process.exitCode = 1;
 }
@@ -1514,6 +1774,32 @@ function parseFlags(args: string[]): Record<string, string> {
     }
   }
   return out;
+}
+
+function parseBoolFlag(raw: string, name: string): boolean | null {
+  const value = raw.trim().toLowerCase();
+  if (["true", "1", "yes", "y", "on"].includes(value)) return true;
+  if (["false", "0", "no", "n", "off"].includes(value)) return false;
+  process.stderr.write(`--${name} must be true or false\n`);
+  process.exitCode = 1;
+  return null;
+}
+
+function resolveCountryServerUrl(flags: Record<string, string>): string {
+  const raw =
+    flags.server ??
+    process.env.GOBLINTOWN_SERVER_URL ??
+    "http://localhost:7777";
+  return String(raw).trim().replace(/\/+$/, "");
+}
+
+async function fetchJsonOrThrow<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`${response.status} ${response.statusText}${text ? `: ${text}` : ""}`);
+  }
+  return (await response.json()) as T;
 }
 
 function collectFlag(args: string[], name: string): string[] {
