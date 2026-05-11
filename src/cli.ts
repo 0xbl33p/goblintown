@@ -161,6 +161,7 @@ Usage:
 
   goblintown serve [--port <N>]
       Start the Hoard web UI. Default port=7777.
+      Optional pigeon sprite sheets are loaded from site/assets (walk + peck).
 
 Environment:
   OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare / ancestry)

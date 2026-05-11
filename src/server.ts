@@ -3104,6 +3104,16 @@ function tankHtml(
     transition: filter .25s, opacity .3s; user-select: none;
   }
   .creature .emoji { display: block; line-height: 1; }
+  .creature .sprite-shell { display: none; margin: 0 auto; }
+  .creature.pigeon-animated { font-size: 2.2rem; }
+  .creature.pigeon-animated .emoji { display: none; }
+  .creature.pigeon-animated .sprite-shell { display: block; width: 92px; height: 92px; }
+  .pigeon-sprite {
+    width: 100%;
+    height: 100%;
+    display: block;
+    image-rendering: auto;
+  }
   .creature .label {
     display: block; margin-top: 0.15rem; text-align: center;
     color: var(--muted); font-size: 0.6rem;
@@ -3208,7 +3218,8 @@ function tankHtml(
     100% { transform: translateY(0); }
   }
 
-  .pos-pigeon  { top: 4%;  left: 4%; }
+  .pos-pigeon  { top: 4%; left: 4%; }
+  .creature.pos-pigeon[data-state="idle"] { animation: none; }
   .pos-gremlin { top: 9%;  right: 8%; }
   .pos-ogre    { top: 35%; left: 7%; }
   .pos-goblins { bottom: 17%; left: 50%; transform: translateX(-50%); }
@@ -3749,7 +3760,7 @@ function tankHtml(
     <div class="ground"></div>
     <div class="ground-shadow"></div>
 
-<pre class="pigeon-wire">═══════════════
+<pre class="pigeon-wire" id="pigeon-wire">═══════════════
         │
         │</pre>
 
@@ -3776,6 +3787,7 @@ function tankHtml(
 
     <div class="creature pos-pigeon" id="c-pigeon" data-state="idle"
          style="--sway-dur: 3.6s; --sway-x: 3px; --sway-delay: -0.8s;">
+      <canvas class="sprite-shell pigeon-sprite" id="c-pigeon-sprite" width="128" height="128" aria-hidden="true"></canvas>
       <span class="emoji">🐦</span>
       <span class="label">pigeon</span>
     </div>
@@ -3913,6 +3925,434 @@ const opsOutput = $("ops-output");
 const rand  = (lo, hi) => lo + Math.random() * (hi - lo);
 const irand = (lo, hi) => Math.floor(rand(lo, hi + 1));
 const pick  = (arr)    => arr[Math.floor(Math.random() * arr.length)];
+
+/* Pigeon sprite renderer */
+const PIGEON_SPRITE_CONFIG = {
+  rightSrc: "/assets/pigeon-walk-right.png",
+  leftSrc: "/assets/pigeon-walk-left.png",
+  cols: 5,
+  rows: 5,
+  totalFrames: 25,
+};
+const PIGEON_PECK_CONFIG = {
+  src: "/assets/pigeon-peck.png",
+  cols: 5,
+  rows: 5,
+  totalFrames: 25,
+  minIntervalMs: 40_000,
+  maxIntervalMs: 120_000,
+  fps: 11,
+};
+const PIGEON_WIRE_NUDGE_UP_PX = 12;
+const pigeonSpriteCanvas = $("c-pigeon-sprite");
+const pigeonSpriteCtx = pigeonSpriteCanvas ? pigeonSpriteCanvas.getContext("2d") : null;
+const pigeonWire = $("pigeon-wire");
+const pigeonEl = $("c-pigeon");
+const pigeonSpriteState = {
+  enabled: false,
+  mode: "walk",
+  visualState: "idle",
+  facing: "right",
+  frameCursor: 0,
+  walkFrameOrder: [],
+  peckFrameOrder: [],
+  frameAccumulatorMs: 0,
+  fps: 8,
+  walkFps: 9,
+  lastTickMs: 0,
+  rafId: 0,
+  images: { right: null, left: null, peck: null },
+  flipLeftFromRight: false,
+  railReady: false,
+  railX: 0,
+  railMinX: 0,
+  railMaxX: 0,
+  railTopPx: 0,
+  railDir: 1,
+  pendingTurnDir: 0,
+  endPauseUntilMs: 0,
+  endPauseMs: 260,
+  nextPeckAtMs: 0,
+  peckLoopsLeft: 0,
+};
+
+function loadPigeonSheet(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("failed to load sprite sheet: " + src));
+    img.src = src;
+  });
+}
+
+function setPigeonFacing(facing) {
+  pigeonSpriteState.facing = facing === "left" ? "left" : "right";
+}
+
+function setPigeonFps(fps) {
+  const clamped = Math.max(2, Math.min(24, Number(fps) || 8));
+  pigeonSpriteState.fps = clamped;
+}
+
+function buildPigeonFrameOrder(totalFrames) {
+  const n = Math.max(1, Math.floor(totalFrames || 1));
+  if (n <= 2) return Array.from({ length: n }, (_, i) => i);
+  // SNES-like cadence: decimate frames for choppier, readable motion.
+  const seq = [];
+  for (let i = 0; i < n; i += 2) seq.push(i);
+  // Avoid the terminal duplicate-hitch frame in many sheets.
+  if (seq.length > 1 && seq[seq.length - 1] === n - 1) seq.pop();
+  return seq.length ? seq : [0];
+}
+
+function buildLinearFrameOrder(totalFrames) {
+  const n = Math.max(1, Math.floor(totalFrames || 1));
+  return Array.from({ length: n }, (_, i) => i);
+}
+
+function frameSignatureFromSheet(sheet, frameIndex, cols, rows) {
+  const frameW = Math.floor(sheet.naturalWidth / cols);
+  const frameH = Math.floor(sheet.naturalHeight / rows);
+  if (!frameW || !frameH) return "";
+  const sx = (frameIndex % cols) * frameW;
+  const sy = Math.floor(frameIndex / cols) * frameH;
+
+  const sampleSize = 12;
+  const c = document.createElement("canvas");
+  c.width = sampleSize;
+  c.height = sampleSize;
+  const ctx = c.getContext("2d");
+  if (!ctx) return "";
+  ctx.imageSmoothingEnabled = true;
+  ctx.clearRect(0, 0, sampleSize, sampleSize);
+  ctx.drawImage(sheet, sx, sy, frameW, frameH, 0, 0, sampleSize, sampleSize);
+  const data = ctx.getImageData(0, 0, sampleSize, sampleSize).data;
+
+  let sig = "";
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3];
+    // Keep alpha + coarse luma to detect duplicate posed frames.
+    if (a < 24) {
+      sig += "00";
+      continue;
+    }
+    const lum = ((data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8);
+    sig += (a > 170 ? "2" : "1") + String((lum / 32) | 0);
+  }
+  return sig;
+}
+
+function dedupeAdjacentPigeonFrames(frameOrder, sheet, cols, rows) {
+  if (!sheet || frameOrder.length <= 1) return frameOrder;
+  const kept = [];
+  let prevSig = "";
+  for (const idx of frameOrder) {
+    const sig = frameSignatureFromSheet(sheet, idx, cols, rows);
+    if (!kept.length || sig !== prevSig) {
+      kept.push(idx);
+      prevSig = sig;
+    }
+  }
+  return kept.length ? kept : frameOrder;
+}
+
+function nextPigeonPeckDelayMs() {
+  return Math.floor(rand(PIGEON_PECK_CONFIG.minIntervalMs, PIGEON_PECK_CONFIG.maxIntervalMs));
+}
+
+function scheduleNextPigeonPeck(ts) {
+  const now = Number.isFinite(ts) ? ts : performance.now();
+  pigeonSpriteState.nextPeckAtMs = now + nextPigeonPeckDelayMs();
+}
+
+function startPigeonPeck(ts) {
+  if (!pigeonSpriteState.images.peck) return false;
+  if (!pigeonSpriteState.peckFrameOrder.length) return false;
+  if (pigeonSpriteState.mode === "peck") return true;
+  pigeonSpriteState.mode = "peck";
+  pigeonSpriteState.frameCursor = 0;
+  pigeonSpriteState.peckLoopsLeft = 1;
+  pigeonSpriteState.pendingTurnDir = 0;
+  pigeonSpriteState.endPauseUntilMs = 0;
+  setPigeonFps(PIGEON_PECK_CONFIG.fps);
+  pigeonSpriteState.nextPeckAtMs = Number.isFinite(ts) ? ts : performance.now();
+  return true;
+}
+
+function finishPigeonPeck(ts) {
+  pigeonSpriteState.mode = "walk";
+  pigeonSpriteState.frameCursor = 0;
+  pigeonSpriteState.peckLoopsLeft = 0;
+  setPigeonFps(pigeonSpriteState.walkFps);
+  scheduleNextPigeonPeck(ts);
+}
+
+function updatePigeonRailBounds(forceReset) {
+  if (!tank || !pigeonWire || !pigeonEl) return false;
+  const tankRect = tank.getBoundingClientRect();
+  const wireRect = pigeonWire.getBoundingClientRect();
+  if (!wireRect.width || !tankRect.width) return false;
+  const spriteRect = pigeonSpriteCanvas ? pigeonSpriteCanvas.getBoundingClientRect() : null;
+  const spriteW = spriteRect && spriteRect.width ? spriteRect.width : 92;
+  const spriteH = spriteRect && spriteRect.height ? spriteRect.height : 92;
+  let railMinX = wireRect.left - tankRect.left - spriteW * 0.08;
+  let railMaxX = wireRect.right - tankRect.left - spriteW * 0.92;
+  if (railMaxX <= railMinX) railMaxX = railMinX + Math.max(10, spriteW * 0.2);
+  const railTopPx = wireRect.top - tankRect.top - spriteH * 0.62 - PIGEON_WIRE_NUDGE_UP_PX;
+
+  pigeonSpriteState.railMinX = railMinX;
+  pigeonSpriteState.railMaxX = railMaxX;
+  pigeonSpriteState.railTopPx = railTopPx;
+  if (!pigeonSpriteState.railReady || forceReset) {
+    pigeonSpriteState.railX = railMinX;
+    pigeonSpriteState.railDir = 1;
+    pigeonSpriteState.pendingTurnDir = 0;
+    pigeonSpriteState.endPauseUntilMs = 0;
+    pigeonSpriteState.railReady = true;
+    setPigeonFacing("right");
+  } else {
+    pigeonSpriteState.railX = Math.max(railMinX, Math.min(railMaxX, pigeonSpriteState.railX));
+  }
+  pigeonEl.style.left = pigeonSpriteState.railX.toFixed(2) + "px";
+  pigeonEl.style.top = railTopPx.toFixed(2) + "px";
+  return true;
+}
+
+function getPigeonRailStepPx() {
+  const span = Math.max(1, pigeonSpriteState.railMaxX - pigeonSpriteState.railMinX);
+  const frameCount = Math.max(2, pigeonSpriteState.walkFrameOrder.length || 2);
+  return span / (frameCount - 1);
+}
+
+function isAtPigeonEdgeForDirection() {
+  const epsilon = 0.5;
+  if (pigeonSpriteState.railDir > 0) {
+    return pigeonSpriteState.railX >= pigeonSpriteState.railMaxX - epsilon;
+  }
+  return pigeonSpriteState.railX <= pigeonSpriteState.railMinX + epsilon;
+}
+
+function handlePigeonBoundaryPause(ts) {
+  if (!pigeonSpriteState.enabled || !pigeonSpriteState.railReady) return false;
+  if (pigeonSpriteState.frameCursor !== 0) return false;
+  if (!isAtPigeonEdgeForDirection()) return false;
+
+  if (pigeonSpriteState.pendingTurnDir === 0) {
+    pigeonSpriteState.pendingTurnDir = pigeonSpriteState.railDir > 0 ? -1 : 1;
+    pigeonSpriteState.endPauseUntilMs = ts + pigeonSpriteState.endPauseMs;
+    return true;
+  }
+
+  if (ts < pigeonSpriteState.endPauseUntilMs) return true;
+
+  pigeonSpriteState.railDir = pigeonSpriteState.pendingTurnDir;
+  pigeonSpriteState.pendingTurnDir = 0;
+  setPigeonFacing(pigeonSpriteState.railDir < 0 ? "left" : "right");
+  return false;
+}
+
+function advancePigeonRailByFrame() {
+  if (!pigeonSpriteState.enabled || !pigeonSpriteState.railReady || !pigeonEl) return;
+  const step = getPigeonRailStepPx();
+  pigeonSpriteState.railX += pigeonSpriteState.railDir * step;
+  if (pigeonSpriteState.railDir > 0) {
+    pigeonSpriteState.railX = Math.min(pigeonSpriteState.railMaxX, pigeonSpriteState.railX);
+  } else {
+    pigeonSpriteState.railX = Math.max(pigeonSpriteState.railMinX, pigeonSpriteState.railX);
+  }
+  pigeonEl.style.left = pigeonSpriteState.railX.toFixed(2) + "px";
+}
+
+function drawPigeonFrame() {
+  if (!pigeonSpriteState.enabled || !pigeonSpriteCtx || !pigeonSpriteCanvas) return;
+  const wantLeft = pigeonSpriteState.facing === "left";
+  let sheet = null;
+  let frameOrder = [0];
+  let cols = PIGEON_SPRITE_CONFIG.cols;
+  let rows = PIGEON_SPRITE_CONFIG.rows;
+  let usingFallbackFlip = false;
+
+  if (pigeonSpriteState.mode === "peck" && pigeonSpriteState.images.peck) {
+    sheet = pigeonSpriteState.images.peck;
+    frameOrder = pigeonSpriteState.peckFrameOrder.length
+      ? pigeonSpriteState.peckFrameOrder
+      : [0];
+    cols = PIGEON_PECK_CONFIG.cols;
+    rows = PIGEON_PECK_CONFIG.rows;
+    usingFallbackFlip = wantLeft;
+  } else {
+    usingFallbackFlip = wantLeft && pigeonSpriteState.flipLeftFromRight;
+    sheet = wantLeft
+      ? (pigeonSpriteState.images.left || pigeonSpriteState.images.right)
+      : (pigeonSpriteState.images.right || pigeonSpriteState.images.left);
+    frameOrder = pigeonSpriteState.walkFrameOrder.length
+      ? pigeonSpriteState.walkFrameOrder
+      : [0];
+  }
+  if (!sheet) return;
+
+  const frameIndex = ((Math.floor(pigeonSpriteState.frameCursor) % frameOrder.length) + frameOrder.length) % frameOrder.length;
+  const frame = frameOrder[frameIndex];
+  const frameW = Math.floor(sheet.naturalWidth / cols);
+  const frameH = Math.floor(sheet.naturalHeight / rows);
+  if (!frameW || !frameH) return;
+  const sx = (frame % cols) * frameW;
+  const sy = Math.floor(frame / cols) * frameH;
+  const dw = pigeonSpriteCanvas.width;
+  const dh = pigeonSpriteCanvas.height;
+
+  pigeonSpriteCtx.clearRect(0, 0, dw, dh);
+  pigeonSpriteCtx.imageSmoothingEnabled = true;
+  if (usingFallbackFlip) {
+    pigeonSpriteCtx.save();
+    pigeonSpriteCtx.translate(dw, 0);
+    pigeonSpriteCtx.scale(-1, 1);
+    pigeonSpriteCtx.drawImage(sheet, sx, sy, frameW, frameH, 0, 0, dw, dh);
+    pigeonSpriteCtx.restore();
+  } else {
+    pigeonSpriteCtx.drawImage(sheet, sx, sy, frameW, frameH, 0, 0, dw, dh);
+  }
+}
+
+function applyPigeonStateVisual(state) {
+  if (!pigeonSpriteState.enabled) return;
+  pigeonSpriteState.visualState = state;
+  switch (state) {
+    case "active":
+      pigeonSpriteState.walkFps = 12;
+      break;
+    case "winner":
+      pigeonSpriteState.walkFps = 10;
+      break;
+    case "fail":
+      pigeonSpriteState.walkFps = 8;
+      break;
+    default:
+      pigeonSpriteState.walkFps = 9;
+      break;
+  }
+  if (pigeonSpriteState.mode !== "peck") {
+    setPigeonFps(pigeonSpriteState.walkFps);
+  }
+}
+
+function animatePigeonSprite(ts) {
+  if (!pigeonSpriteState.enabled) return;
+  if (!pigeonSpriteState.lastTickMs) {
+    pigeonSpriteState.lastTickMs = ts;
+    drawPigeonFrame();
+  } else {
+    const deltaMs = Math.max(0, ts - pigeonSpriteState.lastTickMs);
+    pigeonSpriteState.lastTickMs = ts;
+
+    if (
+      pigeonSpriteState.mode !== "peck" &&
+      pigeonSpriteState.images.peck &&
+      pigeonSpriteState.peckFrameOrder.length &&
+      ts >= pigeonSpriteState.nextPeckAtMs &&
+      pigeonSpriteState.visualState === "idle"
+    ) {
+      startPigeonPeck(ts);
+    }
+
+    const frameMs = 1000 / pigeonSpriteState.fps;
+    pigeonSpriteState.frameAccumulatorMs += deltaMs;
+    let advanced = 0;
+    while (pigeonSpriteState.frameAccumulatorMs >= frameMs && advanced < 6) {
+      if (pigeonSpriteState.mode !== "peck" && handlePigeonBoundaryPause(ts)) {
+        pigeonSpriteState.frameAccumulatorMs = Math.min(pigeonSpriteState.frameAccumulatorMs, frameMs);
+        break;
+      }
+      pigeonSpriteState.frameAccumulatorMs -= frameMs;
+      const prevCursor = pigeonSpriteState.frameCursor;
+      const currentFrameOrder =
+        pigeonSpriteState.mode === "peck"
+          ? (pigeonSpriteState.peckFrameOrder.length ? pigeonSpriteState.peckFrameOrder : [0])
+          : (pigeonSpriteState.walkFrameOrder.length ? pigeonSpriteState.walkFrameOrder : [0]);
+      pigeonSpriteState.frameCursor =
+        (pigeonSpriteState.frameCursor + 1) %
+        Math.max(1, currentFrameOrder.length);
+
+      if (pigeonSpriteState.mode === "peck") {
+        if (pigeonSpriteState.frameCursor === 0 && prevCursor !== 0) {
+          pigeonSpriteState.peckLoopsLeft = Math.max(0, pigeonSpriteState.peckLoopsLeft - 1);
+          if (pigeonSpriteState.peckLoopsLeft <= 0) {
+            finishPigeonPeck(ts);
+          }
+        }
+      } else {
+        advancePigeonRailByFrame();
+      }
+      advanced += 1;
+    }
+    drawPigeonFrame();
+  }
+  pigeonSpriteState.rafId = requestAnimationFrame(animatePigeonSprite);
+}
+
+async function bootPigeonSprite() {
+  if (!pigeonSpriteCanvas || !pigeonSpriteCtx) return;
+  try {
+    let right = null;
+    let left = null;
+    let peck = null;
+    let flipLeftFromRight = false;
+    try {
+      right = await loadPigeonSheet(PIGEON_SPRITE_CONFIG.rightSrc);
+    } catch {}
+    try {
+      left = await loadPigeonSheet(PIGEON_SPRITE_CONFIG.leftSrc);
+    } catch {
+      if (right) flipLeftFromRight = true;
+    }
+    try {
+      peck = await loadPigeonSheet(PIGEON_PECK_CONFIG.src);
+    } catch {}
+    if (!right && left) right = left;
+    if (!right && !left) throw new Error("pigeon sprite sheets not found");
+    pigeonSpriteState.images.right = right;
+    pigeonSpriteState.images.left = left;
+    pigeonSpriteState.images.peck = peck;
+    pigeonSpriteState.flipLeftFromRight = flipLeftFromRight;
+    const walkBaseOrder = buildPigeonFrameOrder(PIGEON_SPRITE_CONFIG.totalFrames);
+    const walkSheet = right || left;
+    pigeonSpriteState.walkFrameOrder = dedupeAdjacentPigeonFrames(
+      walkBaseOrder,
+      walkSheet,
+      PIGEON_SPRITE_CONFIG.cols,
+      PIGEON_SPRITE_CONFIG.rows
+    );
+    const peckBaseOrder = buildLinearFrameOrder(PIGEON_PECK_CONFIG.totalFrames);
+    pigeonSpriteState.peckFrameOrder = peck
+      ? dedupeAdjacentPigeonFrames(
+          peckBaseOrder,
+          peck,
+          PIGEON_PECK_CONFIG.cols,
+          PIGEON_PECK_CONFIG.rows
+        )
+      : [];
+    pigeonSpriteState.frameCursor = 0;
+    pigeonSpriteState.frameAccumulatorMs = 0;
+    pigeonSpriteState.lastTickMs = 0;
+    pigeonSpriteState.mode = "walk";
+    pigeonSpriteState.walkFps = 9;
+    setPigeonFps(pigeonSpriteState.walkFps);
+    pigeonSpriteState.enabled = true;
+    scheduleNextPigeonPeck(performance.now());
+    if (pigeonEl) pigeonEl.classList.add("pigeon-animated");
+    updatePigeonRailBounds(true);
+    drawPigeonFrame();
+    if (pigeonSpriteState.rafId) cancelAnimationFrame(pigeonSpriteState.rafId);
+    pigeonSpriteState.rafId = requestAnimationFrame(animatePigeonSprite);
+  } catch (err) {
+    console.warn("pigeon-sprite-disabled", err);
+  }
+}
+void bootPigeonSprite();
+window.addEventListener("resize", () => {
+  if (pigeonSpriteState.enabled) updatePigeonRailBounds(false);
+});
 
 function setSidebarCollapsed(collapsed) {
   workarea.classList.toggle("sidebar-collapsed", collapsed);
@@ -6468,7 +6908,12 @@ function dispatchBubble(creatureEl, text, kind, lifetime) {
 }
 
 /* Animations w/ variance */
-function setState(id, state) { $(id).dataset.state = state; }
+function setState(id, state) {
+  const el = $(id);
+  if (!el) return;
+  el.dataset.state = state;
+  if (id === "c-pigeon") applyPigeonStateVisual(state);
+}
 function playVariantAnim(id, variants, ms, varsObj) {
   const el = $(id);
   variants.forEach(v => el.classList.remove(v));
@@ -6491,6 +6936,11 @@ function scurryVariant() {
 }
 function gavelVariant() { playVariantAnim("c-troll", ["gavel-a","gavel-b"], 1600); }
 function hopGoblin(el) {
+  if (el.id === "c-pigeon" && pigeonSpriteState.enabled) {
+    setPigeonFps(Math.max(14, pigeonSpriteState.fps));
+    setTimeout(() => applyPigeonStateVisual(pigeonSpriteState.visualState || "idle"), 480);
+    return;
+  }
   el.classList.remove("hop");
   void el.offsetWidth;
   el.classList.add("hop");

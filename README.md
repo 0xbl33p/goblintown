@@ -541,6 +541,25 @@ Run state is persisted to `.goblintown/runs/<runId>.json`, so the SSE
 history replays after a server restart; in-flight rites are marked
 interrupted on boot.
 
+### Tank pigeon sprite assets
+
+The Tank UI can render a sprite-driven pigeon (instead of emoji) from files in
+`site/assets/`:
+
+- `pigeon-walk-right.png`
+- `pigeon-walk-left.png`
+- `pigeon-peck.png` (optional idle peck cycle)
+
+Sprite sheet expectations: `5x5` layout, `25` frames, transparent background.
+
+Runtime behavior:
+
+- missing sheets fall back to emoji;
+- missing left-walk sheet mirrors the right-walk sheet;
+- duplicate adjacent frames are de-duplicated at load time;
+- when the peck sheet is present, a peck cycle is triggered at random idle
+  intervals between ~40 and 120 seconds.
+
 ## Layout
 
 ```
