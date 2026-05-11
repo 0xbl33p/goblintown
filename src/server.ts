@@ -5,33 +5,44 @@ import express, { type Request, type Response } from "express";
 import {
   MAX_PEERS,
   MAX_TEAM_MEMBERS,
-  makeCountryName,
   makeCountryCode,
-  normalizeCountryConfig,
+  makeCountryName,
   normalizeCountryCode,
+  normalizeCountryConfig,
   normalizeCountryId,
   normalizeCountryName,
-  normalizeWarrenPeers,
   normalizeWarrenPeer,
+  normalizeWarrenPeers,
   resolveRoleOwners,
   sampleOpenCountries,
-} from "./country.js";
-import {
   ensureCountryIdentity,
   readCountryIdentity,
   signCountryPayload,
   verifyCountryPayload,
-} from "./country-identity.js";
-import { verifyHmac, verifyInbox } from "./federation.js";
-import { performRite, type RiteStep } from "./rite.js";
-import { loadRewardPlugin } from "./reward-plugin.js";
+  verifyHmac,
+  verifyInbox,
+  directMessagePayload,
+  friendIdFromPublicKey,
+  friendRequestPayload,
+  makeMessagePreview,
+  makeThreadId,
+  normalizeDirectMessage,
+  normalizeFriendRecord,
+  normalizeFriendRequest,
+  normalizeMessageBody,
+  normalizePublicKeyPem,
+  normalizeSocialName,
+  normalizeSocialUrl,
+} from "./collab/index.js";
 import {
-  ensureRunDir,
-  loadAllRuns,
-  saveRun,
-  type RunRecord,
-} from "./run-store.js";
-import {
+  MODEL_SLOTS,
+  PROVIDER_PRESETS,
+  normalizeOutputFormat,
+  normalizeProviderConfig,
+  resolveProviderRuntime,
+  clearProviderSecretForRoot,
+  readProviderSecretsForRootSync,
+  setProviderSecretForRoot,
   CREATURE_KINDS,
   type Artifact,
   type CountryJoinRequest,
@@ -45,38 +56,24 @@ import {
   type OutputFormat,
   type Personality,
   type ProviderConfig,
-} from "./types.js";
-import { executePlan, type PlanExecutionEvent } from "./plan-executor.js";
-import { planTask } from "./planner.js";
-import { findRelevantArtifacts } from "./artifact.js";
-import { exportRunAsMasTrace } from "./trace-export.js";
-import { normalizeOutputFormat } from "./formatting.js";
+} from "./core/index.js";
 import {
-  MODEL_SLOTS,
-  PROVIDER_PRESETS,
-  normalizeProviderConfig,
-  resolveProviderRuntime,
-} from "./providers.js";
+  executePlan,
+  performRite,
+  planTask,
+  type PlanExecutionEvent,
+  type RiteStep,
+} from "./pipeline/index.js";
 import {
-  clearProviderSecretForRoot,
-  readProviderSecretsForRootSync,
-  setProviderSecretForRoot,
-} from "./provider-secrets.js";
-import { loadWarren, saveWarrenManifest, type Warren } from "./warren.js";
-import {
-  directMessagePayload,
-  friendIdFromPublicKey,
-  friendRequestPayload,
-  makeMessagePreview,
-  makeThreadId,
-  normalizeDirectMessage,
-  normalizeFriendRecord,
-  normalizeFriendRequest,
-  normalizeMessageBody,
-  normalizePublicKeyPem,
-  normalizeSocialName,
-  normalizeSocialUrl,
-} from "./social.js";
+  ensureRunDir,
+  loadAllRuns,
+  loadWarren,
+  saveRun,
+  saveWarrenManifest,
+  type RunRecord,
+  type Warren,
+} from "./storage/index.js";
+import { findRelevantArtifacts, exportRunAsMasTrace, loadRewardPlugin } from "./analysis/index.js";
 
 export interface ServeOptions {
   cwd: string;

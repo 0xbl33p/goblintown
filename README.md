@@ -8,6 +8,15 @@ spawn focused specialists when the pack fails, and hand the surviving
 answer back as a signed, content-addressed artifact that future rites can
 build on.
 
+## Beta 0.2
+
+`0.2.0-beta.0` is the stabilization cut for the federation/country wave and the recent UI pass.
+
+- Internal refactor: imports are now organized by domain (`core`, `pipeline`, `analysis`, `storage`, `collab`) to reduce coupling between CLI/server codepaths.
+- CLI ergonomics: command help text now lives in a dedicated module (`src/cli-help.ts`) so command wiring is easier to maintain.
+- Goblin-Country flow: discovery/join/approval, role ownership, queueing, and membership persistence are now first-class in both API and CLI.
+- Tank polish: animated pigeon sprite support (walk + peck cycles) and docs for asset expectations in `site/assets`.
+
 ## Background
 
 In April 2026, OpenAI published [*Where the goblins came from*](https://openai.com/index/where-the-goblins-came-from/),
