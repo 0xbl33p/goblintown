@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import express, { type Request, type Response } from "express";
 import {
   MAX_PEERS,
@@ -26,8 +28,12 @@ import { verifyHmac, verifyInbox } from "./federation.js";
 import { performRite, type RiteStep } from "./rite.js";
 import { loadRewardPlugin } from "./reward-plugin.js";
 import {
+  appendRunEvent,
+  buildResumePrompt,
   ensureRunDir,
   loadAllRuns,
+  markRunFinished,
+  markRunInterrupted,
   saveRun,
   type RunRecord,
 } from "./run-store.js";
@@ -88,14 +94,118 @@ interface RunState {
   subscribers: Set<Response>;
 }
 
+interface StartRunOptions {
+  bodyOverride?: Record<string, unknown>;
+  resumedFromRunId?: string;
+}
+
 const DISCOVERY_OPEN_MEMBER_LIMIT = 3;
+
+function resolveAssetDir(warrenRoot: string): string | null {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(warrenRoot, "site", "assets"),
+    join(warrenRoot, "dist", "site", "assets"),
+    join(moduleDir, "..", "site", "assets"),
+  ];
+  for (const dir of candidates) {
+    if (existsSync(join(dir, "pigeon-walk-right.png"))) return dir;
+  }
+  return null;
+}
 
 function runSummary(record: RunRecord): Omit<RunRecord, "events"> & { eventCount: number } {
   const { events, ...rest } = record;
   return {
     ...rest,
-    eventCount: events.length,
+    eventCount: record.nextSeq ?? events.length,
   };
+}
+
+function sanitizeRunPayload(body: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    const clean = sanitizeJsonValue(value);
+    if (clean !== undefined) out[key] = clean;
+  }
+  return out;
+}
+
+function sanitizeJsonValue(value: unknown): unknown {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeJsonValue(item))
+      .filter((item) => item !== undefined);
+  }
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      const clean = sanitizeJsonValue(child);
+      if (clean !== undefined) out[key] = clean;
+    }
+    return out;
+  }
+  return undefined;
+}
+
+function inferRunRequest(record: RunRecord): { mode: "rite" | "plan"; payload: Record<string, unknown> } {
+  const mode =
+    record.mode ??
+    (record.events.some((e) => e.kind.startsWith("plan:")) || record.packSize === 0
+      ? "plan"
+      : "rite");
+  if (mode === "plan") {
+    return {
+      mode,
+      payload: {
+        task: record.task,
+        maxNodes: 6,
+        maxReplan: 2,
+        remember: true,
+      },
+    };
+  }
+  return {
+    mode,
+    payload: {
+      task: record.task,
+      packSize: record.packSize || 3,
+      scanGlobs: record.scanGlobs,
+      personality: record.personality,
+      noFallback: record.noFallback,
+      remember: true,
+    },
+  };
+}
+
+function resumePayloadForRun(
+  record: RunRecord,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = sanitizeRunPayload({
+    ...payload,
+    task: record.resumePrompt ?? buildResumePrompt(record),
+    remember: true,
+  });
+  const cite = Array.isArray(payload.cite)
+    ? payload.cite.filter((v): v is string => typeof v === "string")
+    : [];
+  if (record.finalRiteId) {
+    next.cite = [...new Set([...cite, record.finalRiteId])];
+  } else if (cite.length) {
+    next.cite = cite;
+  }
+  return next;
 }
 
 function cspHeaderForRequest(): string {
@@ -141,20 +251,19 @@ export async function serve(opts: ServeOptions): Promise<void> {
   await ensureCountryIdentity(warren.root);
   ensureCountryDefaults(warren);
   await saveWarrenManifest(warren);
+  const assetDir = resolveAssetDir(warren.root);
   const app = express();
   const runs = new Map<string, RunState>();
   const runDir = await ensureRunDir(warren.root);
 
-  // Recover persisted runs. Anything still flagged in-progress when we boot
-  // is interpreted as interrupted by an earlier server restart — mark it done
-  // and keep it visible so its SSE history can still be replayed.
-  // recover persisted runs; mark anything still in-progress as interrupted
+  // Recover persisted runs. Anything still flagged in-progress when we boot is
+  // terminal for that process, but remains resumable from its last checkpoint.
   const persisted = await loadAllRuns(runDir);
   for (const rec of persisted) {
     if (!rec.done) {
-      rec.done = true;
-      rec.error = rec.error ?? "interrupted (server restarted)";
-      rec.finishedAt = rec.finishedAt ?? Date.now();
+      markRunInterrupted(rec);
+      await saveRun(runDir, rec);
+    } else if (rec.eventsCompacted) {
       await saveRun(runDir, rec);
     }
     runs.set(rec.runId, { record: rec, subscribers: new Set() });
@@ -167,6 +276,15 @@ export async function serve(opts: ServeOptions): Promise<void> {
     res.setHeader("Content-Security-Policy", cspHeaderForRequest());
     next();
   });
+  if (assetDir) {
+    app.use(
+      "/assets",
+      express.static(assetDir, {
+        fallthrough: true,
+        maxAge: "1h",
+      }),
+    );
+  }
 
   app.get("/", async (_req, res) => renderHome(warren, runs, res));
   app.get("/rite/new", (_req, res) =>
@@ -205,6 +323,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
     const includeEvents = req.query.full === "1";
     res.json(includeEvents ? state.record : runSummary(state.record));
   });
+  app.post("/api/runs/:runId/resume", async (req, res) =>
+    resumeRun(warren, runs, runDir, req, res),
+  );
   app.get("/api/trace/:runId", (req, res) => {
     const state = runs.get(req.params.runId);
     if (!state) {
@@ -987,8 +1108,9 @@ async function startRiteRun(
   runDir: string,
   req: Request,
   res: Response,
-): Promise<void> {
-  const body = (req.body ?? {}) as {
+  options: StartRunOptions = {},
+): Promise<string | undefined> {
+  const body = (options.bodyOverride ?? req.body ?? {}) as {
     task?: unknown;
     packSize?: unknown;
     scanGlobs?: unknown;
@@ -1006,7 +1128,7 @@ async function startRiteRun(
   };
   if (typeof body.task !== "string" || body.task.trim().length === 0) {
     res.status(400).json({ error: "task is required" });
-    return;
+    return undefined;
   }
   const countryBlock = await checkCountryExecutionReadiness(
     warren,
@@ -1016,7 +1138,7 @@ async function startRiteRun(
   if (countryBlock) {
     await saveWarrenManifest(warren);
     res.status(409).json(countryBlock);
-    return;
+    return undefined;
   }
   const runId = randomUUID().slice(0, 12);
   const personality =
@@ -1058,6 +1180,13 @@ async function startRiteRun(
     scanGlobs,
     personality,
     noFallback,
+    mode: "rite",
+    status: "running",
+    request: {
+      mode: "rite",
+      payload: sanitizeRunPayload(body),
+    },
+    resumedFromRunId: options.resumedFromRunId,
     events: [],
     done: false,
     startedAt: Date.now(),
@@ -1085,15 +1214,13 @@ async function startRiteRun(
   };
 
   const emit = (kind: string, data: unknown) => {
-    const ev = { seq: state.record.events.length, kind, data };
-    state.record.events.push(ev);
+    const ev = appendRunEvent(state.record, kind, data);
     for (const sub of state.subscribers) writeSse(sub, ev);
     persist();
   };
 
-  const finish = async () => {
-    state.record.done = true;
-    state.record.finishedAt = Date.now();
+  const finish = async (status: "done" | "error") => {
+    markRunFinished(state.record, status);
     await persistNow();
     for (const sub of state.subscribers) {
       try {
@@ -1150,16 +1277,18 @@ async function startRiteRun(
         outcome: result.rite.outcome,
         winnerLootId: result.rite.winnerLootId,
       });
-      await finish();
+      await finish("done");
     })
     .catch(async (err: unknown) => {
       state.record.error =
         err instanceof Error ? err.message : String(err);
+      state.record.resumePrompt = buildResumePrompt(state.record);
       emit("error", { message: state.record.error });
-      await finish();
+      await finish("error");
     });
 
   res.json({ runId });
+  return runId;
 }
 
 async function startPlanRun(
@@ -1168,8 +1297,9 @@ async function startPlanRun(
   runDir: string,
   req: Request,
   res: Response,
-): Promise<void> {
-  const body = (req.body ?? {}) as {
+  options: StartRunOptions = {},
+): Promise<string | undefined> {
+  const body = (options.bodyOverride ?? req.body ?? {}) as {
     task?: unknown;
     maxNodes?: unknown;
     maxReplan?: unknown;
@@ -1180,7 +1310,7 @@ async function startPlanRun(
   };
   if (typeof body.task !== "string" || body.task.trim().length === 0) {
     res.status(400).json({ error: "task is required" });
-    return;
+    return undefined;
   }
   const countryBlock = await checkCountryExecutionReadiness(
     warren,
@@ -1190,7 +1320,7 @@ async function startPlanRun(
   if (countryBlock) {
     await saveWarrenManifest(warren);
     res.status(409).json(countryBlock);
-    return;
+    return undefined;
   }
   const runId = randomUUID().slice(0, 12);
   const maxNodes = typeof body.maxNodes === "number" ? body.maxNodes : 6;
@@ -1207,6 +1337,13 @@ async function startPlanRun(
     task: body.task,
     packSize: 0, // not directly meaningful for plans
     scanGlobs: [],
+    mode: "plan",
+    status: "running",
+    request: {
+      mode: "plan",
+      payload: sanitizeRunPayload(body),
+    },
+    resumedFromRunId: options.resumedFromRunId,
     events: [],
     done: false,
     startedAt: Date.now(),
@@ -1228,14 +1365,12 @@ async function startPlanRun(
     await saveRun(runDir, state.record);
   };
   const emit = (kind: string, data: unknown) => {
-    const ev = { seq: state.record.events.length, kind, data };
-    state.record.events.push(ev);
+    const ev = appendRunEvent(state.record, kind, data);
     for (const sub of state.subscribers) writeSse(sub, ev);
     persist();
   };
-  const finish = async () => {
-    state.record.done = true;
-    state.record.finishedAt = Date.now();
+  const finish = async (status: "done" | "error") => {
+    markRunFinished(state.record, status);
     await persistNow();
     for (const sub of state.subscribers) {
       try { sub.end(); } catch { /* closed */ }
@@ -1289,15 +1424,59 @@ async function startPlanRun(
         finalLootId: result.finalLootId,
         winnerLootId: result.finalLootId,
       });
-      await finish();
+      await finish("done");
     } catch (err) {
       state.record.error = err instanceof Error ? err.message : String(err);
+      state.record.resumePrompt = buildResumePrompt(state.record);
       emit("error", { message: state.record.error });
-      await finish();
+      await finish("error");
     }
   })();
 
   res.json({ runId });
+  return runId;
+}
+
+async function resumeRun(
+  warren: Warren,
+  runs: Map<string, RunState>,
+  runDir: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const sourceState = runs.get(req.params.runId);
+  if (!sourceState) {
+    res.status(404).json({ error: "no such run" });
+    return;
+  }
+  const source = sourceState.record;
+  const canResume =
+    source.resumable === true ||
+    source.status === "interrupted" ||
+    source.status === "error";
+  if (!canResume) {
+    res.status(409).json({ error: "run is not resumable" });
+    return;
+  }
+
+  const request = source.request ?? inferRunRequest(source);
+  const payload = resumePayloadForRun(source, request.payload);
+  const nextRunId =
+    request.mode === "plan"
+      ? await startPlanRun(warren, runs, runDir, req, res, {
+          bodyOverride: payload,
+          resumedFromRunId: source.runId,
+        })
+      : await startRiteRun(warren, runs, runDir, req, res, {
+          bodyOverride: payload,
+          resumedFromRunId: source.runId,
+        });
+
+  if (nextRunId) {
+    source.resumedByRunId = nextRunId;
+    source.resumable = false;
+    await saveRun(runDir, source);
+  }
 }
 
 function streamRiteRun(
@@ -1340,20 +1519,26 @@ async function renderRuns(
     .sort((a, b) => b.startedAt - a.startedAt);
   const rows = records
     .map((r) => {
-      const status = r.done
-        ? r.error
-          ? `<span class="tag tag-fail">error</span>`
-          : `<span class="tag tag-pass">done</span>`
-        : `<span class="tag tag-winner">running</span>`;
+      const runStatus = r.status ?? (r.done ? (r.error ? "error" : "done") : "running");
+      const status = runStatus === "done"
+        ? `<span class="tag tag-pass">done</span>`
+        : runStatus === "running"
+          ? `<span class="tag tag-winner">running</span>`
+          : runStatus === "interrupted"
+            ? `<span class="tag tag-fail">interrupted</span>`
+            : `<span class="tag tag-fail">error</span>`;
       const link = r.finalRiteId
         ? `<a href="/rite/${esc(r.finalRiteId)}">${esc(r.finalRiteId)}</a>`
         : "—";
       const watchLabel = r.done ? "replay" : "watch live";
+      const resume = r.resumable
+        ? ` · <a href="/?run=${esc(r.runId)}">resume</a>`
+        : "";
       return `<tr>
         <td><a href="/?run=${esc(r.runId)}" title="${watchLabel} in tank">${esc(r.runId)}</a></td>
-        <td>${status}</td>
+        <td>${status}${resume}</td>
         <td>${link}</td>
-        <td>${r.events.length}</td>
+        <td>${r.nextSeq ?? r.events.length}</td>
         <td>${esc(new Date(r.startedAt).toISOString())}</td>
         <td><pre style="margin:0; white-space: pre-wrap; word-break: break-word; max-width: 60ch;">${esc(r.task)}</pre></td>
       </tr>`;
@@ -2466,23 +2651,51 @@ function tankHtml(
   .provider-popover {
     position: absolute;
     right: 1rem;
-    top: 2.7rem;
-    width: min(420px, calc(100% - 2rem));
+    top: 2.55rem;
+    bottom: 0.75rem;
+    width: min(820px, calc(100% - 2rem));
+    overflow: hidden;
+    scrollbar-gutter: stable;
     z-index: 30;
-    background: rgba(10,14,8,0.98);
+    background: rgb(10,14,8);
     border: 1px solid var(--accent);
     border-radius: 8px;
     box-shadow: 0 16px 50px rgba(0,0,0,0.75);
-    padding: 1rem;
+    padding: 0.75rem;
+    flex-direction: column;
+    min-height: 0;
     display: none;
   }
-  .provider-popover.open { display: block; }
+  .provider-popover.open { display: flex; }
+  .provider-popover, .provider-popover * { box-sizing: border-box; }
   .provider-popover h3 {
-    margin: 0 0 0.8rem;
+    flex: 0 0 auto;
+    margin: 0 0 0.55rem;
     color: var(--fg-bright);
     font-size: 0.88rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+  .provider-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: scroll;
+    padding-right: 0.48rem;
+    border-right: 1px solid rgba(143,207,82,0.16);
+    scrollbar-gutter: stable;
+    scrollbar-width: auto;
+    scrollbar-color: rgba(143,207,82,0.62) rgba(3, 6, 3, 0.68);
+  }
+  .provider-scroll::-webkit-scrollbar { width: 14px; }
+  .provider-scroll::-webkit-scrollbar-track {
+    background: rgba(143,207,82,0.12);
+    border-left: 1px solid rgba(143,207,82,0.2);
+  }
+  .provider-scroll::-webkit-scrollbar-thumb {
+    background: rgba(143,207,82,0.58);
+    border: 3px solid rgb(10,14,8);
+    border-radius: 999px;
   }
   .provider-popover label {
     display: block;
@@ -2490,7 +2703,7 @@ function tankHtml(
     font-size: 0.68rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    margin: 0.55rem 0 0.18rem;
+    margin: 0.35rem 0 0.14rem;
   }
   .provider-popover input, .provider-popover select {
     width: 100%;
@@ -2498,31 +2711,138 @@ function tankHtml(
     color: var(--fg);
     border: 1px solid var(--line);
     border-radius: 4px;
-    padding: 0.45rem 0.55rem;
+    padding: 0.34rem 0.48rem;
     font: inherit;
-    font-size: 0.78rem;
+    font-size: 0.74rem;
   }
   .provider-popover input:focus, .provider-popover select:focus {
     outline: none;
     border-color: var(--accent);
   }
-  .provider-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; }
+  .provider-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.45rem;
+    flex: 0 0 auto;
+  }
+  .provider-help {
+    color: var(--muted);
+    font-size: 0.66rem;
+    line-height: 1.25;
+    margin: 0.25rem 0 0.22rem;
+  }
   .provider-status {
-    margin: 0.65rem 0 0;
+    flex: 0 0 auto;
+    margin: 0.48rem 0 0;
+    padding-top: 0.42rem;
+    border-top: 1px solid rgba(143,207,82,0.2);
+    background: rgb(10,14,8);
     color: var(--muted);
     font-size: 0.72rem;
     line-height: 1.4;
   }
   .provider-status strong { color: var(--fg-bright); }
+  .provider-advanced { flex: 0 0 auto; min-height: 0; }
   .provider-advanced summary {
     cursor: pointer;
     color: var(--accent);
-    margin-top: 0.8rem;
+    margin-top: 0.55rem;
     font-size: 0.74rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
-  .provider-actions { display: flex; gap: 0.6rem; margin-top: 0.9rem; }
+  .provider-routes-panel[open] {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .provider-route-list {
+    flex: 1 1 0;
+    display: grid;
+    gap: 0.38rem;
+    margin-top: 0.35rem;
+    padding: 0.36rem 1rem 0.36rem 0.36rem;
+    min-height: 7.5rem;
+    max-height: clamp(8rem, 26vh, 13rem);
+    overflow-x: hidden;
+    overflow-y: scroll;
+    border: 1px solid rgba(143,207,82,0.22);
+    border-radius: 6px;
+    background:
+      linear-gradient(to left, rgba(143,207,82,0.16) 0 14px, transparent 14px),
+      rgba(0,0,0,0.32);
+    box-shadow: inset -14px 0 0 rgba(143,207,82,0.08);
+    scrollbar-gutter: stable;
+    scrollbar-width: auto;
+    scrollbar-color: rgba(143,207,82,0.62) rgba(3, 6, 3, 0.68);
+  }
+  .provider-route-list::-webkit-scrollbar { width: 14px; }
+  .provider-route-list::-webkit-scrollbar-track {
+    background: rgba(143,207,82,0.1);
+    border-left: 1px solid rgba(143,207,82,0.22);
+    border-radius: 999px;
+  }
+  .provider-route-list::-webkit-scrollbar-thumb {
+    background: rgba(143,207,82,0.62);
+    border: 3px solid rgba(3, 6, 3, 0.92);
+    border-radius: 999px;
+  }
+  .provider-route-row {
+    display: grid;
+    grid-template-columns: 5.2rem minmax(0, 1fr) minmax(0, 1fr) 5.2rem;
+    gap: 0.38rem;
+    align-items: end;
+    border: 1px solid rgba(143,207,82,0.22);
+    border-radius: 6px;
+    background: rgba(3, 6, 3, 0.68);
+    padding: 0.42rem;
+  }
+  .provider-route-row > * { min-width: 0; }
+  .provider-route-row > div:nth-child(4) { grid-column: 2; }
+  .provider-route-row label { margin-top: 0; }
+  .provider-route-slot {
+    color: var(--accent-hot);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding-bottom: 0.42rem;
+  }
+  .provider-route-extra {
+    grid-column: 3 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 0.38rem;
+  }
+  .provider-route-clear {
+    white-space: nowrap;
+    margin-bottom: 0.01rem;
+    min-width: 0;
+    width: 100%;
+    padding: 0.46rem 0.35rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    flex: 0 0 auto;
+  }
+  .provider-popover input::placeholder { color: rgba(180, 198, 170, 0.5); }
+  .provider-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 0.6rem;
+    margin-top: 0.65rem;
+    background: rgb(10,14,8);
+  }
+  @media (max-width: 760px) {
+    .provider-grid,
+    .provider-route-row,
+    .provider-route-extra {
+      grid-template-columns: 1fr;
+    }
+    .provider-popover { left: 0.6rem; right: 0.6rem; width: auto; }
+    .provider-route-extra { grid-column: auto; }
+    .provider-route-row > div:nth-child(4) { grid-column: auto; }
+    .provider-route-slot { padding-bottom: 0; }
+  }
   .country-chip {
     border: 1px solid var(--line);
     background: var(--bg-deep);
@@ -3108,11 +3428,21 @@ function tankHtml(
   .creature.pigeon-animated { font-size: 2.2rem; }
   .creature.pigeon-animated .emoji { display: none; }
   .creature.pigeon-animated .sprite-shell { display: block; width: 92px; height: 92px; }
+  .creature.idle-sprite-animated .emoji { display: none; }
+  .creature.idle-sprite-animated .idle-sprite { display: block; }
+  .creature.gremlin-animated .idle-sprite { width: 96px; height: 96px; }
+  .creature.ogre-animated .idle-sprite { width: 126px; height: 120px; }
   .pigeon-sprite {
     width: 100%;
     height: 100%;
     display: block;
     image-rendering: auto;
+  }
+  .idle-sprite {
+    width: 100%;
+    height: 100%;
+    display: block;
+    image-rendering: pixelated;
   }
   .creature .label {
     display: block; margin-top: 0.15rem; text-align: center;
@@ -3136,6 +3466,7 @@ function tankHtml(
   .creature[data-state="fail"]   { filter: drop-shadow(0 0 14px rgba(243,160,122,0.85)) hue-rotate(-30deg) brightness(0.95); }
   .creature[data-state="winner"] { filter: drop-shadow(0 0 18px rgba(243,223,122,0.95)) brightness(1.35) saturate(1.3); }
   .creature[data-state="cave"]   { filter: brightness(0.45) blur(0.4px); opacity: 0.7; }
+  .creature.ogre-animated[data-state="cave"] { opacity: 1; filter: brightness(0.55) saturate(0.85); }
 
   .creature.pounce-a { animation: pounce-a 0.9s ease-in-out 1; }
   .creature.pounce-b { animation: pounce-b 1.0s cubic-bezier(.4,1.4,.5,1) 1; }
@@ -3220,7 +3551,7 @@ function tankHtml(
 
   .pos-pigeon  { top: 4%; left: 4%; }
   .creature.pos-pigeon[data-state="idle"] { animation: none; }
-  .pos-gremlin { top: 9%;  right: 8%; }
+  .pos-gremlin { top: 9%;  right: 12%; }
   .pos-ogre    { top: 35%; left: 7%; }
   .pos-goblins { bottom: 17%; left: 50%; transform: translateX(-50%); }
   .pos-raccoon { bottom: 8%; left: 12%; }
@@ -3424,6 +3755,52 @@ function tankHtml(
     letter-spacing: 0.08em; text-transform: uppercase;
   }
   .result-dismiss:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .resume-panel {
+    position: absolute;
+    left: 1rem;
+    right: 1rem;
+    top: 1rem;
+    z-index: 22;
+    display: none;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.7rem 0.85rem;
+    background: rgba(10,14,8,0.96);
+    border: 1px solid var(--warn);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.55);
+  }
+  .resume-panel.open { display: flex; }
+  .resume-copy {
+    min-width: 0;
+    flex: 1;
+    color: var(--fg);
+    font-size: 0.76rem;
+    line-height: 1.35;
+  }
+  .resume-copy strong {
+    display: block;
+    color: var(--warn);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.2rem;
+  }
+  .resume-copy span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .resume-actions {
+    display: flex;
+    gap: 0.45rem;
+    flex: 0 0 auto;
+  }
+  .resume-actions .btn {
+    flex: 0 0 auto;
+    padding: 0.45rem 0.65rem;
+    font-size: 0.68rem;
+  }
 
   .ui-tooltip {
     position: fixed;
@@ -3546,6 +3923,7 @@ function tankHtml(
 
   <div class="provider-popover" id="provider-popover">
     <h3>API Provider</h3>
+    <div class="provider-scroll">
     <label for="provider-preset">Preset</label>
     <select id="provider-preset"></select>
     <label for="provider-baseurl">Base URL</label>
@@ -3575,9 +3953,16 @@ function tankHtml(
       </div>
     </div>
     <details class="provider-advanced">
-      <summary>advanced models</summary>
+      <summary>default models</summary>
+      <p class="provider-help">Optional fallback model names for slots that inherit the global provider.</p>
       <div class="provider-grid" id="provider-models"></div>
     </details>
+    <details class="provider-advanced provider-routes-panel" open>
+      <summary>menagerie routes</summary>
+      <p class="provider-help">Override any creature slot with a different provider. Empty rows inherit the global provider.</p>
+      <div class="provider-route-list" id="provider-routes"></div>
+    </details>
+    </div>
     <p class="provider-status" id="provider-status">Loading provider...</p>
     <div class="provider-actions">
       <button class="btn primary" type="button" id="provider-save">Save</button>
@@ -3785,6 +4170,17 @@ function tankHtml(
 
     <div class="hoard" id="hoard"></div>
 
+    <div class="resume-panel" id="resume-panel">
+      <div class="resume-copy">
+        <strong id="resume-title">Run can resume</strong>
+        <span id="resume-detail"></span>
+      </div>
+      <div class="resume-actions">
+        <button class="btn primary" type="button" id="resume-start">Resume</button>
+        <button class="btn" type="button" id="resume-dismiss">Start Over</button>
+      </div>
+    </div>
+
     <div class="creature pos-pigeon" id="c-pigeon" data-state="idle"
          style="--sway-dur: 3.6s; --sway-x: 3px; --sway-delay: -0.8s;">
       <canvas class="sprite-shell pigeon-sprite" id="c-pigeon-sprite" width="128" height="128" aria-hidden="true"></canvas>
@@ -3793,11 +4189,13 @@ function tankHtml(
     </div>
     <div class="creature pos-gremlin" id="c-gremlin" data-state="idle"
          style="--sway-dur: 3.2s; --sway-x: 4px; --sway-delay: -2.1s;">
+      <canvas class="sprite-shell idle-sprite" id="c-gremlin-sprite" width="130" height="130" aria-hidden="true"></canvas>
       <span class="emoji">😈</span>
       <span class="label">gremlin</span>
     </div>
     <div class="creature pos-ogre" id="c-ogre" data-state="cave"
          style="--sway-dur: 6s; --sway-x: 1px; font-size: 3rem;">
+      <canvas class="sprite-shell idle-sprite" id="c-ogre-sprite" width="128" height="128" aria-hidden="true"></canvas>
       <span class="emoji">👹</span>
       <span class="label">ogre</span>
     </div>
@@ -3926,6 +4324,31 @@ const rand  = (lo, hi) => lo + Math.random() * (hi - lo);
 const irand = (lo, hi) => Math.floor(rand(lo, hi + 1));
 const pick  = (arr)    => arr[Math.floor(Math.random() * arr.length)];
 
+const IDLE_CREATURE_SPRITES = [
+  {
+    src: "/assets/gremlin-idle.png",
+    creatureId: "c-gremlin",
+    canvasId: "c-gremlin-sprite",
+    className: "gremlin-animated",
+    cols: 5,
+    rows: 4,
+    totalFrames: 20,
+    frameOrder: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 17, 16, 15, 14, 13, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+    fps: 6,
+  },
+  {
+    src: "/assets/ogre-idle.png",
+    creatureId: "c-ogre",
+    canvasId: "c-ogre-sprite",
+    className: "ogre-animated",
+    cols: 8,
+    rows: 4,
+    totalFrames: 32,
+    frameOrder: [0, 8, 16, 24, 1, 9, 17, 25, 2, 10, 18, 26, 3, 11, 19, 27, 4, 12, 20, 28, 5, 13, 21, 29, 6, 14, 22, 30, 7, 15, 23, 31],
+    fps: 6,
+  },
+];
+
 /* Pigeon sprite renderer */
 const PIGEON_SPRITE_CONFIG = {
   rightSrc: "/assets/pigeon-walk-right.png",
@@ -3939,9 +4362,11 @@ const PIGEON_PECK_CONFIG = {
   cols: 5,
   rows: 5,
   totalFrames: 25,
+  firstMinIntervalMs: 6_000,
+  firstMaxIntervalMs: 14_000,
   minIntervalMs: 40_000,
   maxIntervalMs: 120_000,
-  fps: 11,
+  fps: 8,
 };
 const PIGEON_WIRE_NUDGE_UP_PX = 12;
 const pigeonSpriteCanvas = $("c-pigeon-sprite");
@@ -3973,7 +4398,9 @@ const pigeonSpriteState = {
   endPauseUntilMs: 0,
   endPauseMs: 260,
   nextPeckAtMs: 0,
+  hasPeckedOnce: false,
   peckLoopsLeft: 0,
+  peckStepBudget: 0,
 };
 
 function loadPigeonSheet(src) {
@@ -3984,6 +4411,87 @@ function loadPigeonSheet(src) {
     img.onerror = () => reject(new Error("failed to load sprite sheet: " + src));
     img.src = src;
   });
+}
+
+function drawIdleCreatureFrame(state) {
+  if (!state || !state.enabled || !state.ctx || !state.canvas || !state.image) return;
+  const config = state.config;
+  const order = state.frameOrder.length ? state.frameOrder : [0];
+  const frame = order[state.frameCursor % order.length] || 0;
+  const frameW = Math.floor(state.image.naturalWidth / config.cols);
+  const frameH = Math.floor(state.image.naturalHeight / config.rows);
+  if (!frameW || !frameH) return;
+
+  const sx = (frame % config.cols) * frameW;
+  const sy = Math.floor(frame / config.cols) * frameH;
+  const dw = state.canvas.width;
+  const dh = state.canvas.height;
+  const scale = Math.min(dw / frameW, dh / frameH);
+  const drawW = frameW * scale;
+  const drawH = frameH * scale;
+  const dx = (dw - drawW) / 2;
+  const dy = dh - drawH;
+
+  state.ctx.clearRect(0, 0, dw, dh);
+  state.ctx.imageSmoothingEnabled = false;
+  state.ctx.drawImage(state.image, sx, sy, frameW, frameH, dx, dy, drawW, drawH);
+}
+
+function animateIdleCreatureSprite(state, ts) {
+  if (!state || !state.enabled) return;
+  if (!state.lastTickMs) {
+    state.lastTickMs = ts;
+    drawIdleCreatureFrame(state);
+  } else {
+    const deltaMs = Math.max(0, ts - state.lastTickMs);
+    state.lastTickMs = ts;
+    const frameMs = 1000 / Math.max(1, state.config.fps || 6);
+    state.frameAccumulatorMs += deltaMs;
+    let advanced = 0;
+    while (state.frameAccumulatorMs >= frameMs && advanced < 6) {
+      state.frameAccumulatorMs -= frameMs;
+      state.frameCursor = (state.frameCursor + 1) % Math.max(1, state.frameOrder.length || 1);
+      advanced += 1;
+    }
+    drawIdleCreatureFrame(state);
+  }
+  state.rafId = requestAnimationFrame((nextTs) => animateIdleCreatureSprite(state, nextTs));
+}
+
+async function bootIdleCreatureSprite(config) {
+  const creatureEl = $(config.creatureId);
+  const canvas = $(config.canvasId);
+  const ctx = canvas ? canvas.getContext("2d") : null;
+  if (!creatureEl || !canvas || !ctx) return;
+  try {
+    const image = await loadPigeonSheet(config.src);
+    const baseFrameOrder = Array.isArray(config.frameOrder) && config.frameOrder.length
+      ? config.frameOrder
+      : buildLinearFrameOrder(config.totalFrames);
+    const frameOrder = dedupeAdjacentPigeonFrames(
+      baseFrameOrder,
+      image,
+      config.cols,
+      config.rows
+    );
+    const state = {
+      config,
+      canvas,
+      ctx,
+      image,
+      enabled: true,
+      frameCursor: 0,
+      frameOrder,
+      frameAccumulatorMs: 0,
+      lastTickMs: 0,
+      rafId: 0,
+    };
+    creatureEl.classList.add("idle-sprite-animated", config.className);
+    drawIdleCreatureFrame(state);
+    state.rafId = requestAnimationFrame((ts) => animateIdleCreatureSprite(state, ts));
+  } catch (err) {
+    console.warn(config.creatureId + "-sprite-disabled", err);
+  }
 }
 
 function setPigeonFacing(facing) {
@@ -4057,13 +4565,24 @@ function dedupeAdjacentPigeonFrames(frameOrder, sheet, cols, rows) {
   return kept.length ? kept : frameOrder;
 }
 
-function nextPigeonPeckDelayMs() {
-  return Math.floor(rand(PIGEON_PECK_CONFIG.minIntervalMs, PIGEON_PECK_CONFIG.maxIntervalMs));
+function nextPigeonPeckDelayMs(initial) {
+  if (initial) {
+    return Math.floor(
+      rand(
+        PIGEON_PECK_CONFIG.firstMinIntervalMs,
+        PIGEON_PECK_CONFIG.firstMaxIntervalMs
+      )
+    );
+  }
+  return Math.floor(
+    rand(PIGEON_PECK_CONFIG.minIntervalMs, PIGEON_PECK_CONFIG.maxIntervalMs)
+  );
 }
 
-function scheduleNextPigeonPeck(ts) {
+function scheduleNextPigeonPeck(ts, opts) {
   const now = Number.isFinite(ts) ? ts : performance.now();
-  pigeonSpriteState.nextPeckAtMs = now + nextPigeonPeckDelayMs();
+  const initial = !!(opts && opts.initial && !pigeonSpriteState.hasPeckedOnce);
+  pigeonSpriteState.nextPeckAtMs = now + nextPigeonPeckDelayMs(initial);
 }
 
 function startPigeonPeck(ts) {
@@ -4073,6 +4592,11 @@ function startPigeonPeck(ts) {
   pigeonSpriteState.mode = "peck";
   pigeonSpriteState.frameCursor = 0;
   pigeonSpriteState.peckLoopsLeft = 1;
+  pigeonSpriteState.peckStepBudget = Math.max(
+    1,
+    pigeonSpriteState.peckFrameOrder.length * pigeonSpriteState.peckLoopsLeft
+  );
+  pigeonSpriteState.hasPeckedOnce = true;
   pigeonSpriteState.pendingTurnDir = 0;
   pigeonSpriteState.endPauseUntilMs = 0;
   setPigeonFps(PIGEON_PECK_CONFIG.fps);
@@ -4084,6 +4608,7 @@ function finishPigeonPeck(ts) {
   pigeonSpriteState.mode = "walk";
   pigeonSpriteState.frameCursor = 0;
   pigeonSpriteState.peckLoopsLeft = 0;
+  pigeonSpriteState.peckStepBudget = 0;
   setPigeonFps(pigeonSpriteState.walkFps);
   scheduleNextPigeonPeck(ts);
 }
@@ -4251,7 +4776,7 @@ function animatePigeonSprite(ts) {
       pigeonSpriteState.images.peck &&
       pigeonSpriteState.peckFrameOrder.length &&
       ts >= pigeonSpriteState.nextPeckAtMs &&
-      pigeonSpriteState.visualState === "idle"
+      pigeonSpriteState.visualState !== "active"
     ) {
       startPigeonPeck(ts);
     }
@@ -4275,11 +4800,20 @@ function animatePigeonSprite(ts) {
         Math.max(1, currentFrameOrder.length);
 
       if (pigeonSpriteState.mode === "peck") {
-        if (pigeonSpriteState.frameCursor === 0 && prevCursor !== 0) {
-          pigeonSpriteState.peckLoopsLeft = Math.max(0, pigeonSpriteState.peckLoopsLeft - 1);
-          if (pigeonSpriteState.peckLoopsLeft <= 0) {
-            finishPigeonPeck(ts);
-          }
+        pigeonSpriteState.peckStepBudget = Math.max(0, pigeonSpriteState.peckStepBudget - 1);
+        if (currentFrameOrder.length <= 1) {
+          pigeonSpriteState.peckLoopsLeft = 0;
+        } else if (pigeonSpriteState.frameCursor === 0 && prevCursor !== 0) {
+          pigeonSpriteState.peckLoopsLeft = Math.max(
+            0,
+            pigeonSpriteState.peckLoopsLeft - 1
+          );
+        }
+        if (
+          pigeonSpriteState.peckLoopsLeft <= 0 ||
+          pigeonSpriteState.peckStepBudget <= 0
+        ) {
+          finishPigeonPeck(ts);
         }
       } else {
         advancePigeonRailByFrame();
@@ -4323,7 +4857,8 @@ async function bootPigeonSprite() {
       PIGEON_SPRITE_CONFIG.cols,
       PIGEON_SPRITE_CONFIG.rows
     );
-    const peckBaseOrder = buildLinearFrameOrder(PIGEON_PECK_CONFIG.totalFrames);
+    // Keep peck cadence visually aligned with the SNES-like walk loop.
+    const peckBaseOrder = buildPigeonFrameOrder(PIGEON_PECK_CONFIG.totalFrames);
     pigeonSpriteState.peckFrameOrder = peck
       ? dedupeAdjacentPigeonFrames(
           peckBaseOrder,
@@ -4339,7 +4874,8 @@ async function bootPigeonSprite() {
     pigeonSpriteState.walkFps = 9;
     setPigeonFps(pigeonSpriteState.walkFps);
     pigeonSpriteState.enabled = true;
-    scheduleNextPigeonPeck(performance.now());
+    pigeonSpriteState.hasPeckedOnce = false;
+    scheduleNextPigeonPeck(performance.now(), { initial: true });
     if (pigeonEl) pigeonEl.classList.add("pigeon-animated");
     updatePigeonRailBounds(true);
     drawPigeonFrame();
@@ -4350,6 +4886,9 @@ async function bootPigeonSprite() {
   }
 }
 void bootPigeonSprite();
+for (const config of IDLE_CREATURE_SPRITES) {
+  void bootIdleCreatureSprite(config);
+}
 window.addEventListener("resize", () => {
   if (pigeonSpriteState.enabled) updatePigeonRailBounds(false);
 });
@@ -4602,11 +5141,21 @@ const providerKeyEnv = $("provider-keyenv");
 const providerApiKey = $("provider-apikey");
 const providerFormat = $("provider-format");
 const providerModels = $("provider-models");
+const providerRoutes = $("provider-routes");
 const providerStatus = $("provider-status");
 let countryPopover = null;
 
 function providerById(id) {
   return providerPresets.find((p) => p.id === id) || providerPresets[0];
+}
+function addOption(select, value, text) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = text;
+  select.appendChild(option);
+}
+function providerModelForSlot(slot, models) {
+  return (models && models[slot]) || "";
 }
 function renderProviderModels(models) {
   providerModels.innerHTML = "";
@@ -4617,10 +5166,153 @@ function renderProviderModels(models) {
     const input = document.createElement("input");
     input.dataset.slot = slot;
     input.value = (models && models[slot]) || "";
+    input.placeholder = providerModelForSlot(slot, (providerById(providerPreset.value) || {}).models) || "inherit";
     wrap.appendChild(label);
     wrap.appendChild(input);
     providerModels.appendChild(wrap);
   }
+}
+function routeDefaultModel(slot, models, route) {
+  const preset = route && route.preset ? providerById(route.preset) : null;
+  return providerModelForSlot(slot, (preset || {}).models) || providerModelForSlot(slot, models);
+}
+function renderProviderRoutes(routes, models) {
+  providerRoutes.innerHTML = "";
+  for (const slot of modelSlots) {
+    const route = (routes && routes[slot]) || {};
+    const row = document.createElement("div");
+    row.className = "provider-route-row";
+    row.setAttribute("data-route-slot", slot);
+
+    const slotLabel = document.createElement("div");
+    slotLabel.className = "provider-route-slot";
+    slotLabel.textContent = slot;
+
+    const presetWrap = document.createElement("div");
+    const presetLabel = document.createElement("label");
+    presetLabel.textContent = "provider";
+    const presetSelect = document.createElement("select");
+    presetSelect.setAttribute("data-route-preset", "1");
+    addOption(presetSelect, "", "inherit");
+    for (const preset of providerPresets) addOption(presetSelect, preset.id, preset.label);
+    presetSelect.value = route.preset || "";
+    presetWrap.appendChild(presetLabel);
+    presetWrap.appendChild(presetSelect);
+
+    const modelWrap = document.createElement("div");
+    const modelLabel = document.createElement("label");
+    modelLabel.textContent = "model";
+    const modelInput = document.createElement("input");
+    modelInput.setAttribute("data-route-model", "1");
+    modelInput.value = route.model || "";
+    modelInput.placeholder = routeDefaultModel(slot, models, route) || "inherit";
+    modelWrap.appendChild(modelLabel);
+    modelWrap.appendChild(modelInput);
+
+    const formatWrap = document.createElement("div");
+    const formatLabel = document.createElement("label");
+    formatLabel.textContent = "format";
+    const formatSelect = document.createElement("select");
+    formatSelect.setAttribute("data-route-format", "1");
+    addOption(formatSelect, "", "inherit");
+    addOption(formatSelect, "freeform", "freeform");
+    addOption(formatSelect, "markdown", "markdown");
+    addOption(formatSelect, "json", "json");
+    formatSelect.value = route.outputFormat || "";
+    formatWrap.appendChild(formatLabel);
+    formatWrap.appendChild(formatSelect);
+
+    const clearButton = document.createElement("button");
+    clearButton.className = "btn provider-route-clear";
+    clearButton.type = "button";
+    clearButton.textContent = "Clear";
+
+    const extra = document.createElement("div");
+    extra.className = "provider-route-extra";
+    const baseWrap = document.createElement("div");
+    const baseLabel = document.createElement("label");
+    baseLabel.textContent = "base url";
+    const baseInput = document.createElement("input");
+    baseInput.setAttribute("data-route-baseurl", "1");
+    baseInput.value = route.baseURL || "";
+    const selectedPreset = route.preset ? providerById(route.preset) : null;
+    baseInput.placeholder = (selectedPreset && selectedPreset.baseURL) || "inherit";
+    baseWrap.appendChild(baseLabel);
+    baseWrap.appendChild(baseInput);
+
+    const keyWrap = document.createElement("div");
+    const keyLabel = document.createElement("label");
+    keyLabel.textContent = "key env";
+    const keyInput = document.createElement("input");
+    keyInput.setAttribute("data-route-keyenv", "1");
+    keyInput.value = route.apiKeyEnv || "";
+    keyInput.placeholder = (selectedPreset && selectedPreset.apiKeyEnv) || "inherit";
+    keyWrap.appendChild(keyLabel);
+    keyWrap.appendChild(keyInput);
+    extra.appendChild(baseWrap);
+    extra.appendChild(keyWrap);
+
+    presetSelect.onchange = () => {
+      const selected = presetSelect.value ? providerById(presetSelect.value) : null;
+      modelInput.placeholder = providerModelForSlot(slot, (selected || {}).models) || providerModelForSlot(slot, models) || "inherit";
+      baseInput.placeholder = (selected && selected.baseURL) || "inherit";
+      keyInput.placeholder = (selected && selected.apiKeyEnv) || "inherit";
+    };
+    clearButton.onclick = () => {
+      presetSelect.value = "";
+      modelInput.value = "";
+      formatSelect.value = "";
+      baseInput.value = "";
+      keyInput.value = "";
+      presetSelect.onchange();
+    };
+
+    row.appendChild(slotLabel);
+    row.appendChild(presetWrap);
+    row.appendChild(modelWrap);
+    row.appendChild(formatWrap);
+    row.appendChild(clearButton);
+    row.appendChild(extra);
+    providerRoutes.appendChild(row);
+  }
+}
+function collectProviderModels() {
+  const models = {};
+  providerModels.querySelectorAll("input[data-slot]").forEach((input) => {
+    const value = input.value.trim();
+    if (value) models[input.dataset.slot] = value;
+  });
+  return models;
+}
+function collectProviderRoutes() {
+  const routes = {};
+  providerRoutes.querySelectorAll("[data-route-slot]").forEach((row) => {
+    const slot = row.getAttribute("data-route-slot");
+    const preset = row.querySelector("[data-route-preset]").value;
+    if (!slot || !preset) return;
+    const route = { preset };
+    const model = row.querySelector("[data-route-model]").value.trim();
+    const baseURL = row.querySelector("[data-route-baseurl]").value.trim();
+    const apiKeyEnv = row.querySelector("[data-route-keyenv]").value.trim();
+    const outputFormat = row.querySelector("[data-route-format]").value;
+    if (model) route.model = model;
+    if (baseURL) route.baseURL = baseURL;
+    if (apiKeyEnv) route.apiKeyEnv = apiKeyEnv;
+    if (outputFormat) route.outputFormat = outputFormat;
+    routes[slot] = route;
+  });
+  return routes;
+}
+function buildProviderPayload(extra) {
+  return {
+    preset: providerPreset.value,
+    baseURL: providerBaseUrl.value.trim(),
+    apiKeyEnv: providerKeyEnv.value.trim(),
+    outputFormat: providerFormat.value,
+    models: collectProviderModels(),
+    routes: collectProviderRoutes(),
+    ...(extra || {}),
+  };
 }
 function applyProviderPayload(payload) {
   const config = payload.config || {};
@@ -4629,7 +5321,9 @@ function applyProviderPayload(payload) {
   providerBaseUrl.value = config.baseURL || runtime.baseURL || "";
   providerKeyEnv.value = config.apiKeyEnv || runtime.apiKeyEnv || "OPENAI_API_KEY";
   providerFormat.value = config.outputFormat || runtime.outputFormat || "freeform";
-  renderProviderModels({ ...(runtime.models || {}), ...(config.models || {}) });
+  const models = { ...(runtime.models || {}), ...(config.models || {}) };
+  renderProviderModels(models);
+  renderProviderRoutes(config.routes || {}, models);
   const missing = runtime.missingApiKey;
   providerChip.textContent = (runtime.label || "API") + " ▾";
   providerChip.dataset.missing = missing ? "true" : "false";
@@ -4673,6 +5367,7 @@ providerPreset.onchange = () => {
   providerBaseUrl.value = preset.baseURL || "";
   providerKeyEnv.value = preset.apiKeyEnv || "OPENAI_API_KEY";
   renderProviderModels(preset.models || {});
+  renderProviderRoutes(collectProviderRoutes(), preset.models || {});
 };
 providerChip.onclick = () => {
   const authPanel = document.getElementById("auth-popover");
@@ -4684,18 +5379,7 @@ providerChip.onclick = () => {
 };
 $("provider-cancel").onclick = () => providerPopover.classList.remove("open");
 $("provider-save").onclick = async () => {
-  const models = {};
-  providerModels.querySelectorAll("input[data-slot]").forEach((input) => {
-    const value = input.value.trim();
-    if (value) models[input.dataset.slot] = value;
-  });
-  const payload = {
-    preset: providerPreset.value,
-    baseURL: providerBaseUrl.value.trim(),
-    apiKeyEnv: providerKeyEnv.value.trim(),
-    outputFormat: providerFormat.value,
-    models,
-  };
+  const payload = buildProviderPayload();
   const enteredApiKey = providerApiKey.value.trim();
   if (enteredApiKey) payload.apiKey = enteredApiKey;
   providerStatus.textContent = "Saving...";
@@ -4719,13 +5403,7 @@ $("provider-clear-key").onclick = async () => {
     const r = await fetch("/api/provider", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        preset: providerPreset.value,
-        baseURL: providerBaseUrl.value.trim(),
-        apiKeyEnv: providerKeyEnv.value.trim(),
-        outputFormat: providerFormat.value,
-        clearApiKey: true,
-      }),
+      body: JSON.stringify(buildProviderPayload({ clearApiKey: true })),
     });
     if (!r.ok) throw new Error(await r.text());
     applyProviderPayload(await r.json());
@@ -7114,6 +7792,135 @@ function showResultPanel(opts) {
 function hideResultPanel() { $("result-panel").classList.remove("open"); }
 $("result-dismiss").onclick = hideResultPanel;
 
+const activeRunStorageKey = "goblintown.activeRun";
+const resumePanel = $("resume-panel");
+let resumeRecord = null;
+let attachedRunId = null;
+
+function rememberActiveRun(runId, isPlan) {
+  try {
+    localStorage.setItem(activeRunStorageKey, JSON.stringify({
+      runId,
+      isPlan: !!isPlan,
+      at: Date.now(),
+    }));
+  } catch {}
+}
+
+function readRememberedRun() {
+  try {
+    const raw = localStorage.getItem(activeRunStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.runId !== "string") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function clearRememberedRun(runId) {
+  try {
+    const remembered = readRememberedRun();
+    if (!remembered || !runId || remembered.runId === runId) {
+      localStorage.removeItem(activeRunStorageKey);
+    }
+  } catch {}
+}
+
+function resetRunStage(isPlan, packSize) {
+  hideResultPanel();
+  hideDag();
+  resetCreatures();
+  bubbleLayer.innerHTML = "";
+  activeBubbles.length = 0;
+  Object.keys(thinkingBubbles).forEach(s => delete thinkingBubbles[s]);
+  renderGoblinSlots(isPlan ? 3 : Math.max(1, packSize || 3));
+}
+
+function runModeFromRecord(record) {
+  if (record.mode === "plan") return "plan";
+  if (record.mode === "rite") return "rite";
+  const events = record.events || [];
+  return events.some((e) => typeof e.kind === "string" && e.kind.indexOf("plan:") === 0)
+    ? "plan"
+    : "rite";
+}
+
+function runStatus(record) {
+  return record.status || (record.done ? (record.error ? "error" : "done") : "running");
+}
+
+function canResumeRecord(record) {
+  const status = runStatus(record);
+  return !!record.resumable || status === "interrupted" || status === "error";
+}
+
+function showResumePanel(record) {
+  resumeRecord = record;
+  resumePanel.dataset.runId = record.runId;
+  resumePanel.dataset.mode = runModeFromRecord(record);
+  $("resume-title").textContent =
+    runStatus(record) === "interrupted" ? "Interrupted run" : "Run ended with an error";
+  const phase = record.checkpoint && record.checkpoint.phase
+    ? "Last checkpoint: " + record.checkpoint.phase + ". "
+    : "";
+  const detail = record.error || record.task || "";
+  $("resume-detail").textContent = phase + detail;
+  resumePanel.classList.add("open");
+}
+
+function hideResumePanel() {
+  resumePanel.classList.remove("open");
+}
+
+async function refreshResumePanel(runId, fallbackIsPlan) {
+  try {
+    const r = await fetch("/api/runs/" + runId + "?full=1");
+    if (!r.ok) return;
+    const record = await r.json();
+    if (canResumeRecord(record)) {
+      showResumePanel(record);
+      $("btn-rite").disabled = false;
+      $("btn-plan").disabled = false;
+      $("clock").textContent = (fallbackIsPlan ? "plan" : "rite") + " · " + runStatus(record);
+    }
+  } catch {}
+}
+
+$("resume-dismiss").onclick = () => {
+  if (resumeRecord && resumeRecord.runId) clearRememberedRun(resumeRecord.runId);
+  hideResumePanel();
+};
+
+$("resume-start").onclick = async () => {
+  const runId = resumePanel.dataset.runId;
+  if (!runId) return;
+  const isPlan = resumePanel.dataset.mode === "plan";
+  $("resume-start").disabled = true;
+  setTicker("resuming " + runId + " ...", true);
+  try {
+    const r = await fetch("/api/runs/" + runId + "/resume", { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    const body = await r.json();
+    if (!body.runId) throw new Error("resume response missing runId");
+    hideResumePanel();
+    const packSize = resumeRecord && resumeRecord.packSize ? resumeRecord.packSize : 3;
+    lastTask = resumeRecord ? resumeRecord.task : lastTask;
+    resetRunStage(isPlan, packSize);
+    $("btn-rite").disabled = true;
+    $("btn-plan").disabled = true;
+    $("clock").textContent = isPlan ? "plan running" : "rite running";
+    rememberActiveRun(body.runId, isPlan);
+    history.replaceState(null, "", "/?run=" + encodeURIComponent(body.runId));
+    setTicker("resumed as " + body.runId, true);
+    openStream(body.runId, isPlan);
+  } catch (err) {
+    setTicker("resume failed: " + (err.message || err));
+    $("resume-start").disabled = false;
+  }
+};
+
 async function showResultFromIds(riteId, lootId, outcome, task) {
   if (!lootId) {
     showResultPanel({ outcome, task, riteId, output: "(no winner loot recorded)" });
@@ -7231,17 +8038,12 @@ $("rite-form").addEventListener("submit", async (e) => {
         scanGlobs,
       };
   closeRiteForm();
-  hideResultPanel();
-  hideDag();
+  hideResumePanel();
   lastTask = payload.task;
   $("btn-rite").disabled = true;
   $("btn-plan").disabled = true;
   $("clock").textContent = isPlan ? "plan running" : "rite running";
-  resetCreatures();
-  bubbleLayer.innerHTML = "";
-  activeBubbles.length = 0;
-  Object.keys(thinkingBubbles).forEach(s => delete thinkingBubbles[s]);
-  renderGoblinSlots(isPlan ? 3 : payload.packSize);
+  resetRunStage(isPlan, payload.packSize);
   setTicker(isPlan ? "POSTing plan ..." : "POSTing rite ...", true);
 
   try {
@@ -7253,6 +8055,8 @@ $("rite-form").addEventListener("submit", async (e) => {
     if (!startRes.ok) throw new Error(await startRes.text());
     const { runId } = await startRes.json();
     setTicker((isPlan ? "plan " : "rite ") + runId + " started", true);
+    rememberActiveRun(runId, isPlan);
+    history.replaceState(null, "", "/?run=" + encodeURIComponent(runId));
     openStream(runId, isPlan);
   } catch (err) {
     setTicker("error: " + (err.message || err));
@@ -7270,6 +8074,9 @@ const replayLatestThinking = {};
 function openStream(runId, isPlan, opts) {
   if (activeStream) { activeStream.close(); activeStream = null; }
   const isAttach = !!(opts && opts.attach);
+  const terminalAttach = !!(opts && opts.terminal);
+  let replayEnded = false;
+  attachedRunId = runId;
   replaying = isAttach;
   Object.keys(replayLatestThinking).forEach(k => delete replayLatestThinking[k]);
 
@@ -7278,12 +8085,13 @@ function openStream(runId, isPlan, opts) {
 
   es.addEventListener("replay-end", () => {
     replaying = false;
+    replayEnded = true;
     // Flush the last thinking text per slot once, so the user sees where each
     // creature got to during the replayed period.
     Object.keys(replayLatestThinking).forEach((slot) => {
       updateThinkingBubble(slot, replayLatestThinking[slot]);
     });
-    setTicker("(live) — caught up", true);
+    if (!terminalAttach) setTicker("(live) — caught up", true);
   });
 
   es.addEventListener("step", async (ev) => {
@@ -7340,6 +8148,8 @@ function openStream(runId, isPlan, opts) {
     setTicker(label + " · " + d.outcome + (d.riteId ? " · " + d.riteId : ""));
     es.close();
     activeStream = null;
+    clearRememberedRun(runId);
+    hideResumePanel();
     $("btn-rite").disabled = false;
     $("btn-plan").disabled = false;
     $("clock").textContent = "idle";
@@ -7365,6 +8175,11 @@ function openStream(runId, isPlan, opts) {
     }
   });
   es.addEventListener("error", (ev) => {
+    if (terminalAttach && replayEnded) {
+      es.close();
+      activeStream = null;
+      return;
+    }
     let msg = "(connection error)";
     try { msg = JSON.parse(ev.data).message; } catch {}
     setTicker("error: " + msg);
@@ -7373,6 +8188,7 @@ function openStream(runId, isPlan, opts) {
     $("btn-rite").disabled = false;
     $("btn-plan").disabled = false;
     $("clock").textContent = "idle";
+    setTimeout(() => refreshResumePanel(runId, isPlan), 350);
   });
 }
 
@@ -7581,24 +8397,28 @@ renderGoblinSlots(3);
  * panel as before. */
 async function attachToRunFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  const runId = params.get("run");
+  let runId = params.get("run");
   if (!runId) {
-    loadLastResult();
-    return;
+    const remembered = readRememberedRun();
+    if (remembered && remembered.runId) {
+      runId = remembered.runId;
+      history.replaceState(null, "", "/?run=" + encodeURIComponent(runId));
+    } else {
+      loadLastResult();
+      return;
+    }
   }
   try {
     const r = await fetch("/api/runs/" + runId + "?full=1");
     if (!r.ok) {
       setTicker("run " + runId + " not found");
+      clearRememberedRun(runId);
       loadLastResult();
       return;
     }
     const record = await r.json();
     lastTask = record.task;
-    // Detect plan vs rite from event history.
-    const isPlan = (record.events || []).some((e) =>
-      typeof e.kind === "string" && e.kind.indexOf("plan:") === 0,
-    );
+    const isPlan = runModeFromRecord(record) === "plan";
     // Determine pack size: explicit on rite records, or read from a pack:start event.
     let packSize = record.packSize;
     if (!packSize || packSize < 1) {
@@ -7607,21 +8427,21 @@ async function attachToRunFromUrl() {
       );
       if (ps && ps.data && typeof ps.data.size === "number") packSize = ps.data.size;
     }
-    renderGoblinSlots(Math.max(1, packSize || 3));
-    hideResultPanel();
-    hideDag();
-    bubbleLayer.innerHTML = "";
-    activeBubbles.length = 0;
-    Object.keys(thinkingBubbles).forEach(s => delete thinkingBubbles[s]);
+    resetRunStage(isPlan, packSize);
 
-    const status = record.done
-      ? (record.error ? "error" : "done")
-      : "watching live";
-    $("clock").textContent = isPlan ? "plan · " + status : "rite · " + status;
-    setTicker((isPlan ? "plan " : "rite ") + runId + " · " + status, true);
+    const status = runStatus(record);
+    const label = record.done ? status : "watching live";
+    $("clock").textContent = isPlan ? "plan · " + label : "rite · " + label;
+    setTicker((isPlan ? "plan " : "rite ") + runId + " · " + label, true);
     $("btn-rite").disabled = !record.done;
     $("btn-plan").disabled = !record.done;
-    openStream(runId, isPlan, { attach: true });
+    if (canResumeRecord(record)) {
+      showResumePanel(record);
+    } else {
+      hideResumePanel();
+      if (record.done) clearRememberedRun(runId);
+    }
+    openStream(runId, isPlan, { attach: true, terminal: !!record.done });
   } catch (e) {
     setTicker("attach failed: " + (e.message || e));
     loadLastResult();
