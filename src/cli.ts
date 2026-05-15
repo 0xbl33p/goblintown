@@ -7,52 +7,179 @@ try {
 
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { auditRite } from "./audit.js";
 import { printBanner } from "./banners.js";
+import { compareRites } from "./compare.js";
 import {
   dispatchRiteToPeer,
   MAX_PEERS,
+  normalizeCountryConfig,
   normalizeWarrenPeer,
   selectPeers,
-  sendToWarren,
-  sendToWarrenHttp,
-  verifyInbox,
-} from "./collab/index.js";
-import {
-  auditRite,
-  compareRites,
-  exportRiteMarkdown,
-  loadRewardPlugin,
-  measureDrift,
-  renderLootAncestry,
-  renderRiteGraph,
-  reroll,
-  exportRunAsMasTrace,
-} from "./analysis/index.js";
-import {
-  MODEL_SLOTS,
-  PROVIDER_PRESETS,
-  CREATURE_KINDS,
-  normalizeOutputFormat,
-  type CreatureKind,
-  type ModelSlot,
-  type Personality,
-  type Loot,
-  type Artifact,
-} from "./core/index.js";
-import { buildCliHelp } from "./cli-help.js";
-import {
-  callCreatureStream,
-  dispatchQuest,
-  makeCreature,
-  performRite,
-  previewScan,
-  scavenge,
-  type RiteStep,
-} from "./pipeline/index.js";
-import { ensureRunDir, initWarren, loadAllRuns, loadRun, loadWarren, saveWarrenManifest } from "./storage/index.js";
+} from "./country.js";
+import { makeCreature } from "./creatures.js";
+import { measureDrift } from "./drift.js";
+import { exportRiteMarkdown } from "./export.js";
+import { sendToWarren, sendToWarrenHttp, verifyInbox } from "./federation.js";
+import { renderLootAncestry, renderRiteGraph } from "./graph.js";
+import { callCreatureStream } from "./openai-client.js";
+import { dispatchQuest } from "./quest.js";
+import { reroll } from "./reroll.js";
+import { performRite, type RiteStep } from "./rite.js";
+import { loadRewardPlugin } from "./reward-plugin.js";
+import { ensureRunDir, loadAllRuns, loadRun } from "./run-store.js";
+import { previewScan, scavenge } from "./scavenge.js";
 import { serve } from "./server.js";
+import { exportRunAsMasTrace } from "./trace-export.js";
+import { MODEL_SLOTS, PROVIDER_PRESETS } from "./providers.js";
+import {
+  CREATURE_KINDS,
+  type Artifact,
+  type CreatureKind,
+  type Loot,
+  type Personality,
+  type ModelSlot,
+} from "./types.js";
+import { initWarren, loadWarren, saveWarrenManifest } from "./warren.js";
+import { normalizeOutputFormat } from "./formatting.js";
 
-const HELP = buildCliHelp(CREATURE_KINDS);
+const HELP = `Goblintown — agent management protocol.
+
+Usage:
+  goblintown init
+      Initialize a Warren in the current directory.
+
+  goblintown summon <kind> --task "..." [--personality <p>]
+      Run a single creature once. Output goes to stdout; loot is stashed.
+      Kinds: ${CREATURE_KINDS.join(" ")}
+
+  goblintown scavenge --task "..." --scan "<glob>" [--scan "<glob>"]...
+      Run a Raccoon over matched files and stash the distilled facts.
+
+  goblintown quest "<task>" [--pack <N>] [--personality <p>] [--format freeform|markdown|json]
+      Goblin pack with Troll arbitration. Default pack=3. Lightweight.
+
+  goblintown rite "<task>" [--pack <N>] [--scan <glob>]... [--personality <p>] [--no-fallback]
+                          [--budget <tokens>] [--max-output <tokens>]
+                          [--cite <riteId>]... [--remember]
+                          [--no-specialist] [--specialist-cap <N>] [--debate]
+                          [--format freeform|markdown|json]
+      Full ceremony: Raccoon → Goblin pack → [Debate round] → Gremlin chaos →
+                    Troll review → [Specialist re-rite on failure] →
+                    Ogre fallback → Scribe.
+      --cite <riteId>:    load that rite's Artifact as prior context.
+      --remember:         auto-load up to 3 most-relevant prior Artifacts.
+      --no-specialist:    skip the specialist recovery layer (go straight to Ogre).
+      --specialist-cap N: max specialist goblins to spawn (default 3).
+      --debate:           run an inter-agent debate round after the pack proposes.
+      --troll-tools:      enable verifier tool-use during troll review (json/regex/http.head).
+
+  goblintown ancestry <riteId>
+      Print the artifact lineage for a rite (parents → this → children).
+
+  goblintown plan "<task>" [--max-nodes <N>] [--max-replan <N>] [--budget <tokens>]
+                          [--cite <riteId>]... [--remember] [--format freeform|markdown|json]
+      Use the Planner to decompose the task into a DAG of sub-rites and
+      execute them in order (Phase 3). Each sub-rite produces its own artifact;
+      dependent sub-rites consume them. On a node failure the planner is
+      re-invoked (recursive replan, max depth 2 by default).
+
+  goblintown export-trace <runId> [--out <path.json>]
+      Export a run as an LLM-MAS Orchestration Trace (academic schema —
+      xxzcc/awesome-llm-mas-rl).
+
+  goblintown fold [--threshold <N>] [--min-overlap <K>] [--max-cluster <S>] [--min-age-days <D>]
+      Phase 6: fold related older artifacts into higher-level summary
+      artifacts (Pigeon-Scribe). Defaults: threshold=30, overlap=2, max=6, age=7d.
+
+  goblintown reset [--all|--hoard|--artifacts|--runs] [--yes]
+      Reset the town. Default scope (--all) clears the entire hoard
+      (loot, quests, rites, artifacts, inbox, outbox) and the SSE run
+      log; preserves warren.json and reward.mjs. Asks for "RESET"
+      confirmation unless --yes is passed.
+      Narrower scopes:
+        --hoard      everything in .goblintown/hoard/
+        --artifacts  only .goblintown/hoard/artifacts/
+        --runs       only .goblintown/runs/
+
+  goblintown reroll <riteId> [--no-fallback] [--budget <tokens>]
+      Re-run an existing rite with identical task / pack / personality / scan.
+
+  goblintown export <riteId> [--out <path.md>]
+      Render a Rite as a self-contained markdown document.
+
+  goblintown compare <riteA> <riteB>
+      Side-by-side comparison of two rites.
+
+  goblintown audit <riteId>
+      Walk a Rite's causal graph; report tokens, drift, longest chain, warnings.
+
+  goblintown graph <riteId|lootId>
+      Render the causal graph as ASCII (rite-shaped if it's a rite id,
+      ancestry chain if it's a loot id).
+
+  goblintown drift
+      Aggregate personality-drift report across all stashed loot.
+
+  goblintown hoard [--kind <k>] [--since <iso|ms>] [--limit <N>] [--rite <id>] [--quest <id>]
+      List the contents of the Hoard, optionally filtered.
+
+  goblintown send --to <warren-path> --loot <id> [--audience "..."]
+      Pigeon-compress a Loot and deliver it to another Warren's inbox.
+
+  goblintown inbox
+      List inbox messages and verify their signatures.
+
+  goblintown outbox
+      List outbox records.
+
+  goblintown route
+      List per-creature provider routes.
+  goblintown route set <slot> --preset <id> [--model <name>] [--base-url <url>] [--api-key-env <ENV>] [--format freeform|markdown|json]
+      Route a specific slot (goblin/ogre/troll/.../embedding) to a provider.
+  goblintown route clear <slot>|--all
+      Remove route overrides.
+
+  goblintown country peer add --name <peer> --url <http://host:port>
+  goblintown country peer rm <peer>
+  goblintown country peer ls
+      Manage Goblin-Country peers in warren.json.
+  goblintown country show
+      Show current country config (backend/mode/code/discoverability/pending requests).
+  goblintown country set [--enabled <true|false>] [--backend <local|firebase>] [--discoverable <true|false>]
+      Update country-mode config in warren.json.
+  goblintown country discover [--code <A1B2C>] [--server <http://host:port>]
+      Query discoverable open countries (3 or fewer members) from a running Goblintown server.
+  goblintown country join --country-id <id> --country-code <code> [--target-url <url>] [--server <http://host:port>]
+      Send join request to a discovered country via server API.
+  goblintown country requests ls [--server <http://host:port>]
+  goblintown country requests approve <requestId> [--server <http://host:port>]
+  goblintown country requests deny <requestId> [--server <http://host:port>]
+      List/resolve pending join requests through server API.
+  goblintown country run --task "..." [--peer <peer>]... [--all] [--pack <N>] [--format freeform|markdown|json]
+      Dispatch a Rite to peer warrens and wait for completion.
+
+  goblintown serve [--port <N>]
+      Start the Hoard web UI. Default port=7777.
+      Optional pigeon sprite sheets are loaded from site/assets (walk + peck).
+
+Environment:
+  OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare / ancestry)
+  OPENAI_BASE_URL             optional; e.g. https://openrouter.ai/api/v1
+  Provider-specific keys      OPENROUTER_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, MISTRAL_API_KEY,
+                              DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY
+  GOBLINTOWN_MODEL_GOBLIN     default: gpt-5.4-mini
+  GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
+  GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini
+  GOBLINTOWN_MODEL_SCRIBE     default: gpt-5.4-mini  (Pigeon-as-Scribe artifact distillation)
+  GOBLINTOWN_EMBEDDING_MODEL  default: text-embedding-3-small  (artifact retrieval, Phase 6)
+  GOBLINTOWN_TOOLS_HTTP       set to 1 to enable http.head verifier tool (default disabled)
+  GOBLINTOWN_MAX_CONCURRENCY  default: 5 (in-flight API calls)
+  GOBLINTOWN_SERVER_URL       default base URL for country discover/join/requests commands
+  (also: GREMLIN, RACCOON, PIGEON)
+
+"OpenAI tried to put the goblins back in the box. We built the box for them."
+`;
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
@@ -918,12 +1045,33 @@ async function cmdCountry(args: string[]): Promise<void> {
   if (sub === "peer" || sub === "peers") {
     return cmdCountryPeer(args.slice(1));
   }
+  if (sub === "show") {
+    return cmdCountryShow(args.slice(1));
+  }
+  if (sub === "set") {
+    return cmdCountrySet(args.slice(1));
+  }
+  if (sub === "discover") {
+    return cmdCountryDiscover(args.slice(1));
+  }
+  if (sub === "join") {
+    return cmdCountryJoin(args.slice(1));
+  }
+  if (sub === "requests" || sub === "req") {
+    return cmdCountryRequests(args.slice(1));
+  }
   if (sub === "run") {
     return cmdCountryRun(args.slice(1));
   }
   process.stderr.write(
-    `usage: goblintown country peer <add|rm|ls> ...\n` +
-      `   or: goblintown country run --task "..." [--peer <name>]... [--all]\n`,
+    `usage: goblintown country <peer|show|set|discover|join|requests|run> ...\n` +
+      `  peer:     goblintown country peer <add|rm|ls>\n` +
+      `  show:     goblintown country show\n` +
+      `  set:      goblintown country set [--enabled true|false] [--backend local|firebase] [--discoverable true|false]\n` +
+      `  discover: goblintown country discover [--code A1B2C] [--server http://localhost:7777]\n` +
+      `  join:     goblintown country join --country-id <id> --country-code <code> [--target-url <url>]\n` +
+      `  requests: goblintown country requests <ls|approve|deny> [requestId] [--server http://localhost:7777]\n` +
+      `  run:      goblintown country run --task "..." [--peer <name>]... [--all]\n`,
   );
   process.exitCode = 1;
 }
@@ -1001,6 +1149,231 @@ async function cmdCountryPeer(args: string[]): Promise<void> {
   process.stderr.write(
     `usage: goblintown country peer <add|rm|ls>\n` +
       `  add: goblintown country peer add --name <peer> --url <http://host:port>\n`,
+  );
+  process.exitCode = 1;
+}
+
+async function cmdCountryShow(_args: string[]): Promise<void> {
+  const w = await loadWarren(process.cwd());
+  const cfg = normalizeCountryConfig(w.manifest.country);
+  const peers = w.manifest.peers ?? [];
+  const pending = cfg.pendingJoinRequests ?? [];
+  process.stdout.write(
+    `Country config:\n` +
+      `  lead:          ${w.manifest.name}\n` +
+      `  backend:       ${cfg.collabBackend === "firebase" ? "firebase" : "local"}\n` +
+      `  enabled:       ${cfg.enabled === true ? "true" : "false"}\n` +
+      `  discoverable:  ${cfg.discoverable !== false ? "true" : "false"}\n` +
+      `  country id:    ${cfg.countryId ?? "(unset)"}\n` +
+      `  country name:  ${cfg.countryName ?? "(unset)"}\n` +
+      `  country code:  ${cfg.countryCode ?? "(unset)"}\n` +
+      `  team members:  ${1 + peers.length}/6\n` +
+      `  pending joins: ${pending.length}\n`,
+  );
+  if (pending.length > 0) {
+    process.stdout.write(`\nPending requests:\n`);
+    for (const req of pending) {
+      process.stdout.write(
+        `  ${req.id}  from=${req.fromName}  url=${req.fromUrl}  at=${req.createdAt}\n`,
+      );
+    }
+  }
+}
+
+async function cmdCountrySet(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const w = await loadWarren(process.cwd());
+  const current = normalizeCountryConfig(w.manifest.country);
+  const patch: Record<string, unknown> = {};
+
+  if (flags.enabled !== undefined) {
+    const enabled = parseBoolFlag(flags.enabled, "enabled");
+    if (enabled === null) return;
+    patch.enabled = enabled;
+  }
+  if (flags.discoverable !== undefined) {
+    const discoverable = parseBoolFlag(flags.discoverable, "discoverable");
+    if (discoverable === null) return;
+    patch.discoverable = discoverable;
+  }
+  if (flags.backend !== undefined) {
+    if (flags.backend !== "local" && flags.backend !== "firebase") {
+      process.stderr.write(`--backend must be "local" or "firebase"\n`);
+      process.exitCode = 1;
+      return;
+    }
+    patch.collabBackend = flags.backend;
+  }
+  if (flags["country-id"] !== undefined) patch.countryId = flags["country-id"];
+  if (flags["country-name"] !== undefined) patch.countryName = flags["country-name"];
+  if (flags["country-code"] !== undefined) patch.countryCode = flags["country-code"];
+
+  if (Object.keys(patch).length === 0) {
+    process.stderr.write(
+      `usage: goblintown country set [--enabled true|false] [--backend local|firebase] [--discoverable true|false] [--country-id <id>] [--country-name <name>] [--country-code <code>]\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  w.manifest.country = normalizeCountryConfig({ ...current, ...patch });
+  await saveWarrenManifest(w);
+  process.stdout.write(`Country config updated.\n`);
+  await cmdCountryShow([]);
+}
+
+async function cmdCountryDiscover(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const baseUrl = resolveCountryServerUrl(flags);
+  const code = flags.code ? String(flags.code).trim().toUpperCase() : "";
+  const q = code ? `?code=${encodeURIComponent(code)}` : "";
+  const data = await fetchJsonOrThrow<{
+    countries?: Array<{
+      countryId: string;
+      countryName: string;
+      countryCode: string;
+      memberCount: number;
+      discoverable: boolean;
+      leadName: string;
+      targetUrl?: string;
+    }>;
+    randomOpen?: Array<{
+      countryId: string;
+      countryName: string;
+      countryCode: string;
+      memberCount: number;
+      discoverable: boolean;
+      leadName: string;
+      targetUrl?: string;
+    }>;
+  }>(`${baseUrl}/api/country/discover${q}`);
+  const countries = Array.isArray(data.countries) ? data.countries : [];
+  const randomOpen = Array.isArray(data.randomOpen) ? data.randomOpen : [];
+  const rows = code ? countries : randomOpen;
+  if (rows.length === 0) {
+    process.stdout.write(`No open countries found.\n`);
+    return;
+  }
+  const overLimit = rows.filter((r) => Number(r.memberCount) > 3);
+  process.stdout.write(
+    `Open countries (${rows.length}${code ? ` for code ${code}` : ""}) via ${baseUrl}:\n`,
+  );
+  for (const row of rows) {
+    process.stdout.write(
+      `  ${row.countryName} [${row.countryCode}] id=${row.countryId} members=${row.memberCount}/6 lead=${row.leadName}${row.targetUrl ? ` target=${row.targetUrl}` : ""}\n`,
+    );
+  }
+  if (overLimit.length > 0) {
+    process.stderr.write(
+      `warning: server returned ${overLimit.length} country row(s) above open-team limit (3).\n`,
+    );
+  }
+}
+
+async function cmdCountryJoin(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const baseUrl = resolveCountryServerUrl(flags);
+  let targetUrl = flags["target-url"] ? String(flags["target-url"]).trim() : "";
+  const countryId = flags["country-id"] ? String(flags["country-id"]).trim() : "";
+  const countryCode = flags["country-code"] ? String(flags["country-code"]).trim().toUpperCase() : "";
+  if (!countryId || !countryCode) {
+    process.stderr.write(
+      `usage: goblintown country join --country-id <id> --country-code <code> [--target-url <url>] [--server <url>]\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (!targetUrl) {
+    const discovered = await fetchJsonOrThrow<{
+      countries?: Array<{
+        countryId: string;
+        countryCode: string;
+        targetUrl?: string;
+      }>;
+    }>(`${baseUrl}/api/country/discover?code=${encodeURIComponent(countryCode)}`);
+    const matches = (discovered.countries ?? []).filter((c) => c.countryId === countryId);
+    if (matches.length !== 1 || !matches[0].targetUrl) {
+      process.stderr.write(
+        `Could not resolve target URL for ${countryId}/${countryCode}. Pass --target-url explicitly.\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    targetUrl = matches[0].targetUrl;
+  }
+  const result = await fetchJsonOrThrow<{ requestId?: string }>(
+    `${baseUrl}/api/country/join`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetUrl,
+        countryId,
+        countryCode,
+      }),
+    },
+  );
+  process.stdout.write(
+    `Join request sent${result.requestId ? ` (id=${result.requestId})` : ""}.\n`,
+  );
+}
+
+async function cmdCountryRequests(args: string[]): Promise<void> {
+  const action = args[0] ?? "ls";
+  const flags = parseFlags(args);
+  const baseUrl = resolveCountryServerUrl(flags);
+  if (action === "ls" || action === "list") {
+    const payload = await fetchJsonOrThrow<{
+      countryName?: string;
+      countryCode?: string;
+      pendingJoinRequests?: Array<{
+        id: string;
+        fromName: string;
+        fromUrl: string;
+        createdAt: string;
+      }>;
+    }>(`${baseUrl}/api/country`);
+    const pending = payload.pendingJoinRequests ?? [];
+    process.stdout.write(
+      `Pending join requests for ${payload.countryName ?? "country"} [${payload.countryCode ?? "?"}]: ${pending.length}\n`,
+    );
+    for (const row of pending) {
+      process.stdout.write(
+        `  ${row.id}  from=${row.fromName}  url=${row.fromUrl}  at=${row.createdAt}\n`,
+      );
+    }
+    return;
+  }
+
+  if (action === "approve" || action === "deny") {
+    const requestId = args[1] || flags.id;
+    if (!requestId) {
+      process.stderr.write(`usage: goblintown country requests ${action} <requestId> [--server <url>]\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const approve = action === "approve";
+    const response = await fetchJsonOrThrow<{
+      delivery?: { delivered?: boolean; error?: string };
+      pendingJoinRequests?: Array<{ id: string }>;
+    }>(
+      `${baseUrl}/api/country/join-approve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, approve }),
+      },
+    );
+    process.stdout.write(
+      `${approve ? "Approved" : "Denied"} request ${requestId}. Remaining pending: ${(response.pendingJoinRequests ?? []).length}\n`,
+    );
+    if (approve && response.delivery?.delivered === false) {
+      process.stdout.write(`  delivery warning: ${response.delivery.error ?? "unknown"}\n`);
+    }
+    return;
+  }
+
+  process.stderr.write(
+    `usage: goblintown country requests <ls|approve|deny> [requestId] [--server <url>]\n`,
   );
   process.exitCode = 1;
 }
@@ -1402,6 +1775,32 @@ function parseFlags(args: string[]): Record<string, string> {
     }
   }
   return out;
+}
+
+function parseBoolFlag(raw: string, name: string): boolean | null {
+  const value = raw.trim().toLowerCase();
+  if (["true", "1", "yes", "y", "on"].includes(value)) return true;
+  if (["false", "0", "no", "n", "off"].includes(value)) return false;
+  process.stderr.write(`--${name} must be true or false\n`);
+  process.exitCode = 1;
+  return null;
+}
+
+function resolveCountryServerUrl(flags: Record<string, string>): string {
+  const raw =
+    flags.server ??
+    process.env.GOBLINTOWN_SERVER_URL ??
+    "http://localhost:7777";
+  return String(raw).trim().replace(/\/+$/, "");
+}
+
+async function fetchJsonOrThrow<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`${response.status} ${response.statusText}${text ? `: ${text}` : ""}`);
+  }
+  return (await response.json()) as T;
 }
 
 function collectFlag(args: string[], name: string): string[] {

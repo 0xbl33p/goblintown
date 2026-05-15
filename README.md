@@ -8,15 +8,6 @@ spawn focused specialists when the pack fails, and hand the surviving
 answer back as a signed, content-addressed artifact that future rites can
 build on.
 
-## Beta 0.2
-
-`0.2.0-beta.0` is the stabilization cut for the federation/country wave and the recent UI pass.
-
-- Internal refactor: imports are now organized by domain (`core`, `pipeline`, `analysis`, `storage`, `collab`) to reduce coupling between CLI/server codepaths.
-- CLI ergonomics: command help text now lives in a dedicated module (`src/cli-help.ts`) so command wiring is easier to maintain.
-- Goblin-Country flow: discovery/join/approval, role ownership, queueing, and membership persistence are now first-class in both API and CLI.
-- Tank polish: animated pigeon sprite support (walk + peck cycles) and docs for asset expectations in `site/assets`.
-
 ## Background
 
 In April 2026, OpenAI published [*Where the goblins came from*](https://openai.com/index/where-the-goblins-came-from/),
@@ -232,9 +223,18 @@ that future rites can cite.
 
 ## Install
 
+### Local development
+
 ```bash
 npm install
 npm run build
+```
+
+### npm package (after publish)
+
+```bash
+npm install -g goblintown
+goblintown --help
 ```
 
 Set a provider API key for any command that calls a creature. Local Ollama uses
@@ -309,6 +309,14 @@ goblintown route clear goblin
 goblintown country peer add --name alpha --url http://localhost:7777
 goblintown country peer add --name beta  --url http://localhost:8888
 goblintown country peer ls
+goblintown country show
+goblintown country set --enabled true --backend local --discoverable true
+goblintown country discover
+goblintown country discover --code A7K2Q
+# join request flow (uses server API; start `goblintown serve` first)
+goblintown country join --country-id <id> --country-code <code> --target-url <url>
+goblintown country requests ls
+goblintown country requests approve <requestId>
 goblintown country run --task "Audit this migration plan" --all --pack 2
 # (UI flow: Country top-bar menu supports code-based join/discovery + approvals)
 ```
@@ -509,9 +517,12 @@ unassigned roles can auto-fall back to the lead.
 - **Join** tab supports:
   - search by country code, and
   - random open-country sampling (up to 10 countries with 3 or fewer members).
+- Discovery results are restricted to countries with 3 or fewer members.
 - Join requests are approved/denied by the lead in **Pending Join Requests**.
 - **Team** tab controls per-role ownership (goblin/gremlin/raccoon/troll/ogre/pigeon)
   with optional auto-assignment of unclaimed roles to the lead.
+- In Firebase mode, user membership state (`solo`, `pending`, `member`, `owner`)
+  is persisted in profile metadata.
 - When country mode is enabled, rites/plans require all teammates online;
   otherwise requests are queued until members are reachable.
 

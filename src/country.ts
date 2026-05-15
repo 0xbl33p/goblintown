@@ -148,6 +148,7 @@ export function normalizeCountryConfig(value: unknown): CountryConfig {
   const input =
     value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const roleOwners = normalizeRoleOwners(input.roleOwners);
+  const collabBackend = input.collabBackend === "firebase" ? "firebase" : "local";
   const countryId = normalizeCountryId(input.countryId);
   const countryName = normalizeCountryName(input.countryName);
   const countryCode = normalizeCountryCode(input.countryCode);
@@ -155,6 +156,7 @@ export function normalizeCountryConfig(value: unknown): CountryConfig {
   const pendingJoinRequests = normalizeJoinRequests(input.pendingJoinRequests);
   const riteQueue = normalizeRiteQueue(input.riteQueue);
   return {
+    collabBackend,
     enabled: input.enabled === true,
     ...(countryId ? { countryId } : {}),
     ...(countryName ? { countryName } : {}),
