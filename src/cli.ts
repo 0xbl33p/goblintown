@@ -159,15 +159,28 @@ Usage:
   goblintown country run --task "..." [--peer <peer>]... [--all] [--pack <N>] [--format freeform|markdown|json]
       Dispatch a Rite to peer warrens and wait for completion.
 
+  goblintown cloud
+      Show the bundled Goblintown Cloud project, first-run Local Only vs Goblintown Cloud choice,
+      Settings -> Account controls, and optional Firebase env overrides.
+
   goblintown serve [--port <N>]
-      Start the Hoard web UI. Default port=7777.
-      Optional pigeon sprite sheets are loaded from site/assets (walk + peck).
+      Start the Tank UI. Default port=7777.
+      First run asks Local Only vs Goblintown Cloud; later change it in Settings -> Account.
+      Settings also contains Country, Mail, API Provider, and Reset -> Asteroid Mode.
+      Optional sprite sheets and logo are loaded from site/assets.
 
 Environment:
   OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare / ancestry)
   OPENAI_BASE_URL             optional; e.g. https://openrouter.ai/api/v1
   Provider-specific keys      OPENROUTER_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, MISTRAL_API_KEY,
                               DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY
+  FIREBASE_API_KEY            optional override for forks; normal users use bundled Goblintown Cloud config
+  FIREBASE_AUTH_DOMAIN        optional override
+  FIREBASE_PROJECT_ID         optional override
+  FIREBASE_APP_ID             optional override
+  FIREBASE_STORAGE_BUCKET     optional override
+  FIREBASE_MESSAGING_SENDER_ID optional override
+  FIREBASE_MEASUREMENT_ID     optional override
   GOBLINTOWN_MODEL_GOBLIN     default: gpt-5.4-mini
   GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
   GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini
@@ -225,6 +238,8 @@ async function main(): Promise<void> {
       return cmdRoute(argv.slice(1));
     case "country":
       return cmdCountry(argv.slice(1));
+    case "cloud":
+      return cmdCloud(argv.slice(1));
     case "serve":
       return cmdServe(argv.slice(1));
     case "ancestry":
@@ -1461,6 +1476,35 @@ async function cmdServe(args: string[]): Promise<void> {
   const flags = parseFlags(args);
   const port = flags.port ? Number(flags.port) : 7777;
   await serve({ cwd: process.cwd(), port });
+}
+
+async function cmdCloud(args: string[]): Promise<void> {
+  const help = args[0] === "--help" || args[0] === "-h" || args[0] === "help";
+  if (help) {
+    process.stdout.write(
+      `usage: goblintown cloud\n\n` +
+        `Show Goblintown Cloud setup, local/cloud mode behavior, and optional Firebase overrides.\n`,
+    );
+    return;
+  }
+
+  process.stdout.write(
+    `Goblintown Cloud:\n` +
+      `  bundled project: goblintown-88fd6\n` +
+      `  normal flow:     goblintown serve -> first-run Local Only vs Goblintown Cloud choice\n` +
+      `  menu:            Settings -> Account -> Cloud Mode\n` +
+      `  local mode:      town memory stays local; cloud sign-in, discovery, mail, and country metadata stay off\n` +
+      `  cloud mode:      Use Goblintown Cloud for SSO, friend codes, discovery, mail, and country metadata\n` +
+      `  reset:           Settings -> Reset -> Asteroid Mode handles destructive local/cloud reset\n\n` +
+      `Optional Firebase overrides for forks:\n` +
+      `  FIREBASE_API_KEY\n` +
+      `  FIREBASE_AUTH_DOMAIN\n` +
+      `  FIREBASE_PROJECT_ID\n` +
+      `  FIREBASE_APP_ID\n` +
+      `  FIREBASE_STORAGE_BUCKET\n` +
+      `  FIREBASE_MESSAGING_SENDER_ID\n` +
+      `  FIREBASE_MEASUREMENT_ID\n`,
+  );
 }
 
 async function cmdPlan(args: string[]): Promise<void> {

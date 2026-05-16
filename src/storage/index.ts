@@ -18,6 +18,7 @@ export {
 export {
   initWarren,
   loadWarren,
+  resetWarren,
   saveWarrenManifest,
   type Warren,
 } from "../warren.js";

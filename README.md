@@ -291,7 +291,8 @@ goblintown drift
 goblintown hoard --kind goblin --since 2026-04-30 --limit 20
 goblintown audit <riteId>
 goblintown graph <riteId|lootId>     # now includes artifact lineage
-goblintown serve --port 7777        # tank UI + SSE + plan/rite forms
+goblintown serve --port 7777        # Tank UI + first-run Local Only / Cloud choice
+goblintown cloud                    # bundled Cloud setup + optional Firebase overrides
 
 # federation
 goblintown send --to ../other-warren    --loot <id>
@@ -318,8 +319,39 @@ goblintown country join --country-id <id> --country-code <code> --target-url <ur
 goblintown country requests ls
 goblintown country requests approve <requestId>
 goblintown country run --task "Audit this migration plan" --all --pack 2
-# (UI flow: Country top-bar menu supports code-based join/discovery + approvals)
+# (UI flow: Settings -> Country supports code-based join/discovery + approvals)
 ```
+
+## Goblintown Cloud
+
+The app stays download-and-run friendly. On first `goblintown serve`, the Tank
+asks whether this Warren should **Stay Local** or **Use Goblintown Cloud**:
+
+- **Stay Local** keeps memory, runs, provider secrets, and reset state on this
+  machine. Cloud sign-in, public discovery, direct messages, and remote country
+  metadata stay disabled.
+- **Use Goblintown Cloud** signs in through the bundled Firebase project
+  (`goblintown-88fd6`) and turns on the shared features: SSO, friend codes,
+  discovery, mail, and country metadata. Local rite/run files still remain in
+  `.goblintown/`.
+
+You can change the choice later from **Settings -> Account**. Reset lives under
+**Settings -> Reset -> Asteroid Mode** so the destructive path is deliberately
+buried. Asteroid Mode can destroy only the local town or, after a second
+confirmation, request cloud-data deletion for the signed-in account.
+
+Normal users do not need Firebase keys. Forks and private deployments can use
+optional Firebase overrides:
+
+- `FIREBASE_API_KEY`
+- `FIREBASE_AUTH_DOMAIN`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_APP_ID`
+- `FIREBASE_STORAGE_BUCKET`
+- `FIREBASE_MESSAGING_SENDER_ID`
+- `FIREBASE_MEASUREMENT_ID`
+
+`goblintown cloud` prints the same local/cloud mode summary from the CLI.
 
 ## Models
 
@@ -340,7 +372,8 @@ Ogre on `gpt-5.5`. Override per creature with environment variables:
 Goblintown talks to OpenAI by default, but the underlying client is just the
 `openai` SDK pointed at a base URL. Anything that exposes an OpenAI-compatible
 API works. `goblintown serve` includes a compact **API Provider** menu in the
-Tank top bar. It saves non-secret provider settings to `.goblintown/warren.json`:
+Tank **Settings -> API Provider** panel. It saves non-secret provider settings
+to `.goblintown/warren.json`:
 
 - provider preset
 - base URL
@@ -426,10 +459,11 @@ export OPENROUTER_REFERER="https://github.com/yourname/yourproject"
 export OPENROUTER_TITLE="Goblintown"
 ```
 
-That's enough after selecting OpenRouter in the Tank menu. The legacy env-only
-path still works too: set `OPENAI_BASE_URL=https://openrouter.ai/api/v1` and put
-the OpenRouter key in `OPENAI_API_KEY`. When the resolved base URL points
-at OpenRouter, any model value without a `/` is auto-namespaced
+That's enough after selecting OpenRouter in **Settings -> API Provider**. The
+legacy env-only path still works too: set
+`OPENAI_BASE_URL=https://openrouter.ai/api/v1` and put the OpenRouter key in
+`OPENAI_API_KEY`. When the resolved base URL points at OpenRouter, any model
+value without a `/` is auto-namespaced
 to `openai/`, so the built-in defaults (`gpt-5.4-mini` for the pack, `gpt-5.5`
 for the Ogre) become `openai/gpt-5.4-mini` / `openai/gpt-5.5` automatically.
 
@@ -512,8 +546,8 @@ unassigned roles can auto-fall back to the lead.
 ### Country lifecycle in the Tank UI
 
 - A country identity is auto-created per Warren (random country name + code).
-- Open **Country ▾** in the top bar, enable **Country Mode**, then **Save Team**
-  to publish your country for discovery.
+- Open **Settings -> Country**, enable **Country Mode**, then **Save Team** to
+  publish your country for discovery.
 - **Join** tab supports:
   - search by country code, and
   - random open-country sampling (up to 10 countries with 3 or fewer members).
@@ -528,7 +562,7 @@ unassigned roles can auto-fall back to the lead.
 
 ### Friends & Mail
 
-- **Mail ▾** provides friend requests, threads, and direct messages.
+- **Settings -> Mail** provides friend requests, threads, and direct messages.
 - Friend requests are code-based in the UI (enter collaborator country code;
   no manual URL entry required).
 - Opening a thread auto-marks unread messages as read.
@@ -541,16 +575,23 @@ Run state is persisted to `.goblintown/runs/<runId>.json`, so the SSE
 history replays after a server restart; in-flight rites are marked
 interrupted on boot.
 
-### Tank pigeon sprite assets
+### Tank sprite and background assets
 
-The Tank UI can render a sprite-driven pigeon (instead of emoji) from files in
+The Tank UI can render sprite sheets and a low-opacity wordmark from files in
 `site/assets/`:
 
 - `pigeon-walk-right.png`
 - `pigeon-walk-left.png`
 - `pigeon-peck.png` (optional idle peck cycle)
+- `raccoon-sleep.png` (optional idle sleep loop)
+- `troll-idle.png` (optional idle loop)
+- `gremlin-idle.png` (optional idle loop)
+- `ogre-idle.png` (optional idle loop)
+- `gtowntextmark.png` (optional decorative background wordmark)
 
-Sprite sheet expectations: `5x5` layout, `25` frames, transparent background.
+Pigeon sprite sheet expectations: `5x5` layout, `25` frames, transparent
+background. Idle creature sheet layouts are documented in
+`site/assets/README.md`.
 
 Runtime behavior:
 
@@ -559,6 +600,7 @@ Runtime behavior:
 - duplicate adjacent frames are de-duplicated at load time;
 - when the peck sheet is present, a peck cycle is triggered at random idle
   intervals between ~40 and 120 seconds.
+- the wordmark floats centered in the Tank field at low opacity.
 
 ## Layout
 
@@ -621,15 +663,15 @@ Runtime behavior:
 npm test
 ```
 
-214 tests, no OpenAI calls. Pure-function coverage across drift, reward,
+231 tests, no OpenAI calls. Pure-function coverage across drift, reward,
 Hoard content-addressing, federation signatures (incl. HMAC), audit
 aggregation, reward plugin loader, graph rendering, concurrency semaphore,
 budget tracker, run persistence, markdown export, rite comparison, plus the
 newer subsystems: artifact retrieval and JSON parsing, specialist failure
 clustering, planner DAG validation and topological order, debate prompt
 construction, verifier tool dispatch, embeddings ranking math (cosine, RRF
-fusion), context-folding clustering, provider routing, output formatting, and
-trace-export schema mapping.
+fusion), context-folding clustering, provider routing, output formatting, cloud
+mode, Settings menu reset flows, sprite assets, and trace-export schema mapping.
 
 ## Phases
 

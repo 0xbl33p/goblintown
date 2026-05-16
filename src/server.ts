@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type Request, type Response } from "express";
@@ -68,7 +69,7 @@ import {
   readProviderSecretsForRootSync,
   setProviderSecretForRoot,
 } from "./provider-secrets.js";
-import { loadWarren, saveWarrenManifest, type Warren } from "./warren.js";
+import { loadWarren, resetWarren, saveWarrenManifest, type Warren } from "./warren.js";
 import {
   directMessagePayload,
   friendIdFromPublicKey,
@@ -100,6 +101,18 @@ interface StartRunOptions {
 }
 
 const DISCOVERY_OPEN_MEMBER_LIMIT = 3;
+const DEFAULT_FIREBASE_CLIENT_CONFIG = {
+  apiKey: "AIzaSyD2px9fRoSh6bwOBDIk2dGioYbxROQ6Leo",
+  authDomain: "goblintown-88fd6.firebaseapp.com",
+  projectId: "goblintown-88fd6",
+  storageBucket: "goblintown-88fd6.firebasestorage.app",
+  messagingSenderId: "904412921746",
+  appId: "1:904412921746:web:a92c6ba51e292b0d858b4b",
+  measurementId: "G-C1TSNGHXYG",
+} as const;
+const require = createRequire(import.meta.url);
+const MATTER_JS_BROWSER_PATH = require.resolve("matter-js/build/matter.min.js");
+const MATTER_JS_BROWSER_SOURCE = `;(function(){var module=undefined;var exports=undefined;\n${readFileSync(MATTER_JS_BROWSER_PATH, "utf8")}\n}).call(window);`;
 
 function resolveAssetDir(warrenRoot: string): string | null {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -247,14 +260,14 @@ function cspHeaderForRequest(): string {
 }
 
 export async function serve(opts: ServeOptions): Promise<void> {
-  const warren = await loadWarren(opts.cwd);
+  let warren = await loadWarren(opts.cwd);
   await ensureCountryIdentity(warren.root);
   ensureCountryDefaults(warren);
   await saveWarrenManifest(warren);
   const assetDir = resolveAssetDir(warren.root);
   const app = express();
   const runs = new Map<string, RunState>();
-  const runDir = await ensureRunDir(warren.root);
+  let runDir = await ensureRunDir(warren.root);
 
   // Recover persisted runs. Anything still flagged in-progress when we boot is
   // terminal for that process, but remains resumable from its last checkpoint.
@@ -285,6 +298,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
       }),
     );
   }
+  app.get("/vendor/matter-js/matter.min.js", (_req, res) => {
+    res.type("application/javascript").send(MATTER_JS_BROWSER_SOURCE);
+  });
 
   app.get("/", async (_req, res) => renderHome(warren, runs, res));
   app.get("/rite/new", (_req, res) =>
@@ -326,6 +342,39 @@ export async function serve(opts: ServeOptions): Promise<void> {
   app.post("/api/runs/:runId/resume", async (req, res) =>
     resumeRun(warren, runs, runDir, req, res),
   );
+  app.post("/api/asteroid", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const confirm = typeof body.confirm === "string" ? body.confirm : "";
+    if (confirm !== "ASTEROID") {
+      res.status(400).json({ error: "ASTEROID confirmation required" });
+      return;
+    }
+    try {
+      const root = warren.root;
+      for (const state of runs.values()) {
+        for (const subscriber of state.subscribers) {
+          try {
+            subscriber.end();
+          } catch {
+            // Subscriber may already be closed.
+          }
+        }
+      }
+      runs.clear();
+      warren = await resetWarren(root);
+      await ensureCountryIdentity(warren.root);
+      ensureCountryDefaults(warren);
+      await saveWarrenManifest(warren);
+      runDir = await ensureRunDir(warren.root);
+      res.json({
+        ok: true,
+        warren: warren.manifest.name,
+        createdAt: warren.manifest.createdAt,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
   app.get("/api/trace/:runId", (req, res) => {
     const state = runs.get(req.params.runId);
     if (!state) {
@@ -1737,10 +1786,10 @@ function firebaseClientConfigPayload(): {
     measurementId?: string;
   } | null;
 } {
-  const apiKey = trimmedEnv("FIREBASE_API_KEY");
-  const authDomain = trimmedEnv("FIREBASE_AUTH_DOMAIN");
-  const projectId = trimmedEnv("FIREBASE_PROJECT_ID");
-  const appId = trimmedEnv("FIREBASE_APP_ID");
+  const apiKey = trimmedEnv("FIREBASE_API_KEY") ?? DEFAULT_FIREBASE_CLIENT_CONFIG.apiKey;
+  const authDomain = trimmedEnv("FIREBASE_AUTH_DOMAIN") ?? DEFAULT_FIREBASE_CLIENT_CONFIG.authDomain;
+  const projectId = trimmedEnv("FIREBASE_PROJECT_ID") ?? DEFAULT_FIREBASE_CLIENT_CONFIG.projectId;
+  const appId = trimmedEnv("FIREBASE_APP_ID") ?? DEFAULT_FIREBASE_CLIENT_CONFIG.appId;
   const enabled = !!(apiKey && authDomain && projectId && appId);
   if (!enabled) return { enabled: false, config: null };
   return {
@@ -1750,14 +1799,14 @@ function firebaseClientConfigPayload(): {
       authDomain,
       projectId,
       appId,
-      ...(trimmedEnv("FIREBASE_STORAGE_BUCKET")
-        ? { storageBucket: trimmedEnv("FIREBASE_STORAGE_BUCKET") as string }
+      ...(trimmedEnv("FIREBASE_STORAGE_BUCKET") ?? DEFAULT_FIREBASE_CLIENT_CONFIG.storageBucket
+        ? { storageBucket: (trimmedEnv("FIREBASE_STORAGE_BUCKET") ?? DEFAULT_FIREBASE_CLIENT_CONFIG.storageBucket) as string }
         : {}),
-      ...(trimmedEnv("FIREBASE_MESSAGING_SENDER_ID")
-        ? { messagingSenderId: trimmedEnv("FIREBASE_MESSAGING_SENDER_ID") as string }
+      ...(trimmedEnv("FIREBASE_MESSAGING_SENDER_ID") ?? DEFAULT_FIREBASE_CLIENT_CONFIG.messagingSenderId
+        ? { messagingSenderId: (trimmedEnv("FIREBASE_MESSAGING_SENDER_ID") ?? DEFAULT_FIREBASE_CLIENT_CONFIG.messagingSenderId) as string }
         : {}),
-      ...(trimmedEnv("FIREBASE_MEASUREMENT_ID")
-        ? { measurementId: trimmedEnv("FIREBASE_MEASUREMENT_ID") as string }
+      ...(trimmedEnv("FIREBASE_MEASUREMENT_ID") ?? DEFAULT_FIREBASE_CLIENT_CONFIG.measurementId
+        ? { measurementId: (trimmedEnv("FIREBASE_MEASUREMENT_ID") ?? DEFAULT_FIREBASE_CLIENT_CONFIG.measurementId) as string }
         : {}),
     },
   };
@@ -2634,6 +2683,144 @@ function tankHtml(
   .strip .grow { flex: 1; }
   .strip .clock { color: var(--muted); }
   .strip .tier { color: var(--warn); }
+  .settings-chip {
+    border: 1px solid var(--line);
+    background: var(--bg-deep);
+    color: var(--fg-bright);
+    border-radius: 999px;
+    padding: 0.3rem 0.65rem;
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .settings-chip:hover,
+  .settings-chip[aria-expanded="true"] {
+    border-color: var(--accent);
+    color: var(--accent-hot);
+  }
+  .settings-popover {
+    position: absolute;
+    right: 1rem;
+    top: 2.55rem;
+    z-index: 34;
+    width: min(360px, calc(100vw - 2rem));
+    background: rgba(8, 11, 7, 0.98);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    box-shadow: 0 14px 44px rgba(0,0,0,0.7);
+    padding: 0.65rem;
+    display: none;
+  }
+  .settings-popover.open { display: block; }
+  .settings-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    margin-bottom: 0.45rem;
+    color: var(--fg-bright);
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  .settings-title span:last-child {
+    color: var(--muted);
+    font-size: 0.66rem;
+  }
+  .settings-actions {
+    display: grid;
+    gap: 0.35rem;
+  }
+  .settings-popover .auth-chip,
+  .settings-popover .country-chip,
+  .settings-popover .mail-chip,
+  .settings-popover .provider-chip,
+  .settings-popover .reset-chip,
+  .settings-popover .settings-danger-action {
+    width: 100%;
+    border: 1px solid rgba(143,207,82,0.22);
+    border-radius: 4px;
+    background: rgba(6,10,6,0.72);
+    color: var(--fg);
+    padding: 0.48rem 0.55rem;
+    font: inherit;
+    cursor: pointer;
+    display: grid;
+    grid-template-columns: 7rem minmax(0, 1fr);
+    gap: 0.55rem;
+    align-items: center;
+    text-align: left;
+  }
+  .settings-popover .auth-chip:hover,
+  .settings-popover .country-chip:hover,
+  .settings-popover .mail-chip:hover,
+  .settings-popover .provider-chip:hover,
+  .settings-popover .reset-chip:hover,
+  .settings-popover .reset-chip[aria-expanded="true"],
+  .settings-popover .settings-danger-action:hover {
+    border-color: var(--accent);
+    color: var(--accent-hot);
+  }
+  .settings-popover .auth-chip span,
+  .settings-popover .country-chip span,
+  .settings-popover .mail-chip span,
+  .settings-popover .provider-chip span,
+  .settings-popover .reset-chip span,
+  .settings-popover .settings-danger-action span {
+    color: var(--muted);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .settings-popover .auth-chip strong,
+  .settings-popover .country-chip strong,
+  .settings-popover .mail-chip strong,
+  .settings-popover .provider-chip strong,
+  .settings-popover .reset-chip strong,
+  .settings-popover .settings-danger-action strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fg-bright);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .settings-popover .mail-chip[data-unread="true"] strong {
+    color: var(--warn);
+  }
+  .settings-popover .provider-chip[data-missing="true"] strong {
+    color: var(--fail);
+  }
+  .settings-reset-panel {
+    display: none;
+    gap: 0.35rem;
+    padding: 0.5rem;
+    border: 1px solid rgba(243,160,122,0.2);
+    border-radius: 4px;
+    background: rgba(32,12,12,0.34);
+  }
+  .settings-reset-panel.open {
+    display: grid;
+  }
+  .settings-danger-label {
+    display: block;
+    color: var(--fail);
+    font-size: 0.64rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .settings-popover .settings-danger-action {
+    border-color: rgba(243,160,122,0.34);
+    background: rgba(58,20,20,0.42);
+  }
+  .settings-popover .settings-danger-action strong {
+    color: var(--fail);
+  }
   .provider-chip {
     border: 1px solid var(--line);
     background: var(--bg-deep);
@@ -2882,8 +3069,8 @@ function tankHtml(
   .mail-chip:hover { border-color: var(--accent); color: var(--accent-hot); }
   .auth-popover {
     position: absolute;
-    right: 14.8rem;
-    top: 2.1rem;
+    right: 1rem;
+    top: 2.55rem;
     z-index: 30;
     width: min(420px, calc(100vw - 2rem));
     background: rgba(8, 11, 7, 0.98);
@@ -2906,10 +3093,33 @@ function tankHtml(
     margin: 0 0 0.7rem;
     line-height: 1.45;
   }
+  .cloud-mode-panel {
+    border: 1px solid rgba(143,207,82,0.2);
+    background: rgba(6,10,6,0.56);
+    border-radius: 4px;
+    padding: 0.65rem;
+    margin-bottom: 0.75rem;
+  }
+  .cloud-mode-panel h4 {
+    margin: 0 0 0.35rem;
+    color: var(--fg-bright);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  .cloud-mode-panel p {
+    margin: 0 0 0.55rem;
+    color: var(--muted);
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+  .cloud-mode-panel .provider-actions {
+    margin-top: 0;
+  }
   .country-popover {
     position: absolute;
-    right: 10.4rem;
-    top: 2.1rem;
+    right: 1rem;
+    top: 2.55rem;
     z-index: 30;
     width: min(860px, calc(100vw - 2rem));
     max-height: calc(100vh - 4rem);
@@ -3078,8 +3288,8 @@ function tankHtml(
   }
   .mail-popover {
     position: absolute;
-    right: 5.8rem;
-    top: 2.1rem;
+    right: 1rem;
+    top: 2.55rem;
     z-index: 30;
     width: min(860px, calc(100vw - 2rem));
     max-height: calc(100vh - 4rem);
@@ -3225,6 +3435,12 @@ function tankHtml(
     font-size: 0.7rem;
     line-height: 1.35;
   }
+  .ops-danger {
+    width: 100%;
+    flex: 0 0 auto;
+    padding: 0.52rem 0.65rem;
+    font-size: 0.68rem;
+  }
   .ops-row {
     display: grid;
     grid-template-columns: 1fr auto;
@@ -3302,6 +3518,19 @@ function tankHtml(
   .tank {
     position: relative; overflow: hidden;
     background: linear-gradient(180deg, var(--sky) 0%, #0c1310 65%, #0a0e08 100%);
+  }
+  .tank-logo-mark {
+    position: absolute; top: 50%; left: 50%; z-index: 0;
+    width: min(68%, 680px); max-height: 18%; object-fit: contain;
+    opacity: 0.075; pointer-events: none; user-select: none;
+    transform: translate(-50%, -50%);
+    filter: saturate(0.8) brightness(0.75);
+    mix-blend-mode: screen;
+    animation: logo-float 18s ease-in-out infinite;
+  }
+  @keyframes logo-float {
+    0%, 100% { transform: translate(-50%, -52%); opacity: 0.06; }
+    50% { transform: translate(-50%, -48%); opacity: 0.09; }
   }
 
   .t1, .t2, .t3, .t4 { display: none; }
@@ -3430,6 +3659,14 @@ function tankHtml(
   .creature.pigeon-animated .sprite-shell { display: block; width: 92px; height: 92px; }
   .creature.idle-sprite-animated .emoji { display: none; }
   .creature.idle-sprite-animated .idle-sprite { display: block; }
+  .creature.raccoon-animated .emoji { display: block; }
+  .creature.raccoon-animated .idle-sprite { display: none; width: 96px; height: 96px; }
+  .creature.raccoon-animated[data-state="idle"] .emoji { display: none; }
+  .creature.raccoon-animated[data-state="idle"] .idle-sprite { display: block; }
+  .creature.troll-animated .emoji { display: block; }
+  .creature.troll-animated .idle-sprite { display: none; width: 96px; height: 96px; }
+  .creature.troll-animated[data-state="idle"] .emoji { display: none; }
+  .creature.troll-animated[data-state="idle"] .idle-sprite { display: block; }
   .creature.gremlin-animated .idle-sprite { width: 96px; height: 96px; }
   .creature.ogre-animated .idle-sprite { width: 126px; height: 120px; }
   .pigeon-sprite {
@@ -3699,6 +3936,8 @@ function tankHtml(
   .btn:hover { border-color: var(--accent); color: var(--accent-hot); transform: translateY(-1px); }
   .btn.primary { border-color: var(--accent); background: var(--accent); color: var(--bg); font-weight: 600; }
   .btn.primary:hover { background: var(--accent-hot); border-color: var(--accent-hot); color: var(--bg); }
+  .btn.danger { border-color: var(--fail); background: #3a1414; color: var(--fail); font-weight: 600; }
+  .btn.danger:hover { background: var(--fail); border-color: var(--fail); color: var(--bg); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
   /* Result panel — drops in from bottom of tank */
@@ -3802,6 +4041,112 @@ function tankHtml(
     font-size: 0.68rem;
   }
 
+  .asteroid-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 76;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(8,11,7,0.68);
+  }
+  .asteroid-overlay.open { display: flex; }
+  .asteroid-overlay.destroying { background: rgba(8,4,3,0.28); pointer-events: none; }
+  .asteroid-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .2s ease;
+  }
+  .asteroid-overlay.destroying .asteroid-canvas { opacity: 1; }
+  .asteroid-card {
+    position: relative;
+    z-index: 2;
+    width: min(620px, calc(100% - 1.2rem));
+    background: rgba(10,14,8,0.98);
+    border: 1px solid var(--fail);
+    box-shadow: 0 18px 54px rgba(0,0,0,0.78);
+    padding: 1rem;
+  }
+  .asteroid-card h4 {
+    margin: 0;
+    color: var(--fail);
+    font-size: 0.92rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .asteroid-card p {
+    margin: 0.65rem 0 0;
+    color: var(--fg);
+    font-size: 0.8rem;
+    line-height: 1.45;
+  }
+  .asteroid-card label {
+    display: block;
+    margin-top: 0.85rem;
+    color: var(--muted);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .asteroid-card input {
+    width: 100%;
+    margin-top: 0.25rem;
+    background: var(--bg);
+    color: var(--fg-bright);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 0.55rem 0.65rem;
+    font-family: inherit;
+    font-size: 0.86rem;
+    letter-spacing: 0.08em;
+  }
+  .asteroid-card input:focus { outline: none; border-color: var(--fail); }
+  .asteroid-actions {
+    display: flex;
+    gap: 0.55rem;
+    margin-top: 0.9rem;
+    flex-wrap: wrap;
+  }
+  .asteroid-actions .btn {
+    flex: 1 1 150px;
+    padding: 0.55rem 0.7rem;
+    font-size: 0.68rem;
+  }
+  .asteroid-cloud-choice { display: none; }
+  .asteroid-overlay.cloud-choice .asteroid-gate { display: none; }
+  .asteroid-overlay.cloud-choice .asteroid-cloud-choice { display: block; }
+  .asteroid-status {
+    min-height: 1.2em;
+    margin: 0.55rem 0 0;
+    color: var(--warn);
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+  .tank.asteroid-destroying {
+    animation: asteroid-shake 0.12s linear infinite;
+  }
+  .tank.asteroid-destroying .skyline,
+  .tank.asteroid-destroying .mountains,
+  .tank.asteroid-destroying .workshop,
+  .tank.asteroid-destroying .troll-bridge,
+  .tank.asteroid-destroying .raccoon-dump,
+  .tank.asteroid-destroying .creature,
+  .tank.asteroid-destroying .hoard {
+    filter: sepia(1) hue-rotate(-32deg) saturate(1.5) brightness(0.8);
+  }
+  @keyframes asteroid-shake {
+    0% { transform: translate(0,0) rotate(0deg); }
+    25% { transform: translate(2px,-1px) rotate(0.15deg); }
+    50% { transform: translate(-2px,1px) rotate(-0.15deg); }
+    75% { transform: translate(1px,2px) rotate(0.1deg); }
+    100% { transform: translate(0,0) rotate(0deg); }
+  }
+
   .ui-tooltip {
     position: fixed;
     z-index: 70;
@@ -3862,6 +4207,18 @@ function tankHtml(
     gap: 0.55rem;
     margin-top: 0.85rem;
   }
+  .onboard-cloud-actions {
+    display: none;
+    gap: 0.55rem;
+    margin-top: 0.85rem;
+  }
+  .onboard-cloud-actions.open {
+    display: flex;
+  }
+  .onboard-cloud-actions .btn,
+  .onboard-actions .btn {
+    flex: 1 1 0;
+  }
   .onboard-focus {
     position: relative;
     z-index: 68;
@@ -3913,12 +4270,39 @@ function tankHtml(
     <span class="stat"><b id="stat-rites">${riteCount}</b> rites</span>
     <span class="stat">drift <b id="stat-drift">${drift.toFixed(3)}</b></span>
     <span class="grow"></span>
-    <button class="auth-chip" id="auth-chip" type="button">Sign In ▾</button>
-    <button class="country-chip" id="country-chip" type="button">Country ▾</button>
-    <button class="mail-chip" id="mail-chip" type="button">Mail ▾</button>
-    <button class="provider-chip" id="provider-chip" type="button">API ▾</button>
     <span class="tier" id="tier-display">tier 0 · empty plot</span>
     <span class="clock" id="clock">idle</span>
+    <button class="settings-chip" id="settings-chip" type="button" aria-expanded="false">Settings ▾</button>
+  </div>
+
+  <div class="settings-popover" id="settings-popover">
+    <div class="settings-title">
+      <span>Settings</span>
+      <span>town controls</span>
+    </div>
+    <div class="settings-actions">
+      <button class="auth-chip" id="auth-chip" type="button" data-settings-label="Account">
+        <span>Account</span><strong>Sign In ▾</strong>
+      </button>
+      <button class="country-chip" id="country-chip" type="button" data-settings-label="Country">
+        <span>Country</span><strong>Country ▾</strong>
+      </button>
+      <button class="mail-chip" id="mail-chip" type="button" data-settings-label="Mail">
+        <span>Mail</span><strong>Mail ▾</strong>
+      </button>
+      <button class="provider-chip" id="provider-chip" type="button" data-settings-label="API">
+        <span>API</span><strong>API ▾</strong>
+      </button>
+      <button class="reset-chip" id="reset-chip" type="button" aria-expanded="false" data-settings-label="Reset">
+        <span>Reset</span><strong>Reset ▸</strong>
+      </button>
+      <div class="settings-reset-panel" id="settings-reset-panel" aria-hidden="true">
+        <span class="settings-danger-label">Destructive Reset</span>
+        <button class="settings-danger-action" id="btn-asteroid" type="button" data-settings-label="Asteroid">
+          <span>Asteroid</span><strong>Asteroid Mode</strong>
+        </button>
+      </div>
+    </div>
   </div>
 
   <div class="provider-popover" id="provider-popover">
@@ -3972,6 +4356,14 @@ function tankHtml(
 
   <div class="auth-popover" id="auth-popover">
     <h3>Sign-in & Cloud Collab</h3>
+    <div class="cloud-mode-panel">
+      <h4>Cloud Mode</h4>
+      <p id="cloud-mode-status">Choose local-only or Goblintown Cloud.</p>
+      <div class="provider-actions">
+        <button class="btn" type="button" id="cloud-local-mode">Stay Local</button>
+        <button class="btn primary" type="button" id="cloud-enable-mode">Use Goblintown Cloud</button>
+      </div>
+    </div>
     <p class="auth-status" id="auth-status">Loading auth state...</p>
     <div class="provider-actions">
       <button class="btn" type="button" id="auth-google-btn">Google</button>
@@ -4106,6 +4498,7 @@ function tankHtml(
   </aside>
 
   <div class="tank" id="tank">
+    <img class="tank-logo-mark" src="/assets/gtowntextmark.png" alt="" aria-hidden="true" decoding="async">
 
     <span class="star" style="top: 5%; left: 18%;">✦</span>
     <span class="star" style="top: 8%; left: 38%; animation-delay: -1s;">✦</span>
@@ -4177,7 +4570,32 @@ function tankHtml(
       </div>
       <div class="resume-actions">
         <button class="btn primary" type="button" id="resume-start">Resume</button>
-        <button class="btn" type="button" id="resume-dismiss">Start Over</button>
+        <button class="btn" type="button" id="resume-dismiss">Asteroid Mode</button>
+      </div>
+    </div>
+
+    <div class="asteroid-overlay" id="asteroid-overlay" aria-hidden="true">
+      <canvas class="asteroid-canvas" id="asteroid-canvas" aria-hidden="true"></canvas>
+      <div class="asteroid-card asteroid-gate">
+        <h4>Asteroid Mode</h4>
+        <p>This wipes this Goblintown's local memory and starts over at the tutorial.</p>
+        <label for="asteroid-confirm">Type ASTEROID to arm</label>
+        <input id="asteroid-confirm" autocomplete="off" spellcheck="false" inputmode="latin" placeholder="ASTEROID">
+        <div class="asteroid-actions">
+          <button class="btn danger" type="button" id="asteroid-arm" disabled>Arm Asteroid Mode</button>
+          <button class="btn" type="button" id="asteroid-cancel">Cancel</button>
+        </div>
+        <p class="asteroid-status" id="asteroid-status"></p>
+      </div>
+      <div class="asteroid-card asteroid-cloud-choice">
+        <h4>Cloud Data</h4>
+        <p>Are you sure you want to delete your cloud data aswell</p>
+        <div class="asteroid-actions">
+          <button class="btn danger" type="button" id="asteroid-nuke-cloud">Yes, Nuke it</button>
+          <button class="btn primary" type="button" id="asteroid-local-only">Just Destroy the Town</button>
+          <button class="btn" type="button" id="asteroid-cloud-cancel">Cancel</button>
+        </div>
+        <p class="asteroid-status" id="asteroid-cloud-status"></p>
       </div>
     </div>
 
@@ -4204,11 +4622,13 @@ function tankHtml(
     </div>
     <div class="creature pos-raccoon" id="c-raccoon" data-state="idle"
          style="--sway-dur: 4.4s; --sway-x: 3px; --sway-delay: -1.3s;">
+      <canvas class="sprite-shell idle-sprite" id="c-raccoon-sprite" width="128" height="128" aria-hidden="true"></canvas>
       <span class="emoji">🦝</span>
       <span class="label">raccoon</span>
     </div>
     <div class="creature pos-troll" id="c-troll" data-state="idle"
          style="--sway-dur: 5.2s; --sway-x: 2px; --sway-delay: -3s; font-size: 2.8rem;">
+      <canvas class="sprite-shell idle-sprite" id="c-troll-sprite" width="128" height="128" aria-hidden="true"></canvas>
       <span class="emoji">🧌</span>
       <span class="label">troll</span>
     </div>
@@ -4288,6 +4708,10 @@ function tankHtml(
         <h4 class="onboard-title" id="onboard-title">Welcome to Goblintown</h4>
         <p class="onboard-body" id="onboard-body"></p>
         <p class="onboard-progress" id="onboard-progress">Step 1</p>
+        <div class="onboard-cloud-actions" id="onboard-cloud-actions">
+          <button class="btn" type="button" id="onboard-local-mode">Stay Local</button>
+          <button class="btn primary" type="button" id="onboard-cloud-mode">Use Goblintown Cloud</button>
+        </div>
         <div class="onboard-actions">
           <button class="btn" type="button" id="onboard-back">Back</button>
           <button class="btn" type="button" id="onboard-skip">Skip</button>
@@ -4304,6 +4728,7 @@ function tankHtml(
 
 </div>
 
+<script src="/vendor/matter-js/matter.min.js"></script>
 <script>
 const INITIAL = ${initial};
 
@@ -4319,12 +4744,104 @@ const opsToggle = $("ops-toggle");
 const opsLine = $("ops-line");
 const opsRun = $("ops-run");
 const opsOutput = $("ops-output");
+const settingsChip = $("settings-chip");
+const settingsPopover = $("settings-popover");
+const resetChip = $("reset-chip");
+const settingsResetPanel = $("settings-reset-panel");
 
 const rand  = (lo, hi) => lo + Math.random() * (hi - lo);
 const irand = (lo, hi) => Math.floor(rand(lo, hi + 1));
 const pick  = (arr)    => arr[Math.floor(Math.random() * arr.length)];
 
+function setSettingsOpen(open) {
+  settingsPopover.classList.toggle("open", !!open);
+  settingsChip.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function setResetMenuOpen(open) {
+  settingsResetPanel.classList.toggle("open", !!open);
+  settingsResetPanel.setAttribute("aria-hidden", open ? "false" : "true");
+  resetChip.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function closeResetMenu() {
+  setResetMenuOpen(false);
+}
+
+function closeSettingsPopover() {
+  setSettingsOpen(false);
+  closeResetMenu();
+}
+
+function closeTopPopovers(exceptId) {
+  ["auth-popover", "country-popover", "mail-popover", "provider-popover"].forEach((id) => {
+    if (id === exceptId) return;
+    const panel = $(id);
+    if (panel) panel.classList.remove("open");
+  });
+}
+
+function setSettingsActionText(button, label, value) {
+  if (!button) return;
+  button.textContent = "";
+  const labelEl = document.createElement("span");
+  labelEl.textContent = label;
+  const valueEl = document.createElement("strong");
+  valueEl.textContent = value;
+  button.appendChild(labelEl);
+  button.appendChild(valueEl);
+}
+
+function settingsActionValue(button) {
+  if (!button) return "";
+  const valueEl = button.querySelector("strong");
+  return (valueEl ? valueEl.textContent : button.textContent) || "";
+}
+
+settingsChip.onclick = () => {
+  const willOpen = !settingsPopover.classList.contains("open");
+  closeTopPopovers("");
+  setSettingsOpen(willOpen);
+  if (!willOpen) closeResetMenu();
+};
+
+resetChip.onclick = () => {
+  setResetMenuOpen(!settingsResetPanel.classList.contains("open"));
+};
+
+document.addEventListener("click", (ev) => {
+  if (!(ev.target instanceof Element)) return;
+  if (ev.target === settingsChip || settingsChip.contains(ev.target)) return;
+  if (settingsPopover.contains(ev.target)) return;
+  closeSettingsPopover();
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closeSettingsPopover();
+});
+
 const IDLE_CREATURE_SPRITES = [
+  {
+    src: "/assets/raccoon-sleep.png",
+    creatureId: "c-raccoon",
+    canvasId: "c-raccoon-sprite",
+    className: "raccoon-animated",
+    cols: 16,
+    rows: 1,
+    totalFrames: 16,
+    fps: 5,
+  },
+  {
+    src: "/assets/troll-idle.png",
+    creatureId: "c-troll",
+    canvasId: "c-troll-sprite",
+    className: "troll-animated",
+    cols: 24,
+    rows: 1,
+    totalFrames: 24,
+    fps: 6,
+    dedupeFrames: false,
+  },
   {
     src: "/assets/gremlin-idle.png",
     creatureId: "c-gremlin",
@@ -4468,12 +4985,14 @@ async function bootIdleCreatureSprite(config) {
     const baseFrameOrder = Array.isArray(config.frameOrder) && config.frameOrder.length
       ? config.frameOrder
       : buildLinearFrameOrder(config.totalFrames);
-    const frameOrder = dedupeAdjacentPigeonFrames(
-      baseFrameOrder,
-      image,
-      config.cols,
-      config.rows
-    );
+    const frameOrder = config.dedupeFrames === false
+      ? baseFrameOrder
+      : dedupeAdjacentPigeonFrames(
+          baseFrameOrder,
+          image,
+          config.cols,
+          config.rows
+        );
     const state = {
       config,
       canvas,
@@ -4995,11 +5514,14 @@ window.addEventListener("resize", () => {
 /* Static tooltip copy */
 [
   ["auth-chip", "Sign in with Firebase for cloud collaboration mode."],
+  ["settings-chip", "Open account, country, mail, API, and reset controls."],
   ["country-chip", "Open Goblin-Country settings and collaboration panels."],
   ["mail-chip", "Open friends, requests, and direct-message threads."],
   ["provider-chip", "Configure local provider, model slots, and API key storage."],
+  ["reset-chip", "Open reset controls."],
   ["btn-rite", "Start a new rite run immediately."],
   ["btn-plan", "Create a planned multi-step rite."],
+  ["btn-asteroid", "Open the destructive full reset flow."],
   ["ops-toggle", "Collapse or expand the command sidebar."],
   ["ops-line", "Type a Goblintown CLI command here."],
   ["ops-run", "Run the command currently entered in the sidebar."],
@@ -5016,6 +5538,8 @@ window.addEventListener("resize", () => {
   ["auth-google-btn", "Sign in with Google via Firebase Authentication."],
   ["auth-github-btn", "Sign in with GitHub via Firebase Authentication."],
   ["auth-signout-btn", "Sign out from Firebase and disable cloud write operations."],
+  ["cloud-local-mode", "Keep this Goblintown local and turn off cloud features."],
+  ["cloud-enable-mode", "Use the shared Goblintown Cloud backend for sign-in and collaboration metadata."],
   ["provider-preset", "Select a provider preset (OpenAI, LM Studio, Ollama, etc.)."],
   ["provider-baseurl", "Base API URL for the active provider preset."],
   ["provider-keyenv", "Environment variable name used for this provider key."],
@@ -5036,6 +5560,8 @@ window.addEventListener("resize", () => {
   ["result-link", "Open the full rite detail page."],
   ["result-dismiss", "Hide the result panel."],
   ["onboard-back", "Go to the previous onboarding step."],
+  ["onboard-local-mode", "Start in local-only mode."],
+  ["onboard-cloud-mode", "Start with Goblintown Cloud available."],
   ["onboard-skip", "Dismiss onboarding and continue directly to the app."],
   ["onboard-next", "Advance to the next onboarding step."],
 ].forEach((entry) => setTip(entry[0], entry[1]));
@@ -5325,7 +5851,7 @@ function applyProviderPayload(payload) {
   renderProviderModels(models);
   renderProviderRoutes(config.routes || {}, models);
   const missing = runtime.missingApiKey;
-  providerChip.textContent = (runtime.label || "API") + " ▾";
+  setSettingsActionText(providerChip, "API", (runtime.label || "API") + " ▾");
   providerChip.dataset.missing = missing ? "true" : "false";
   providerApiKey.value = "";
   if (missing) {
@@ -5370,11 +5896,8 @@ providerPreset.onchange = () => {
   renderProviderRoutes(collectProviderRoutes(), preset.models || {});
 };
 providerChip.onclick = () => {
-  const authPanel = document.getElementById("auth-popover");
-  if (authPanel) authPanel.classList.remove("open");
-  if (countryPopover) countryPopover.classList.remove("open");
-  const mailPanel = document.getElementById("mail-popover");
-  if (mailPanel) mailPanel.classList.remove("open");
+  closeSettingsPopover();
+  closeTopPopovers("provider-popover");
   providerPopover.classList.toggle("open");
 };
 $("provider-cancel").onclick = () => providerPopover.classList.remove("open");
@@ -5392,7 +5915,7 @@ $("provider-save").onclick = async () => {
     if (!r.ok) throw new Error(await r.text());
     applyProviderPayload(await r.json());
     providerPopover.classList.remove("open");
-    setTicker("provider saved: " + providerChip.textContent.replace(" ▾", ""));
+    setTicker("provider saved: " + settingsActionValue(providerChip).replace(" ▾", ""));
   } catch (err) {
     providerStatus.textContent = "Save failed: " + (err.message || err);
   }
@@ -5419,13 +5942,17 @@ const authChip = $("auth-chip");
 const authPopover = $("auth-popover");
 const authStatus = $("auth-status");
 const authNote = $("auth-note");
+const cloudModeStatus = $("cloud-mode-status");
+const cloudLocalModeBtn = $("cloud-local-mode");
+const cloudEnableModeBtn = $("cloud-enable-mode");
 const authGoogleBtn = $("auth-google-btn");
 const authGithubBtn = $("auth-github-btn");
 const authSignoutBtn = $("auth-signout-btn");
 const FIREBASE_JS_VERSION = "10.12.5";
+const cloudModeStorageKey = "goblintown.cloudMode.v1";
 const COUNTRY_DISCOVERY_MEMBER_LIMIT = 3;
 const COUNTRY_DISCOVERY_SAMPLE_LIMIT = 10;
-const MEMBERSHIP_STATE_VALUES = new Set(["solo", "pending", "member", "owner"]);
+const MEMBERSHIP_STATE_VALUES = new Set(["solo", "pending", "member", "owner", "deleted"]);
 let firebaseState = {
   enabled: false,
   initialized: false,
@@ -5442,9 +5969,78 @@ let countryMenuReload = null;
 let mailMenuReload = null;
 let redirectResultChecked = false;
 
+function readCloudModeChoice() {
+  try {
+    const value = localStorage.getItem(cloudModeStorageKey);
+    return value === "cloud" || value === "local" ? value : "";
+  } catch {
+    return "";
+  }
+}
+
+function isCloudModeEnabled() {
+  return readCloudModeChoice() === "cloud";
+}
+
+function updateCloudBackendControls() {
+  const backendSelect = $("country-backend");
+  if (!backendSelect) return;
+  backendSelect.disabled = !isCloudModeEnabled();
+  if (!isCloudModeEnabled() && backendSelect.value === "firebase") backendSelect.value = "local";
+}
+
+async function persistLocalCloudBackend() {
+  try {
+    await fetch("/api/country", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ collabBackend: "local" }),
+    });
+  } catch {}
+}
+
+async function disableCloudModeRuntime() {
+  try {
+    if (firebaseState.auth && firebaseState.sdk && firebaseState.user) {
+      await firebaseState.sdk.auth.signOut(firebaseState.auth);
+    }
+  } catch (err) {
+    authStatus.textContent = "Cloud sign-out failed: " + (err.message || err);
+  }
+  firebaseState.user = null;
+  firebaseState.userProfile = null;
+  firebaseState.chatKeys = null;
+  updateCloudBackendControls();
+  void persistLocalCloudBackend();
+  if (countryMenuReload) void countryMenuReload();
+  if (mailMenuReload) void mailMenuReload(true);
+  updateAuthUi();
+}
+
+function bootFirebaseIfCloudMode() {
+  if (!isCloudModeEnabled()) return;
+  const boot = ensureFirebaseReady();
+  void boot.catch((err) => {
+    authStatus.textContent = "Firebase init failed: " + (err && err.message ? err.message : String(err));
+  });
+}
+
+function setCloudModeChoice(mode) {
+  const next = mode === "cloud" ? "cloud" : "local";
+  try { localStorage.setItem(cloudModeStorageKey, next); } catch {}
+  updateCloudBackendControls();
+  if (next === "cloud") {
+    authStatus.textContent = "Cloud mode enabled. Sign in when you are ready.";
+    updateAuthUi();
+    bootFirebaseIfCloudMode();
+    return;
+  }
+  void disableCloudModeRuntime();
+}
+
 function isFirebaseBackendSelected() {
   const select = $("country-backend");
-  return !!select && select.value === "firebase";
+  return isCloudModeEnabled() && !!select && select.value === "firebase";
 }
 function randomAlphaNum(length) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -5500,19 +6096,40 @@ function base64ToBytes(text) {
 }
 function updateAuthUi() {
   const signedIn = !!firebaseState.user;
+  const cloudOn = isCloudModeEnabled();
   const enabled = !!firebaseState.enabled;
-  authGoogleBtn.disabled = !enabled;
-  authGithubBtn.disabled = !enabled;
-  authSignoutBtn.disabled = !enabled || !signedIn;
+  cloudModeStatus.textContent = cloudOn
+    ? "Goblintown Cloud is on. SSO, friend codes, discovery, mail, and country metadata use the shared cloud backend."
+    : "Local Only is on. Your town memory stays on this machine, and cloud sign-in/discovery/mail stay off.";
+  cloudLocalModeBtn.disabled = !cloudOn;
+  cloudEnableModeBtn.disabled = cloudOn;
+  cloudLocalModeBtn.classList.toggle("primary", !cloudOn);
+  cloudEnableModeBtn.classList.toggle("primary", cloudOn);
+  authGoogleBtn.disabled = !cloudOn || !enabled;
+  authGithubBtn.disabled = !cloudOn || !enabled;
+  authSignoutBtn.disabled = !cloudOn || !enabled || !signedIn;
+  updateCloudBackendControls();
+  if (!cloudOn) {
+    setSettingsActionText(authChip, "Account", "Local Only ▾");
+    authStatus.textContent = "Cloud mode is off.";
+    authNote.textContent = "Turn on Goblintown Cloud here when you want SSO, friend codes, discovery, and mail.";
+    return;
+  }
+  if (!firebaseState.bootPromise && !firebaseState.initialized && !enabled) {
+    setSettingsActionText(authChip, "Account", "Cloud On ▾");
+    authStatus.textContent = "Cloud mode is on. Firebase will initialize when you sign in.";
+    authNote.textContent = "Use Google or GitHub to sync collaboration metadata through Goblintown Cloud.";
+    return;
+  }
   if (!enabled) {
-    authChip.textContent = "Sign In ▾";
+    setSettingsActionText(authChip, "Account", "Cloud On ▾");
     authStatus.textContent = "Firebase is not configured on this server.";
     authNote.textContent =
-      "Set FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID, and FIREBASE_APP_ID, then reload.";
+      "Goblintown ships a default cloud config; env vars can override it for forks.";
     return;
   }
   if (!signedIn) {
-    authChip.textContent = "Sign In ▾";
+    setSettingsActionText(authChip, "Account", "Sign In ▾");
     authStatus.textContent = "Signed out.";
     authNote.textContent = "Sign in to use Firebase collaboration and cloud friend/code flows.";
     return;
@@ -5524,7 +6141,7 @@ function updateAuthUi() {
     : "";
   const state = normalizeMembershipState(firebaseState.userProfile && firebaseState.userProfile.membershipState);
   const stateText = state ? " · " + state : "";
-  authChip.textContent = display + " ▾";
+  setSettingsActionText(authChip, "Account", display + " ▾");
   authStatus.textContent = "Signed in as " + display + code + stateText;
   authNote.textContent = "Cloud mode stores usernames, membership/discovery metadata, and encrypted DM payloads.";
 }
@@ -5699,6 +6316,17 @@ async function ensureFirebaseProfile(forceRefresh) {
     });
   } else {
     profile = snap.data();
+    if (normalizeMembershipState(profile.membershipState) === "deleted") {
+      firebaseState.userProfile = {
+        ...profile,
+        membershipState: "deleted",
+        pendingCountryId: String(profile.pendingCountryId || ""),
+        pendingCountryName: String(profile.pendingCountryName || ""),
+        pendingCountryCode: String(profile.pendingCountryCode || ""),
+      };
+      updateAuthUi();
+      return firebaseState.userProfile;
+    }
     const patch = {};
     if (!profile.username) patch.username = usernameFallback;
     if (!profile.friendCode) patch.friendCode = randomAlphaNum(6);
@@ -5834,10 +6462,8 @@ async function decryptDmBody(message, senderPublicJwk) {
 }
 
 authChip.onclick = () => {
-  providerPopover.classList.remove("open");
-  if (countryPopover) countryPopover.classList.remove("open");
-  const mailPanel = document.getElementById("mail-popover");
-  if (mailPanel) mailPanel.classList.remove("open");
+  closeSettingsPopover();
+  closeTopPopovers("auth-popover");
   authPopover.classList.toggle("open");
 };
 function authErrorHint(code) {
@@ -5878,6 +6504,7 @@ function isPopupHostileRuntime() {
     ua.includes("codex");
 }
 async function signInWithProvider(kind) {
+  if (!isCloudModeEnabled()) setCloudModeChoice("cloud");
   const ready = await ensureFirebaseReady();
   if (!ready || !firebaseState.auth || !firebaseState.sdk) return;
   const provider = kind === "github"
@@ -5912,6 +6539,8 @@ async function signInWithProvider(kind) {
     }
   }
 }
+cloudLocalModeBtn.onclick = () => setCloudModeChoice("local");
+cloudEnableModeBtn.onclick = () => setCloudModeChoice("cloud");
 authGoogleBtn.onclick = () => signInWithProvider("google");
 authGithubBtn.onclick = () => signInWithProvider("github");
 authSignoutBtn.onclick = async () => {
@@ -5923,9 +6552,7 @@ authSignoutBtn.onclick = async () => {
   }
 };
 updateAuthUi();
-void ensureFirebaseReady().catch((err) => {
-  authStatus.textContent = "Firebase init failed: " + (err && err.message ? err.message : String(err));
-});
+bootFirebaseIfCloudMode();
 
 /* Country / team menu */
 try {
@@ -6000,7 +6627,7 @@ function rebuildCountryMembers() {
     count + "/" + countryMaxMembers + " members · " +
     countryMembers.filter((m) => m.online).length + " online · queue " +
     ((countryData?.riteQueue || []).length || 0);
-  countryChip.textContent = "Country " + count + "/" + countryMaxMembers + " ▾";
+  setSettingsActionText(countryChip, "Country", count + "/" + countryMaxMembers + " members ▾");
 }
 
 function currentRoleOwners() {
@@ -6106,8 +6733,9 @@ function applyCountryPayload(payload) {
   countryCodeEl.textContent = payload.countryCode || "-";
   countryEnabled.checked = payload.modeEnabled === true;
   if (countryBackendSelect && payload.collabBackend) {
-    countryBackendSelect.value = payload.collabBackend;
+    countryBackendSelect.value = isCloudModeEnabled() ? payload.collabBackend : "local";
   }
+  if (countryBackendSelect) countryBackendSelect.disabled = !isCloudModeEnabled();
   countryRoles = payload.roles || [];
   countryMaxMembers = payload.maxMembers || 6;
   countryAutoLead.checked = payload.config?.autoAssignLeadExtras !== false;
@@ -6121,6 +6749,18 @@ function applyCountryPayload(payload) {
 
 countryEnabled.onchange = () => {
   countryStatus.textContent = "Country mode " + (countryEnabled.checked ? "enabled" : "disabled") + ". Save to persist.";
+};
+countryBackendSelect.disabled = !isCloudModeEnabled();
+countryBackendSelect.onchange = () => {
+  if (countryBackendSelect.value === "firebase" && !isCloudModeEnabled()) {
+    countryBackendSelect.value = "local";
+    countryStatus.textContent = "Turn on Goblintown Cloud in Account before using Firebase mode.";
+    return;
+  }
+  countryStatus.textContent =
+    countryBackendSelect.value === "firebase"
+      ? "Firebase backend selected. Sign in and save to publish cloud metadata."
+      : "Local backend selected. Save to persist.";
 };
 
 function setCountryTab(tab) {
@@ -6391,11 +7031,8 @@ async function loadCountryDiscover(code) {
 }
 
 countryChip.onclick = () => {
-  const authPanel = document.getElementById("auth-popover");
-  if (authPanel) authPanel.classList.remove("open");
-  providerPopover.classList.remove("open");
-  const mailPanel = document.getElementById("mail-popover");
-  if (mailPanel) mailPanel.classList.remove("open");
+  closeSettingsPopover();
+  closeTopPopovers("country-popover");
   const willOpen = !countryPopover.classList.contains("open");
   countryPopover.classList.toggle("open");
   if (willOpen) {
@@ -7323,7 +7960,7 @@ async function markThreadRead(threadId, silent) {
 function applyMailState(payload) {
   socialState = payload || { friends: [], pendingRequests: [], threads: [] };
   const unread = (socialState.threads || []).reduce((n, t) => n + (t.unread || 0), 0);
-  mailChip.textContent = "Mail" + (unread > 0 ? (" •" + unread) : "") + " ▾";
+  setSettingsActionText(mailChip, "Mail", unread > 0 ? ("Unread " + unread + " ▾") : "No unread ▾");
   if (unread > 0) mailChip.setAttribute("data-unread", "true");
   else mailChip.removeAttribute("data-unread");
   mailSummary.textContent =
@@ -7412,10 +8049,8 @@ $("dm-send-btn").onclick = async () => {
 };
 
 mailChip.onclick = () => {
-  const authPanel = document.getElementById("auth-popover");
-  if (authPanel) authPanel.classList.remove("open");
-  providerPopover.classList.remove("open");
-  countryPopover.classList.remove("open");
+  closeSettingsPopover();
+  closeTopPopovers("mail-popover");
   const willOpen = !mailPopover.classList.contains("open");
   mailPopover.classList.toggle("open");
   if (willOpen) {
@@ -7443,8 +8078,16 @@ const onboardProgress = $("onboard-progress");
 const onboardBack = $("onboard-back");
 const onboardSkip = $("onboard-skip");
 const onboardNext = $("onboard-next");
+const onboardCloudActions = $("onboard-cloud-actions");
+const onboardLocalMode = $("onboard-local-mode");
+const onboardCloudMode = $("onboard-cloud-mode");
 const onboardingStorageKey = "goblintown.onboarding.v2";
 const onboardingSteps = [
+  {
+    title: "Choose Your Town",
+    body: "Stay Local keeps this Goblintown on your machine. Goblintown Cloud adds SSO, friend codes, discovery, mail, and shared country metadata through the official cloud backend.",
+    cloudChoice: true,
+  },
   {
     title: "Command Sidebar",
     body: "This sidebar runs Goblintown CLI commands directly in-app, including examples and quick rite controls.",
@@ -7458,19 +8101,19 @@ const onboardingSteps = [
   {
     title: "Goblin-Country",
     body: "Country mode handles team membership, join discovery, and per-role assignment across collaborators.",
-    targetId: "country-chip",
+    targetId: "settings-chip",
     popover: "country",
   },
   {
     title: "Friends and Mail",
     body: "Friend requests and DM threads are here. Opening a thread auto-marks unread messages as read.",
-    targetId: "mail-chip",
+    targetId: "settings-chip",
     popover: "mail",
   },
   {
     title: "Provider Settings",
     body: "Choose your local provider, set model slots, and store an API key in the local secret file.",
-    targetId: "provider-chip",
+    targetId: "settings-chip",
     popover: "provider",
   },
   {
@@ -7484,6 +8127,7 @@ let onboardingFocusEl = null;
 function setTopPopover(name) {
   const countryPanel = countryPopover || document.getElementById("country-popover");
   const mailPanel = document.getElementById("mail-popover");
+  closeSettingsPopover();
   providerPopover.classList.remove("open");
   if (countryPanel) countryPanel.classList.remove("open");
   if (mailPanel) mailPanel.classList.remove("open");
@@ -7498,6 +8142,7 @@ function clearOnboardingFocus() {
 function renderOnboardingStep() {
   const step = onboardingSteps[onboardingIndex];
   if (!step) return;
+  const isCloudChoice = step.cloudChoice === true;
   setTopPopover(step.popover || "");
   clearOnboardingFocus();
   const focusEl = step.targetId ? $(step.targetId) : null;
@@ -7508,8 +8153,12 @@ function renderOnboardingStep() {
   }
   onboardTitle.textContent = step.title;
   onboardBody.textContent = step.body;
-  onboardProgress.textContent = "Step " + (onboardingIndex + 1) + " of " + onboardingSteps.length;
-  onboardBack.disabled = onboardingIndex === 0;
+  onboardProgress.textContent = isCloudChoice
+    ? "First run choice"
+    : "Step " + onboardingIndex + " of " + (onboardingSteps.length - 1);
+  onboardCloudActions.classList.toggle("open", isCloudChoice);
+  onboardBack.parentElement.style.display = isCloudChoice ? "none" : "flex";
+  onboardBack.disabled = onboardingIndex <= 1 && readCloudModeChoice() !== "";
   onboardNext.textContent = onboardingIndex === onboardingSteps.length - 1 ? "Finish" : "Next";
 }
 function closeOnboarding(markDone) {
@@ -7526,12 +8175,13 @@ function maybeStartOnboarding() {
   const params = new URLSearchParams(window.location.search);
   const forced = params.get("onboarding") === "1";
   if (done && !forced) return;
-  onboardingIndex = 0;
+  onboardingIndex = readCloudModeChoice() ? 1 : 0;
   onboardOverlay.classList.add("open");
   renderOnboardingStep();
 }
 onboardBack.onclick = () => {
   if (onboardingIndex <= 0) return;
+  if (onboardingIndex <= 1 && readCloudModeChoice() !== "") return;
   onboardingIndex -= 1;
   renderOnboardingStep();
 };
@@ -7544,6 +8194,16 @@ onboardNext.onclick = () => {
   renderOnboardingStep();
 };
 onboardSkip.onclick = () => closeOnboarding(true);
+onboardLocalMode.onclick = () => {
+  setCloudModeChoice("local");
+  onboardingIndex = 1;
+  renderOnboardingStep();
+};
+onboardCloudMode.onclick = () => {
+  setCloudModeChoice("cloud");
+  onboardingIndex = 1;
+  renderOnboardingStep();
+};
 setTimeout(maybeStartOnboarding, 120);
 } catch (err) {
   console.error("onboarding-ui-init-failed", err);
@@ -7874,6 +8534,9 @@ function hideResumePanel() {
   resumePanel.classList.remove("open");
 }
 
+$("resume-dismiss").onclick = openAsteroidMode;
+$("btn-asteroid").onclick = openAsteroidMode;
+
 async function refreshResumePanel(runId, fallbackIsPlan) {
   try {
     const r = await fetch("/api/runs/" + runId + "?full=1");
@@ -7888,10 +8551,428 @@ async function refreshResumePanel(runId, fallbackIsPlan) {
   } catch {}
 }
 
-$("resume-dismiss").onclick = () => {
-  if (resumeRecord && resumeRecord.runId) clearRememberedRun(resumeRecord.runId);
-  hideResumePanel();
-};
+const asteroidOverlay = $("asteroid-overlay");
+const asteroidConfirm = $("asteroid-confirm");
+const asteroidArm = $("asteroid-arm");
+const asteroidCancel = $("asteroid-cancel");
+const asteroidNukeCloud = $("asteroid-nuke-cloud");
+const asteroidLocalOnly = $("asteroid-local-only");
+const asteroidCloudCancel = $("asteroid-cloud-cancel");
+const asteroidStatus = $("asteroid-status");
+const asteroidCloudStatus = $("asteroid-cloud-status");
+const asteroidCanvas = $("asteroid-canvas");
+
+function setAsteroidBusy(busy) {
+  [asteroidArm, asteroidCancel, asteroidNukeCloud, asteroidLocalOnly, asteroidCloudCancel]
+    .filter(Boolean)
+    .forEach((btn) => { btn.disabled = !!busy; });
+  if (!busy && asteroidArm) asteroidArm.disabled = (asteroidConfirm.value || "").trim() !== "ASTEROID";
+}
+
+function openAsteroidMode() {
+  closeSettingsPopover();
+  providerPopover.classList.remove("open");
+  if (countryPopover) countryPopover.classList.remove("open");
+  const mailPanel = document.getElementById("mail-popover");
+  if (mailPanel) mailPanel.classList.remove("open");
+  $("rite-overlay").classList.remove("open");
+  $("onboard-overlay").classList.remove("open");
+  asteroidOverlay.classList.remove("cloud-choice", "destroying");
+  asteroidOverlay.classList.add("open");
+  asteroidOverlay.setAttribute("aria-hidden", "false");
+  asteroidConfirm.value = "";
+  asteroidStatus.textContent = "";
+  asteroidCloudStatus.textContent = "";
+  setAsteroidBusy(false);
+  setTimeout(() => asteroidConfirm.focus(), 30);
+}
+
+function closeAsteroidMode() {
+  asteroidOverlay.classList.remove("open", "cloud-choice", "destroying");
+  asteroidOverlay.setAttribute("aria-hidden", "true");
+  tank.classList.remove("asteroid-destroying");
+  asteroidStatus.textContent = "";
+  asteroidCloudStatus.textContent = "";
+}
+
+function showAsteroidCloudChoice() {
+  if ((asteroidConfirm.value || "").trim() !== "ASTEROID") {
+    asteroidStatus.textContent = "Type ASTEROID exactly to continue.";
+    return;
+  }
+  asteroidStatus.textContent = "";
+  asteroidCloudStatus.textContent = "";
+  asteroidOverlay.classList.add("cloud-choice");
+}
+
+function clearGoblintownBrowserMemory() {
+  const keys = [];
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key && key.indexOf("goblintown.") === 0) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {}
+}
+
+function waitMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function playAsteroidObliteration() {
+  return new Promise((resolve) => {
+    const Matter = window.Matter;
+    const rect = tank.getBoundingClientRect();
+    tank.classList.add("asteroid-destroying");
+    asteroidOverlay.classList.add("destroying");
+    if (!Matter || !asteroidCanvas || rect.width < 10 || rect.height < 10) {
+      setTimeout(() => {
+        tank.classList.remove("asteroid-destroying");
+        asteroidOverlay.classList.remove("destroying");
+        resolve();
+      }, 1100);
+      return;
+    }
+
+    const engine = Matter.Engine.create();
+    engine.gravity.y = 1.1;
+    const render = Matter.Render.create({
+      canvas: asteroidCanvas,
+      engine,
+      options: {
+        width: rect.width,
+        height: rect.height,
+        wireframes: false,
+        background: "transparent",
+        pixelRatio: window.devicePixelRatio || 1,
+      },
+    });
+    const runner = Matter.Runner.create();
+    const floor = Matter.Bodies.rectangle(rect.width / 2, rect.height + 18, rect.width + 80, 36, {
+      isStatic: true,
+      render: { fillStyle: "rgba(98,56,28,0.1)" },
+    });
+    const bodies = [floor];
+    const selectors = [
+      ".skyline",
+      ".mountains",
+      ".banner",
+      ".trees",
+      ".workshop",
+      ".troll-bridge",
+      ".raccoon-dump",
+      ".hoard",
+      ".creature",
+      ".goblin-pile .creature",
+    ];
+    tank.querySelectorAll(selectors.join(",")).forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) return;
+      const x = r.left - rect.left + r.width / 2;
+      const y = r.top - rect.top + r.height / 2;
+      const body = Matter.Bodies.rectangle(x, y, Math.max(10, r.width), Math.max(10, r.height), {
+        frictionAir: 0.025,
+        restitution: 0.35,
+        render: { fillStyle: "rgba(143,207,82,0.32)", strokeStyle: "rgba(243,160,122,0.65)", lineWidth: 1 },
+      });
+      Matter.Body.setVelocity(body, { x: rand(-1.6, 1.6), y: rand(-0.5, 0.5) });
+      Matter.Body.setAngularVelocity(body, rand(-0.08, 0.08));
+      bodies.push(body);
+    });
+    for (let i = 0; i < 9; i += 1) {
+      const radius = rand(12, 32);
+      const rock = Matter.Bodies.circle(rand(rect.width * 0.1, rect.width * 0.9), -60 - i * 34, radius, {
+        density: 0.02,
+        frictionAir: 0.004,
+        restitution: 0.18,
+        render: { fillStyle: i === 0 ? "#f3a07a" : "#8b4a32", strokeStyle: "#f3df7a", lineWidth: 1 },
+      });
+      Matter.Body.setVelocity(rock, { x: rand(-4, 4), y: rand(7, 13) });
+      bodies.push(rock);
+    }
+    for (let i = 0; i < 26; i += 1) {
+      const shard = Matter.Bodies.polygon(rand(0, rect.width), rand(-180, -20), irand(3, 5), rand(4, 10), {
+        frictionAir: 0.02,
+        restitution: 0.45,
+        render: { fillStyle: "rgba(243,223,122,0.75)" },
+      });
+      Matter.Body.setVelocity(shard, { x: rand(-5, 5), y: rand(3, 10) });
+      bodies.push(shard);
+    }
+    Matter.Composite.add(engine.world, bodies);
+    Matter.Render.run(render);
+    Matter.Runner.run(runner, engine);
+    setTimeout(() => {
+      Matter.Render.stop(render);
+      Matter.Runner.stop(runner);
+      Matter.World.clear(engine.world, false);
+      Matter.Engine.clear(engine);
+      const ctx = asteroidCanvas.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, asteroidCanvas.width, asteroidCanvas.height);
+      tank.classList.remove("asteroid-destroying");
+      asteroidOverlay.classList.remove("destroying");
+      resolve();
+    }, 1800);
+  });
+}
+
+async function writeFirestoreBatches(store, db, rows, apply) {
+  let batch = store.writeBatch(db);
+  let count = 0;
+  for (const row of rows) {
+    apply(batch, row);
+    count += 1;
+    if (count >= 400) {
+      await batch.commit();
+      batch = store.writeBatch(db);
+      count = 0;
+    }
+  }
+  if (count > 0) await batch.commit();
+}
+
+async function docsForQuery(store, queryRef) {
+  const snap = await store.getDocs(queryRef);
+  return snap.docs;
+}
+
+async function nukeCloudAccountData() {
+  const ready = await ensureFirebaseReady();
+  if (!ready) throw new Error("Firebase is not configured.");
+  if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
+    throw new Error("Sign in before nuking cloud data, or choose Just Destroy the Town.");
+  }
+  const store = firebaseState.sdk.store;
+  const db = firebaseState.db;
+  const uid = firebaseState.user.uid;
+  const deletedName = "Deleted account";
+  const profile = await ensureFirebaseProfile(true) || {};
+  const userRef = store.doc(db, "users", uid);
+
+  const friendDocs = await docsForQuery(
+    store,
+    store.query(store.collection(db, "users", uid, "friends"), store.limit(500)),
+  );
+  const friendIds = friendDocs.map((d) => d.id).filter(Boolean);
+  await writeFirestoreBatches(store, db, [
+    ...friendDocs.map((d) => d.ref),
+    ...friendIds.map((friendId) => store.doc(db, "users", friendId, "friends", uid)),
+  ], (batch, ref) => batch.delete(ref));
+
+  const friendRequestDocs = [
+    ...(await docsForQuery(
+      store,
+      store.query(store.collection(db, "friendRequests"), store.where("fromUid", "==", uid), store.limit(500)),
+    )),
+    ...(await docsForQuery(
+      store,
+      store.query(store.collection(db, "friendRequests"), store.where("toUid", "==", uid), store.limit(500)),
+    )),
+  ];
+  const uniqueFriendRequests = [...new Map(friendRequestDocs.map((d) => [d.id, d])).values()];
+  await writeFirestoreBatches(store, db, uniqueFriendRequests, (batch, docSnap) => {
+    const row = docSnap.data();
+    const patch = {
+      status: "deleted",
+      resolvedAt: store.serverTimestamp(),
+      resolvedBy: uid,
+      deletedAt: store.serverTimestamp(),
+      updatedAt: store.serverTimestamp(),
+    };
+    if (row.fromUid === uid) {
+      patch.fromName = deletedName;
+      patch.fromCode = "";
+      patch.fromChatPublicJwk = null;
+    }
+    if (row.toUid === uid) patch.toName = deletedName;
+    batch.set(docSnap.ref, patch, { merge: true });
+  });
+
+  const joinRequestDocs = [
+    ...(await docsForQuery(
+      store,
+      store.query(store.collection(db, "countryJoinRequests"), store.where("fromUid", "==", uid), store.limit(500)),
+    )),
+    ...(await docsForQuery(
+      store,
+      store.query(store.collection(db, "countryJoinRequests"), store.where("toOwnerUid", "==", uid), store.limit(500)),
+    )),
+  ];
+  const uniqueJoinRequests = [...new Map(joinRequestDocs.map((d) => [d.id, d])).values()];
+  await writeFirestoreBatches(store, db, uniqueJoinRequests, (batch, docSnap) => {
+    const row = docSnap.data();
+    const patch = {
+      status: "deleted",
+      resolvedAt: store.serverTimestamp(),
+      resolvedBy: uid,
+      deletedAt: store.serverTimestamp(),
+      updatedAt: store.serverTimestamp(),
+    };
+    if (row.fromUid === uid) {
+      patch.fromName = deletedName;
+      patch.fromCode = "";
+    }
+    if (row.toOwnerUid === uid) patch.ownerDeletedAt = store.serverTimestamp();
+    batch.set(docSnap.ref, patch, { merge: true });
+  });
+
+  const countryId = String(profile.countryId || "");
+  if (countryId) {
+    const countryRef = store.doc(db, "countries", countryId);
+    const countrySnap = await store.getDoc(countryRef);
+    if (countrySnap.exists()) {
+      const country = countrySnap.data();
+      const memberDocs = await docsForQuery(
+        store,
+        store.query(store.collection(db, "countries", countryId, "members"), store.limit(500)),
+      );
+      const ownMember = memberDocs.find((d) => d.id === uid);
+      if (country.ownerUid === uid) {
+        if (memberDocs.length <= 1) {
+          await writeFirestoreBatches(store, db, [...memberDocs.map((d) => d.ref), countryRef], (batch, ref) => {
+            batch.delete(ref);
+          });
+        } else {
+          await writeFirestoreBatches(store, db, [
+            ownMember ? { kind: "delete", ref: ownMember.ref } : null,
+            { kind: "update", ref: countryRef },
+          ].filter(Boolean), (batch, op) => {
+            if (op.kind === "delete") {
+              batch.delete(op.ref);
+              return;
+            }
+            const patch = {
+              ownerName: deletedName,
+              ownerDeletedAt: store.serverTimestamp(),
+              discoverable: false,
+              updatedAt: store.serverTimestamp(),
+            };
+            if (ownMember) patch.memberCount = store.increment(-1);
+            batch.set(op.ref, patch, { merge: true });
+          });
+        }
+      } else if (ownMember) {
+        await writeFirestoreBatches(store, db, [
+          { kind: "delete", ref: ownMember.ref },
+          { kind: "update", ref: countryRef },
+        ], (batch, op) => {
+          if (op.kind === "delete") batch.delete(op.ref);
+          else batch.set(op.ref, { memberCount: store.increment(-1), updatedAt: store.serverTimestamp() }, { merge: true });
+        });
+      }
+    }
+  }
+
+  const threadDocs = await docsForQuery(
+    store,
+    store.query(store.collection(db, "threads"), store.where("participants", "array-contains", uid), store.limit(300)),
+  );
+  for (const threadDoc of threadDocs) {
+    const threadPatch = {};
+    threadPatch["friendNames." + uid] = deletedName;
+    threadPatch["unreadBy." + uid] = 0;
+    threadPatch.updatedAt = store.serverTimestamp();
+    await store.setDoc(threadDoc.ref, threadPatch, { merge: true });
+    const fromDocs = await docsForQuery(
+      store,
+      store.query(
+        store.collection(db, "threads", threadDoc.id, "messages"),
+        store.where("fromUid", "==", uid),
+        store.limit(500),
+      ),
+    );
+    const toDocs = await docsForQuery(
+      store,
+      store.query(
+        store.collection(db, "threads", threadDoc.id, "messages"),
+        store.where("toUid", "==", uid),
+        store.limit(500),
+      ),
+    );
+    const messageDocs = [...new Map([...fromDocs, ...toDocs].map((d) => [d.id, d])).values()];
+    await writeFirestoreBatches(store, db, messageDocs, (batch, docSnap) => {
+      const row = docSnap.data();
+      const patch = {};
+      if (row.fromUid === uid) patch.fromName = deletedName;
+      if (row.toUid === uid) {
+        patch.toName = deletedName;
+        patch.readAt = row.readAt || store.serverTimestamp();
+      }
+      if (Object.keys(patch).length > 0) batch.set(docSnap.ref, patch, { merge: true });
+    });
+  }
+
+  await store.setDoc(userRef, {
+    uid,
+    username: deletedName,
+    friendCode: "",
+    countryId: "",
+    countryName: "",
+    countryCode: "",
+    pendingCountryId: "",
+    pendingCountryName: "",
+    pendingCountryCode: "",
+    membershipState: "deleted",
+    countryModeEnabled: false,
+    chatPublicJwk: null,
+    deletedAt: store.serverTimestamp(),
+    updatedAt: store.serverTimestamp(),
+  }, { merge: true });
+  const key = "goblintown.chat-ecdh.v1." + uid;
+  try { localStorage.removeItem(key); } catch {}
+  firebaseState.userProfile = null;
+  firebaseState.chatKeys = null;
+  if (firebaseState.auth && firebaseState.sdk) {
+    await firebaseState.sdk.auth.signOut(firebaseState.auth);
+  }
+}
+
+async function performAsteroidMode(nukeCloud) {
+  const statusEl = nukeCloud ? asteroidCloudStatus : asteroidStatus;
+  setAsteroidBusy(true);
+  try {
+    statusEl.textContent = nukeCloud ? "Nuking cloud data..." : "Destroying town...";
+    if (nukeCloud) {
+      await nukeCloudAccountData();
+      statusEl.textContent = "Cloud data tombstoned. Asteroid inbound...";
+    }
+    await playAsteroidObliteration();
+    const r = await fetch("/api/asteroid", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: "ASTEROID" }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    if (resumeRecord && resumeRecord.runId) clearRememberedRun(resumeRecord.runId);
+    clearGoblintownBrowserMemory();
+    await waitMs(120);
+    window.location.replace("/?onboarding=1");
+  } catch (err) {
+    tank.classList.remove("asteroid-destroying");
+    asteroidOverlay.classList.remove("destroying");
+    statusEl.textContent = "Asteroid Mode failed: " + (err.message || err);
+    setAsteroidBusy(false);
+  }
+}
+
+asteroidConfirm.addEventListener("input", () => {
+  asteroidArm.disabled = (asteroidConfirm.value || "").trim() !== "ASTEROID";
+});
+asteroidConfirm.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    showAsteroidCloudChoice();
+  }
+});
+asteroidArm.onclick = showAsteroidCloudChoice;
+asteroidCancel.onclick = closeAsteroidMode;
+asteroidCloudCancel.onclick = closeAsteroidMode;
+asteroidLocalOnly.onclick = () => performAsteroidMode(false);
+asteroidNukeCloud.onclick = () => performAsteroidMode(true);
+asteroidOverlay.addEventListener("click", (ev) => {
+  if (ev.target === asteroidOverlay && !asteroidOverlay.classList.contains("destroying")) closeAsteroidMode();
+});
 
 $("resume-start").onclick = async () => {
   const runId = resumePanel.dataset.runId;

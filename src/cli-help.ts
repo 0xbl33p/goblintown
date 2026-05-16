@@ -115,15 +115,28 @@ Usage:
   goblintown country run --task "..." [--peer <peer>]... [--all] [--pack <N>] [--format freeform|markdown|json]
       Dispatch a Rite to peer warrens and wait for completion.
 
+  goblintown cloud
+      Show the bundled Goblintown Cloud project, first-run Local Only vs Goblintown Cloud choice,
+      Settings -> Account controls, and optional Firebase env overrides.
+
   goblintown serve [--port <N>]
-      Start the Hoard web UI. Default port=7777.
-      Optional pigeon sprite sheets are loaded from site/assets (walk + peck).
+      Start the Tank UI. Default port=7777.
+      First run asks Local Only vs Goblintown Cloud; later change it in Settings -> Account.
+      Settings also contains Country, Mail, API Provider, and Reset -> Asteroid Mode.
+      Optional sprite sheets and logo are loaded from site/assets.
 
 Environment:
   OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare / ancestry)
   OPENAI_BASE_URL             optional; e.g. https://openrouter.ai/api/v1
   Provider-specific keys      OPENROUTER_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, MISTRAL_API_KEY,
                               DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY
+  FIREBASE_API_KEY            optional override for forks; normal users use bundled Goblintown Cloud config
+  FIREBASE_AUTH_DOMAIN        optional override
+  FIREBASE_PROJECT_ID         optional override
+  FIREBASE_APP_ID             optional override
+  FIREBASE_STORAGE_BUCKET     optional override
+  FIREBASE_MESSAGING_SENDER_ID optional override
+  FIREBASE_MEASUREMENT_ID     optional override
   GOBLINTOWN_MODEL_GOBLIN     default: gpt-5.4-mini
   GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
   GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini

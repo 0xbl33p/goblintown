@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile, access } from "node:fs/promises";
+import { mkdir, readFile, writeFile, access, rm } from "node:fs/promises";
 import { constants as FS } from "node:fs";
 import { join } from "node:path";
 import {
@@ -49,6 +49,11 @@ export async function initWarren(root: string): Promise<Warren> {
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
 
   return { root, manifestPath, manifest, hoard };
+}
+
+export async function resetWarren(root: string): Promise<Warren> {
+  await rm(join(root, WARREN_DIRNAME), { recursive: true, force: true });
+  return initWarren(root);
 }
 
 export async function loadWarren(cwd: string): Promise<Warren> {
