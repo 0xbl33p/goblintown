@@ -288,7 +288,7 @@
       <tr><td class="kind">Goblin</td><td>Worker. Cheap, high-temperature, dispatched in packs. Each pack member gets a different personality; an optional debate round lets them revise after seeing each other's proposals.</td></tr>
       <tr><td class="kind">Gremlin</td><td>Adversarial. Per-goblin chaos pass — finds edge cases, off-by-ones, prompt-injection vectors.</td></tr>
       <tr><td class="kind">Raccoon</td><td>Scavenger. Returns only the facts a task actually needs. Also loads relevant prior Artifacts when memory is enabled.</td></tr>
-      <tr><td class="kind">Troll</td><td>Reviewer. Default-rejects. JSON verdict. May invoke verifier tools (json.parse, regex.match, http.head) before scoring.</td></tr>
+      <tr><td class="kind">Troll</td><td>Reviewer. Default-rejects. JSON verdict. May invoke verifier tools (json.parse, regex.match, http.head, and enabled add-on tools) before scoring.</td></tr>
       <tr><td class="kind">Ogre</td><td>Heavyweight. Last resort — only summoned if the pack and the Specialists both fail.</td></tr>
       <tr><td class="kind">Pigeon</td><td>Carrier and Scribe. Routes artifacts between Warrens (federation) and distills every completed rite into a typed Artifact (memory).</td></tr>
       <tr><td class="kind">Specialist</td><td>Goblin variant. Spawned when the pack fails Troll review — each one targets a single dominant failure mode identified by clustering the gremlin's critiques.</td></tr>
@@ -454,11 +454,11 @@
 
 <section id="install">
   <h2><span class="hash">#</span> install</h2>
-<pre><span class="comment"># global install</span>
-npm install -g goblintown
+<pre><span class="comment"># current beta package</span>
+npm install -g goblintown@beta
 
-<span class="comment"># or, in a project</span>
-npm install goblintown
+<span class="comment"># or run without a global install</span>
+npx goblintown@beta --help
 export OPENAI_API_KEY=sk-...            <span class="comment"># or choose a provider in the Tank UI</span>
 goblintown init</pre>
 </section>
@@ -497,7 +497,14 @@ goblintown audit &lt;riteId&gt;                <span class="comment"># now inclu
 goblintown graph &lt;riteId|lootId&gt;
 goblintown export-trace &lt;runId&gt; --out trace.json   <span class="comment"># academic LLM-MAS schema</span>
 goblintown serve --port 7777             <span class="comment"># tank UI + first-run Local Only / Goblintown Cloud choice</span>
-goblintown cloud                         <span class="comment"># bundled cloud setup + Firebase override notes</span></pre>
+goblintown cloud                         <span class="comment"># bundled cloud setup + Firebase override notes</span>
+goblintown addon enable solana           <span class="comment"># read-only onchain verifier tools</span>
+goblintown addon solana &lt;address&gt;        <span class="comment"># direct read-only Solana address profile</span>
+goblintown addon solana tx &lt;signature&gt;   <span class="comment"># parsed read-only transaction lookup</span>
+goblintown thesis "Jito" --solana &lt;address&gt; --remember
+                                          <span class="comment"># quality thesis, not buyability</span>
+goblintown sentiment sources              <span class="comment"># no-key + optional-key sentiment sources</span>
+goblintown sentiment project "Jito"       <span class="comment"># project/team/protocol sentiment context</span></pre>
 </section>
 
 <section id="features">
@@ -507,14 +514,17 @@ goblintown cloud                         <span class="comment"># bundled cloud s
     <div class="card"><h3>Per-goblin personalities</h3><p>Each goblin in a pack draws a different personality from {nerdy, cynical, chipper, stoic, feral} — a real debate team, not three copies of the same worker.</p></div>
     <div class="card"><h3>Inter-agent debate</h3><p>Optional round where each goblin sees its peers' outputs and may revise. Closes the O3 communication gap from the LLM-MAS-RL survey. Training-free.</p></div>
     <div class="card"><h3>Adversarial review</h3><p>Every output gets attacked by a gremlin before review. Edge cases, off-by-ones, prompt injection.</p></div>
-    <div class="card"><h3>Verifier-as-reward tools</h3><p>Optional troll tool-use round: json.parse, regex.match, http.head (network opt-in). Real ground-truth signals beyond LLM-as-judge.</p></div>
+    <div class="card"><h3>Verifier-as-reward tools</h3><p>Optional troll tool-use round: json.parse, regex.match, http.head, and enabled add-on tools. Real ground-truth signals beyond LLM-as-judge.</p></div>
     <div class="card"><h3>Specialist recovery</h3><p>When the pack all-fails, cluster failure modes (1 LLM call) and spawn focused Specialist Goblins that surgically fix one mode each. Wins on pass OR improvement over seed; only escalates to Ogre if specialists also fail.</p></div>
     <div class="card"><h3>Ogre fallback</h3><p>Heavyweight last-resort. Synthesizes from the best parts of the failed pack. Only summoned when nothing else holds.</p></div>
     <div class="card"><h3>Typed Artifact memory</h3><p>Pigeon-Scribe distills every rite into a typed JSON Artifact (claims, evidence, open questions, next steps). Future rites cite or auto-load relevant artifacts. Embedding-based retrieval with keyword fallback.</p></div>
     <div class="card"><h3>Context-folding</h3><p>As the Hoard accumulates, <code>goblintown fold</code> merges related older artifacts into higher-level summaries. Recursive abstraction.</p></div>
     <div class="card"><h3>Token streaming</h3><p>Ogre, every goblin, and every specialist stream tokens. Live "thinking" bubbles in the tank UI show what each creature is producing as it produces it.</p></div>
-    <div class="card"><h3>Tank UI</h3><p>A tamagotchi-style live diorama at <code>/</code>: each creature has a home, the village grows by tier, the DAG side panel lights up node-by-node, and <code>?run=&lt;id&gt;</code> attaches to any existing run. First launch includes the first-run Local Only / Goblintown Cloud choice.</p></div>
-    <div class="card"><h3>Settings menu</h3><p>Country, Mail, API Provider, Account cloud mode, and Reset are gathered into one menu. Reset buries Asteroid Mode behind an extra step before local or cloud data can be destroyed.</p></div>
+    <div class="card"><h3>Tank UI</h3><p>A tamagotchi-style live diorama at <code>/</code>: default creature sprites, a centered wordmark, village tiers, DAG progress, resumable <code>?run=&lt;id&gt;</code> views, Settings Onchain/Sentiment lookup, and the first-run Local Only / Goblintown Cloud choice.</p></div>
+    <div class="card"><h3>Settings menu</h3><p>Country, Mail, Add-ons, Onchain, Sentiment, API Provider, Account cloud mode, and Reset are gathered into one menu. Reset buries Asteroid Mode behind an extra step before local or cloud data can be destroyed.</p></div>
+    <div class="card"><h3>Solana add-on</h3><p>Enable read-only onchain investigator tools for address profiles, activity, parsed transactions, token mint/account data, SOL balances, account metadata, SPL token accounts, recent signatures, and RPC health. The Tank Onchain panel and <code>goblintown addon solana &lt;address&gt;</code> can turn a lookup into a Goblintown analysis rite. No keys, signing, swaps, or transaction submission.</p></div>
+    <div class="card"><h3>Thesis engine</h3><p>Build project-quality memos about a team, product, protocol, repository, or decision. It weighs quality and advantages, evidence gaps, risks, and invalidation triggers, can scan repo files, and labels missing evidence Unknown / Unverified. It is not buyability or a buy/sell recommendation.</p></div>
+    <div class="card"><h3>Sentiment sources</h3><p>Free/no-key Alternative.me and GDELT baselines ship by default. Optional CoinGecko, Dune, Neynar, Santiment, CryptoPanic, and LunarCrush keys can be saved locally in <code>.goblintown/secrets.json</code> or supplied with env vars like <code>COINGECKO_API_KEY</code> and <code>NEYNAR_API_KEY</code>.</p></div>
     <div class="card"><h3>Goblintown Cloud</h3><p>Run local-only by default, or sign in with the bundled Firebase project for SSO, friend codes, discovery, mail, and country metadata. Forks can override Firebase env vars without making every user bring their own keys.</p></div>
     <div class="card"><h3>Provider menu</h3><p>Choose OpenAI, OpenRouter, Ollama, LM Studio, Groq, Together, Mistral, DeepSeek, Anthropic, Gemini, or a custom OpenAI-compatible endpoint from Settings. Keys stay local.</p></div>
     <div class="card"><h3>Forced output formats</h3><p>Answer-producing calls can be constrained to Markdown or a single JSON object. JSON output is locally validated and repaired once if malformed.</p></div>
@@ -525,7 +535,7 @@ goblintown cloud                         <span class="comment"># bundled cloud s
     <div class="card"><h3>Federation</h3><p>Pigeons deliver compressed artifacts between Warrens, over filesystem or HTTP. Signed bodies, optional HMAC.</p></div>
     <div class="card"><h3>Pluggable rewards</h3><p>Drop a .goblintown/reward.mjs to override the default scoring.</p></div>
     <div class="card"><h3>Reroll, export, compare, ancestry</h3><p>Re-run a rite with same params; export to markdown; diff two rites; print artifact lineage.</p></div>
-    <div class="card"><h3>231 tests</h3><p>Pure-function coverage on every protocol invariant: drift, reward, hoard hashing, federation HMAC, audit, graph, planner DAG validation, debate prompt construction, tool dispatch, embeddings ranking math, provider routing, cloud mode, Settings reset flows, sprite assets, output formatting, fold clustering, trace-export schema mapping. No OpenAI calls during testing.</p></div>
+    <div class="card"><h3>270 tests</h3><p>Pure-function coverage on every protocol invariant: drift, reward, hoard hashing, federation HMAC, audit, graph, planner DAG validation, debate prompt construction, tool dispatch, add-on registry, Solana read-only RPC shaping, address profiles, activity, transactions, token summaries, thesis prompt/evidence construction, Tank thesis wiring, sentiment sources and local key handling, embeddings ranking math, provider routing, cloud mode, Settings reset flows, sprite assets, output formatting, fold clustering, trace-export schema mapping. No OpenAI calls during testing.</p></div>
   </div>
 </section>
 

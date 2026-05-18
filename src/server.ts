@@ -6,6 +6,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type Request, type Response } from "express";
 import {
+  addonStatusPayload,
+  buildToolRegistry,
+  isAddonEnabled,
+  normalizeAddonId,
+  setAddonEnabled,
+} from "./addons.js";
+import {
   MAX_PEERS,
   MAX_TEAM_MEMBERS,
   makeCountryName,
@@ -57,7 +64,28 @@ import { executePlan, type PlanExecutionEvent } from "./plan-executor.js";
 import { planTask } from "./planner.js";
 import { findRelevantArtifacts } from "./artifact.js";
 import { exportRunAsMasTrace } from "./trace-export.js";
+import {
+  normalizeSolanaAddress,
+  normalizeSolanaSignature,
+  profileSolanaAddress,
+  summarizeSolanaTransaction,
+} from "./solana.js";
+import {
+  clearSentimentSecretForRoot,
+  normalizeSentimentSecretSource,
+  setSentimentSecretForRoot,
+} from "./sentiment-secrets.js";
+import {
+  sentimentSourcesPayload,
+  summarizeMarketSentiment,
+  summarizeProjectSentiment,
+} from "./sentiment.js";
 import { normalizeOutputFormat } from "./formatting.js";
+import {
+  buildThesisTask,
+  collectThesisEvidence,
+  normalizeThesisInput,
+} from "./thesis.js";
 import {
   MODEL_SLOTS,
   PROVIDER_PRESETS,
@@ -317,6 +345,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
   app.post("/api/rite", async (req, res) =>
     startRiteRun(warren, runs, runDir, req, res),
   );
+  app.post("/api/thesis", async (req, res) =>
+    startThesisRun(warren, runs, runDir, req, res),
+  );
   app.post("/api/plan", async (req, res) =>
     startPlanRun(warren, runs, runDir, req, res),
   );
@@ -449,6 +480,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
   app.get("/api/provider", (_req, res) => {
     res.json(providerPayload(warren));
   });
+  app.get("/api/addons", (_req, res) => {
+    res.json(addonStatusPayload(warren.manifest));
+  });
   app.get("/api/firebase/config", (_req, res) => {
     res.json(firebaseClientConfigPayload());
   });
@@ -470,6 +504,97 @@ export async function serve(opts: ServeOptions): Promise<void> {
     }
     await saveWarrenManifest(warren);
     res.json(providerPayload(warren));
+  });
+  app.post("/api/addons", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const id = normalizeAddonId(body.id);
+    if (!id) {
+      res.status(400).json({ error: "known add-on id required" });
+      return;
+    }
+    setAddonEnabled(warren.manifest, id, body.enabled === true);
+    await saveWarrenManifest(warren);
+    res.json(addonStatusPayload(warren.manifest));
+  });
+  app.get("/api/sentiment/sources", (_req, res) => {
+    res.json(sentimentSourcesPayload(warren.root));
+  });
+  app.get("/api/sentiment/market", async (_req, res) => {
+    try {
+      res.json(await summarizeMarketSentiment({ root: warren.root }));
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/sentiment/project", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const query = typeof body.query === "string" ? body.query.trim() : "";
+    if (!query) {
+      res.status(400).json({ error: "query is required" });
+      return;
+    }
+    try {
+      res.json(await summarizeProjectSentiment(query, { root: warren.root }));
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/sentiment/secret", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const source = normalizeSentimentSecretSource(body.source);
+    if (!source) {
+      res.status(400).json({ error: "known keyed sentiment source required" });
+      return;
+    }
+    try {
+      if (body.clear === true) {
+        await clearSentimentSecretForRoot(warren.root, source);
+      } else {
+        const secret = typeof body.secret === "string" ? body.secret.trim() : "";
+        if (!secret) {
+          res.status(400).json({ error: "secret is required" });
+          return;
+        }
+        await setSentimentSecretForRoot(warren.root, source, secret);
+      }
+      res.json(sentimentSourcesPayload(warren.root));
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/onchain/solana/lookup", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const address = normalizeSolanaAddress(body.address);
+    if (!address) {
+      res.status(400).json({ error: "valid Solana address required" });
+      return;
+    }
+    if (!isAddonEnabled(warren.manifest, "solana")) {
+      res.status(409).json({ error: "Solana add-on is disabled." });
+      return;
+    }
+    try {
+      res.json(await profileSolanaAddress(address));
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/onchain/solana/transaction", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const signature = normalizeSolanaSignature(body.signature);
+    if (!signature) {
+      res.status(400).json({ error: "valid Solana transaction signature required" });
+      return;
+    }
+    if (!isAddonEnabled(warren.manifest, "solana")) {
+      res.status(409).json({ error: "Solana add-on is disabled." });
+      return;
+    }
+    try {
+      res.json(await summarizeSolanaTransaction(signature));
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
   app.get("/api/friends", async (_req, res) => {
     const own = await ensureCountryIdentity(warren.root);
@@ -1312,6 +1437,7 @@ async function startRiteRun(
     specialistCap,
     debate,
     trollTools,
+    tools: trollTools ? buildToolRegistry(warren.manifest) : undefined,
     budgetTokens,
     maxOutputTokensPerCall: maxOutputTokens,
     outputFormat,
@@ -1338,6 +1464,46 @@ async function startRiteRun(
 
   res.json({ runId });
   return runId;
+}
+
+async function startThesisRun(
+  warren: Warren,
+  runs: Map<string, RunState>,
+  runDir: string,
+  req: Request,
+  res: Response,
+): Promise<string | undefined> {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  let input: ReturnType<typeof normalizeThesisInput>;
+  try {
+    input = normalizeThesisInput({
+      subject: body.subject,
+      horizon: body.horizon,
+      context: body.context,
+      solanaAddress: body.solanaAddress ?? body.solana,
+      solanaSignature: body.solanaSignature ?? body.signature,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    return undefined;
+  }
+  const evidence = await collectThesisEvidence(input);
+  const task = buildThesisTask(input, evidence);
+  const scanGlobs = Array.isArray(body.scanGlobs)
+    ? (body.scanGlobs.filter((g) => typeof g === "string") as string[])
+    : [];
+  return startRiteRun(warren, runs, runDir, req, res, {
+    bodyOverride: {
+      task,
+      packSize: typeof body.packSize === "number" ? body.packSize : 3,
+      scanGlobs,
+      personality: typeof body.personality === "string" ? body.personality : "stoic",
+      debate: true,
+      trollTools: true,
+      remember: body.remember !== false,
+      outputFormat: "markdown",
+    },
+  });
 }
 
 async function startPlanRun(
@@ -2736,6 +2902,9 @@ function tankHtml(
   .settings-popover .auth-chip,
   .settings-popover .country-chip,
   .settings-popover .mail-chip,
+  .settings-popover .addon-chip,
+  .settings-popover .onchain-chip,
+  .settings-popover .sentiment-chip,
   .settings-popover .provider-chip,
   .settings-popover .reset-chip,
   .settings-popover .settings-danger-action {
@@ -2756,6 +2925,9 @@ function tankHtml(
   .settings-popover .auth-chip:hover,
   .settings-popover .country-chip:hover,
   .settings-popover .mail-chip:hover,
+  .settings-popover .addon-chip:hover,
+  .settings-popover .onchain-chip:hover,
+  .settings-popover .sentiment-chip:hover,
   .settings-popover .provider-chip:hover,
   .settings-popover .reset-chip:hover,
   .settings-popover .reset-chip[aria-expanded="true"],
@@ -2766,6 +2938,9 @@ function tankHtml(
   .settings-popover .auth-chip span,
   .settings-popover .country-chip span,
   .settings-popover .mail-chip span,
+  .settings-popover .addon-chip span,
+  .settings-popover .onchain-chip span,
+  .settings-popover .sentiment-chip span,
   .settings-popover .provider-chip span,
   .settings-popover .reset-chip span,
   .settings-popover .settings-danger-action span {
@@ -2777,6 +2952,9 @@ function tankHtml(
   .settings-popover .auth-chip strong,
   .settings-popover .country-chip strong,
   .settings-popover .mail-chip strong,
+  .settings-popover .addon-chip strong,
+  .settings-popover .onchain-chip strong,
+  .settings-popover .sentiment-chip strong,
   .settings-popover .provider-chip strong,
   .settings-popover .reset-chip strong,
   .settings-popover .settings-danger-action strong {
@@ -2835,6 +3013,132 @@ function tankHtml(
   }
   .provider-chip[data-missing="true"] { border-color: var(--fail); color: var(--fail); }
   .provider-chip:hover { border-color: var(--accent); color: var(--accent-hot); }
+  .addon-popover,
+  .onchain-popover,
+  .sentiment-popover {
+    position: absolute;
+    right: 1rem;
+    top: 2.55rem;
+    width: min(520px, calc(100% - 2rem));
+    z-index: 31;
+    background: rgb(10,14,8);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    box-shadow: 0 16px 50px rgba(0,0,0,0.75);
+    padding: 0.75rem;
+    display: none;
+  }
+  .addon-popover.open { display: block; }
+  .onchain-popover.open { display: grid; gap: 0.55rem; }
+  .sentiment-popover.open { display: grid; gap: 0.55rem; }
+  .addon-popover h3,
+  .onchain-popover h3,
+  .sentiment-popover h3 {
+    margin: 0 0 0.55rem;
+    color: var(--fg-bright);
+    font-size: 0.88rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .onchain-popover h3 { margin-bottom: 0.1rem; }
+  .sentiment-popover h3 { margin-bottom: 0.1rem; }
+  .onchain-popover label,
+  .sentiment-popover label {
+    display: block;
+    color: var(--muted);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .onchain-popover input,
+  .sentiment-popover input,
+  .sentiment-popover select {
+    width: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.42rem 0.5rem;
+    font: inherit;
+    font-size: 0.76rem;
+  }
+  .onchain-popover input:focus,
+  .sentiment-popover input:focus,
+  .sentiment-popover select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .onchain-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+  .onchain-output {
+    min-height: 7.5rem;
+    max-height: 17rem;
+    overflow: auto;
+    margin: 0;
+    padding: 0.6rem;
+    background: rgba(3, 6, 3, 0.76);
+    border: 1px solid rgba(143,207,82,0.22);
+    border-radius: 6px;
+    color: var(--fg);
+    font-size: 0.68rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+  }
+  .onchain-status {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.72rem;
+    line-height: 1.35;
+  }
+  .addon-list {
+    display: grid;
+    gap: 0.5rem;
+  }
+  .addon-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.7rem;
+    align-items: center;
+    padding: 0.62rem;
+    border: 1px solid rgba(143,207,82,0.22);
+    border-radius: 6px;
+    background: rgba(3, 6, 3, 0.68);
+  }
+  .addon-row strong {
+    display: block;
+    color: var(--fg-bright);
+    font-size: 0.76rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .addon-row span {
+    display: block;
+    margin-top: 0.24rem;
+    color: var(--muted);
+    font-size: 0.68rem;
+    line-height: 1.35;
+  }
+  .addon-row label {
+    color: var(--fg);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    display: flex;
+    gap: 0.35rem;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .addon-status {
+    margin: 0.6rem 0 0;
+    padding-top: 0.45rem;
+    border-top: 1px solid rgba(143,207,82,0.2);
+    color: var(--muted);
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
   .provider-popover {
     position: absolute;
     right: 1rem;
@@ -3659,10 +3963,11 @@ function tankHtml(
   .creature.pigeon-animated .sprite-shell { display: block; width: 92px; height: 92px; }
   .creature.idle-sprite-animated .emoji { display: none; }
   .creature.idle-sprite-animated .idle-sprite { display: block; }
-  .creature.raccoon-animated .emoji { display: block; }
-  .creature.raccoon-animated .idle-sprite { display: none; width: 96px; height: 96px; }
+  .creature.raccoon-animated .emoji { display: none; }
+  .creature.raccoon-animated .idle-sprite { display: block; width: 96px; height: 96px; }
   .creature.raccoon-animated[data-state="idle"] .emoji { display: none; }
   .creature.raccoon-animated[data-state="idle"] .idle-sprite { display: block; }
+  .creature.raccoon-animated[data-state="active"] .idle-sprite { display: block; }
   .creature.troll-animated .emoji { display: block; }
   .creature.troll-animated .idle-sprite { display: none; width: 96px; height: 96px; }
   .creature.troll-animated[data-state="idle"] .emoji { display: none; }
@@ -4290,6 +4595,15 @@ function tankHtml(
       <button class="mail-chip" id="mail-chip" type="button" data-settings-label="Mail">
         <span>Mail</span><strong>Mail ▾</strong>
       </button>
+      <button class="addon-chip" id="addon-chip" type="button" data-settings-label="Add-ons">
+        <span>Add-ons</span><strong>Add-ons ▾</strong>
+      </button>
+      <button class="onchain-chip" id="onchain-chip" type="button" data-settings-label="Onchain">
+        <span>Onchain</span><strong>Solana ▾</strong>
+      </button>
+      <button class="sentiment-chip" id="sentiment-chip" type="button" data-settings-label="Sentiment">
+        <span>Sentiment</span><strong>Sentiment ▾</strong>
+      </button>
       <button class="provider-chip" id="provider-chip" type="button" data-settings-label="API">
         <span>API</span><strong>API ▾</strong>
       </button>
@@ -4303,6 +4617,49 @@ function tankHtml(
         </button>
       </div>
     </div>
+  </div>
+
+  <div class="addon-popover" id="addon-popover">
+    <h3>Add-ons</h3>
+    <div class="addon-list" id="addon-list"></div>
+    <p class="addon-status" id="addon-status">Loading add-ons...</p>
+  </div>
+
+  <div class="onchain-popover" id="onchain-popover">
+    <h3>Solana Onchain</h3>
+    <label for="onchain-address">Address</label>
+    <input id="onchain-address" placeholder="wallet, token account, mint, or program address">
+    <div class="onchain-actions">
+      <button class="btn primary" type="button" id="onchain-lookup">Profile</button>
+      <button class="btn" type="button" id="onchain-analyze" disabled>Analyze with Goblintown</button>
+    </div>
+    <label for="onchain-signature">Transaction Signature</label>
+    <input id="onchain-signature" placeholder="transaction signature">
+    <div class="onchain-actions">
+      <button class="btn" type="button" id="onchain-transaction">Inspect Transaction</button>
+    </div>
+    <pre class="onchain-output" id="onchain-output">Paste a Solana address to build a profile: inferred type, balance, account data, tokens, recent activity, notes, and warnings.</pre>
+    <p class="onchain-status" id="onchain-status">Read-only Solana lookup. Goblintown never asks for wallet keys and never signs transactions.</p>
+  </div>
+
+  <div class="sentiment-popover" id="sentiment-popover">
+    <h3>Sentiment</h3>
+    <label for="sentiment-query">Project, Token, Team, or Protocol</label>
+    <input id="sentiment-query" placeholder="Jito, Firedancer, your repo, a team, or any project">
+    <div class="onchain-actions">
+      <button class="btn primary" type="button" id="sentiment-project">Project</button>
+      <button class="btn" type="button" id="sentiment-market">Market</button>
+    </div>
+    <div class="addon-list" id="sentiment-sources"></div>
+    <label for="sentiment-secret-source">Optional Key Source</label>
+    <select id="sentiment-secret-source"></select>
+    <input id="sentiment-secret" type="password" autocomplete="off" placeholder="paste key or token; saved locally">
+    <div class="onchain-actions">
+      <button class="btn" type="button" id="sentiment-save-secret">Save Key</button>
+      <button class="btn" type="button" id="sentiment-clear-secret">Clear Key</button>
+    </div>
+    <pre class="onchain-output" id="sentiment-output">Free baseline sources work with no keys. Optional API keys stay server-side in .goblintown/secrets.json.</pre>
+    <p class="onchain-status" id="sentiment-status">Uses no-key Alternative.me and GDELT first; optional connectors improve coverage when configured.</p>
   </div>
 
   <div class="provider-popover" id="provider-popover">
@@ -4472,6 +4829,7 @@ function tankHtml(
     <div class="ops-main" id="ops-main">
       <div class="ops-quick">
         <button class="btn primary" id="btn-rite" type="button">NEW RITE</button>
+        <button class="btn" id="btn-thesis" type="button">THESIS</button>
         <button class="btn" id="btn-plan" type="button">PLAN</button>
         <a class="btn" href="/runs">RUNS</a>
       </div>
@@ -4486,6 +4844,7 @@ function tankHtml(
           <button type="button" data-line='summon goblin --task "Quick analysis"'>summon</button>
           <button type="button" data-line='scavenge --task "What changed?" --scan "src/**/*.ts"'>scavenge</button>
           <button type="button" data-line='quest "Investigate bug" --pack 3'>quest</button>
+          <button type="button" data-line='thesis "Jito" --solana ADDRESS --remember'>thesis</button>
           <button type="button" data-line='hoard --limit 20'>hoard</button>
           <button type="button" data-line='drift'>drift</button>
           <button type="button" data-line='route'>route</button>
@@ -4703,6 +5062,38 @@ function tankHtml(
       </form>
     </div>
 
+    <div class="rite-overlay" id="thesis-overlay">
+      <form class="rite-form" id="thesis-form">
+        <h2>◆ Thesis engine</h2>
+        <label for="thesis-subject">Project / subject</label>
+        <textarea id="thesis-subject" name="subject" rows="2" placeholder="Project, protocol, team, product, repository, market, or decision" required></textarea>
+        <div class="row">
+          <div>
+            <label for="thesis-horizon">Horizon</label>
+            <input id="thesis-horizon" name="horizon" value="30d" placeholder="30d">
+          </div>
+          <div>
+            <label for="thesis-solana">Solana address</label>
+            <input id="thesis-solana" name="solanaAddress" placeholder="optional address / mint / program">
+          </div>
+        </div>
+        <label for="thesis-signature">Solana transaction signature</label>
+        <input id="thesis-signature" name="solanaSignature" placeholder="optional signature">
+        <label for="thesis-context">Context</label>
+        <textarea id="thesis-context" name="context" rows="2" placeholder="What should the thesis weigh most heavily? Team, tech, traction, moat, ecosystem fit..."></textarea>
+        <label for="thesis-globs">Scan globs (one per line, optional)</label>
+        <textarea id="thesis-globs" name="scanGlobs" rows="2" placeholder="README.md&#10;src/**/*.ts"></textarea>
+        <div class="check">
+          <input type="checkbox" id="thesis-remember" name="remember" checked>
+          <label for="thesis-remember" style="margin: 0; color: var(--fg);">load relevant prior artifacts</label>
+        </div>
+        <div class="actions">
+          <button class="btn primary" type="submit" id="thesis-submit">Generate Thesis</button>
+          <button class="btn" type="button" id="thesis-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+
     <div class="onboard-overlay" id="onboard-overlay">
       <div class="onboard-card">
         <h4 class="onboard-title" id="onboard-title">Welcome to Goblintown</h4>
@@ -4748,6 +5139,31 @@ const settingsChip = $("settings-chip");
 const settingsPopover = $("settings-popover");
 const resetChip = $("reset-chip");
 const settingsResetPanel = $("settings-reset-panel");
+const addonChip = $("addon-chip");
+const addonPopover = $("addon-popover");
+const addonList = $("addon-list");
+const addonStatus = $("addon-status");
+const onchainChip = $("onchain-chip");
+const onchainPopover = $("onchain-popover");
+const onchainAddress = $("onchain-address");
+const onchainLookup = $("onchain-lookup");
+const onchainAnalyze = $("onchain-analyze");
+const onchainSignature = $("onchain-signature");
+const onchainTransaction = $("onchain-transaction");
+const onchainOutput = $("onchain-output");
+const onchainStatus = $("onchain-status");
+const sentimentChip = $("sentiment-chip");
+const sentimentPopover = $("sentiment-popover");
+const sentimentQuery = $("sentiment-query");
+const sentimentProject = $("sentiment-project");
+const sentimentMarket = $("sentiment-market");
+const sentimentSources = $("sentiment-sources");
+const sentimentSecretSource = $("sentiment-secret-source");
+const sentimentSecret = $("sentiment-secret");
+const sentimentSaveSecret = $("sentiment-save-secret");
+const sentimentClearSecret = $("sentiment-clear-secret");
+const sentimentOutput = $("sentiment-output");
+const sentimentStatus = $("sentiment-status");
 
 const rand  = (lo, hi) => lo + Math.random() * (hi - lo);
 const irand = (lo, hi) => Math.floor(rand(lo, hi + 1));
@@ -4774,7 +5190,7 @@ function closeSettingsPopover() {
 }
 
 function closeTopPopovers(exceptId) {
-  ["auth-popover", "country-popover", "mail-popover", "provider-popover"].forEach((id) => {
+  ["auth-popover", "country-popover", "mail-popover", "addon-popover", "onchain-popover", "sentiment-popover", "provider-popover"].forEach((id) => {
     if (id === exceptId) return;
     const panel = $(id);
     if (panel) panel.classList.remove("open");
@@ -4820,17 +5236,24 @@ document.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") closeSettingsPopover();
 });
 
+const RACCOON_SPRITE_CONFIG = {
+  src: "/assets/raccoon-sleep.png",
+  getUpSrc: "/assets/raccoon-get-up.png",
+  scurrySrc: "/assets/raccoon-scurry.png",
+  creatureId: "c-raccoon",
+  canvasId: "c-raccoon-sprite",
+  className: "raccoon-animated",
+  cols: 16,
+  rows: 1,
+  totalFrames: 16,
+  fps: 5,
+  getUpFrames: 23,
+  getUpFps: 12,
+  scurryFrames: 10,
+  scurryFps: 12,
+};
+
 const IDLE_CREATURE_SPRITES = [
-  {
-    src: "/assets/raccoon-sleep.png",
-    creatureId: "c-raccoon",
-    canvasId: "c-raccoon-sprite",
-    className: "raccoon-animated",
-    cols: 16,
-    rows: 1,
-    totalFrames: 16,
-    fps: 5,
-  },
   {
     src: "/assets/troll-idle.png",
     creatureId: "c-troll",
@@ -4928,6 +5351,227 @@ function loadPigeonSheet(src) {
     img.onerror = () => reject(new Error("failed to load sprite sheet: " + src));
     img.src = src;
   });
+}
+
+const raccoonSpriteCanvas = $("c-raccoon-sprite");
+const raccoonSpriteCtx = raccoonSpriteCanvas ? raccoonSpriteCanvas.getContext("2d") : null;
+const raccoonEl = $("c-raccoon");
+const raccoonSpriteState = {
+  enabled: false,
+  requestedState: "idle",
+  mode: "sleep",
+  facing: "right",
+  frameCursor: 0,
+  frameOrder: [],
+  frameAccumulatorMs: 0,
+  fps: RACCOON_SPRITE_CONFIG.fps,
+  lastTickMs: 0,
+  rafId: 0,
+  images: { sleep: null, getUp: null, scurry: null },
+};
+
+function setRaccoonFacing(facing) {
+  raccoonSpriteState.facing = facing === "left" ? "left" : "right";
+}
+
+function setRaccoonMode(mode) {
+  const config = RACCOON_SPRITE_CONFIG;
+  let fps = config.fps;
+  let frameOrder = buildLinearFrameOrder(config.totalFrames);
+
+  if (mode === "wake") {
+    fps = config.getUpFps;
+    frameOrder = buildLinearFrameOrder(config.getUpFrames);
+  } else if (mode === "sleep-down") {
+    fps = config.getUpFps;
+    frameOrder = buildLinearFrameOrder(config.getUpFrames).reverse();
+  } else if (mode === "awake") {
+    fps = 1;
+    frameOrder = [Math.max(0, config.getUpFrames - 1)];
+  } else if (mode === "scurry") {
+    fps = config.scurryFps;
+    frameOrder = buildLinearFrameOrder(config.scurryFrames);
+  }
+
+  raccoonSpriteState.mode = mode;
+  raccoonSpriteState.fps = fps;
+  raccoonSpriteState.frameOrder = frameOrder.length ? frameOrder : [0];
+  raccoonSpriteState.frameCursor = 0;
+  raccoonSpriteState.frameAccumulatorMs = 0;
+  drawRaccoonFrame();
+}
+
+function getRaccoonFrameSpec() {
+  const config = RACCOON_SPRITE_CONFIG;
+  if (raccoonSpriteState.mode === "wake" || raccoonSpriteState.mode === "sleep-down" || raccoonSpriteState.mode === "awake") {
+    return {
+      image: raccoonSpriteState.images.getUp || raccoonSpriteState.images.sleep,
+      cols: raccoonSpriteState.images.getUp ? config.getUpFrames : config.cols,
+      rows: 1,
+      mirror: raccoonSpriteState.images.getUp && raccoonSpriteState.facing === "left",
+    };
+  }
+  if (raccoonSpriteState.mode === "scurry") {
+    return {
+      image: raccoonSpriteState.images.scurry || raccoonSpriteState.images.getUp || raccoonSpriteState.images.sleep,
+      cols: raccoonSpriteState.images.scurry ? config.scurryFrames : (raccoonSpriteState.images.getUp ? config.getUpFrames : config.cols),
+      rows: 1,
+      mirror: raccoonSpriteState.facing === "left",
+    };
+  }
+  return {
+    image: raccoonSpriteState.images.sleep,
+    cols: config.cols,
+    rows: config.rows,
+    mirror: false,
+  };
+}
+
+function drawRaccoonFrame() {
+  if (!raccoonSpriteState.enabled || !raccoonSpriteCtx || !raccoonSpriteCanvas) return;
+  const spec = getRaccoonFrameSpec();
+  if (!spec.image) return;
+  const order = raccoonSpriteState.frameOrder.length ? raccoonSpriteState.frameOrder : [0];
+  const rawFrame = order[raccoonSpriteState.frameCursor % order.length] || 0;
+  const frame = Math.max(0, Math.min(rawFrame, spec.cols * spec.rows - 1));
+  const frameW = Math.floor(spec.image.naturalWidth / spec.cols);
+  const frameH = Math.floor(spec.image.naturalHeight / spec.rows);
+  if (!frameW || !frameH) return;
+
+  const sx = (frame % spec.cols) * frameW;
+  const sy = Math.floor(frame / spec.cols) * frameH;
+  const dw = raccoonSpriteCanvas.width;
+  const dh = raccoonSpriteCanvas.height;
+  const scale = Math.min(dw / frameW, dh / frameH);
+  const drawW = frameW * scale;
+  const drawH = frameH * scale;
+  const dx = (dw - drawW) / 2;
+  const dy = dh - drawH;
+
+  raccoonSpriteCtx.clearRect(0, 0, dw, dh);
+  raccoonSpriteCtx.imageSmoothingEnabled = false;
+  if (spec.mirror) {
+    raccoonSpriteCtx.save();
+    raccoonSpriteCtx.translate(dw, 0);
+    raccoonSpriteCtx.scale(-1, 1);
+    raccoonSpriteCtx.drawImage(spec.image, sx, sy, frameW, frameH, dx, dy, drawW, drawH);
+    raccoonSpriteCtx.restore();
+  } else {
+    raccoonSpriteCtx.drawImage(spec.image, sx, sy, frameW, frameH, dx, dy, drawW, drawH);
+  }
+}
+
+function finishRaccoonOneShot() {
+  if (raccoonSpriteState.mode === "wake") {
+    setRaccoonMode(raccoonSpriteState.requestedState === "idle" ? "sleep-down" : "awake");
+    return true;
+  }
+  if (raccoonSpriteState.mode === "sleep-down") {
+    setRaccoonMode("sleep");
+    return true;
+  }
+  if (raccoonSpriteState.mode === "scurry") {
+    setRaccoonMode(raccoonSpriteState.requestedState === "idle" ? "sleep-down" : "awake");
+    return true;
+  }
+  return false;
+}
+
+function animateRaccoonSprite(ts) {
+  if (!raccoonSpriteState.enabled) return;
+  if (!raccoonSpriteState.lastTickMs) {
+    raccoonSpriteState.lastTickMs = ts;
+    drawRaccoonFrame();
+  } else {
+    const deltaMs = Math.max(0, ts - raccoonSpriteState.lastTickMs);
+    raccoonSpriteState.lastTickMs = ts;
+    const frameMs = 1000 / Math.max(1, raccoonSpriteState.fps || 6);
+    raccoonSpriteState.frameAccumulatorMs += deltaMs;
+    let advanced = 0;
+    while (raccoonSpriteState.frameAccumulatorMs >= frameMs && advanced < 6) {
+      raccoonSpriteState.frameAccumulatorMs -= frameMs;
+      const orderLength = Math.max(1, raccoonSpriteState.frameOrder.length || 1);
+      if (raccoonSpriteState.mode === "sleep") {
+        raccoonSpriteState.frameCursor = (raccoonSpriteState.frameCursor + 1) % orderLength;
+      } else if (raccoonSpriteState.mode === "awake") {
+        raccoonSpriteState.frameCursor = 0;
+      } else if (raccoonSpriteState.frameCursor < orderLength - 1) {
+        raccoonSpriteState.frameCursor += 1;
+      } else {
+        finishRaccoonOneShot();
+        break;
+      }
+      advanced += 1;
+    }
+    drawRaccoonFrame();
+  }
+  raccoonSpriteState.rafId = requestAnimationFrame(animateRaccoonSprite);
+}
+
+function playRaccoonTransition(direction) {
+  if (!raccoonSpriteState.enabled) return false;
+  const wantsDown = direction === "down";
+  if (wantsDown && !raccoonSpriteState.images.getUp) {
+    setRaccoonMode("sleep");
+    return false;
+  }
+  if (!wantsDown && !raccoonSpriteState.images.getUp) {
+    setRaccoonMode("sleep");
+    return false;
+  }
+  setRaccoonMode(wantsDown ? "sleep-down" : "wake");
+  return true;
+}
+
+function playRaccoonScurry(facing) {
+  if (!raccoonSpriteState.enabled || !raccoonSpriteState.images.scurry) return false;
+  setRaccoonFacing(facing);
+  setRaccoonMode("scurry");
+  return true;
+}
+
+function applyRaccoonStateVisual(state) {
+  const wantsIdle = state === "idle";
+  raccoonSpriteState.requestedState = wantsIdle ? "idle" : "active";
+  if (!raccoonSpriteState.enabled) return;
+
+  if (wantsIdle) {
+    if (raccoonSpriteState.mode === "sleep" || raccoonSpriteState.mode === "sleep-down") return;
+    playRaccoonTransition("down");
+    return;
+  }
+
+  if (raccoonSpriteState.mode === "wake" || raccoonSpriteState.mode === "awake" || raccoonSpriteState.mode === "scurry") return;
+  playRaccoonTransition("up");
+}
+
+async function bootRaccoonSprite() {
+  if (!raccoonEl || !raccoonSpriteCanvas || !raccoonSpriteCtx) return;
+  try {
+    const sleep = await loadPigeonSheet(RACCOON_SPRITE_CONFIG.src);
+    let getUp = null;
+    let scurry = null;
+    try {
+      getUp = await loadPigeonSheet(RACCOON_SPRITE_CONFIG.getUpSrc);
+    } catch {}
+    try {
+      scurry = await loadPigeonSheet(RACCOON_SPRITE_CONFIG.scurrySrc);
+    } catch {}
+    raccoonSpriteState.images.sleep = sleep;
+    raccoonSpriteState.images.getUp = getUp;
+    raccoonSpriteState.images.scurry = scurry;
+    raccoonSpriteState.enabled = true;
+    raccoonSpriteState.frameCursor = 0;
+    raccoonSpriteState.frameAccumulatorMs = 0;
+    raccoonSpriteState.lastTickMs = 0;
+    raccoonEl.classList.add(RACCOON_SPRITE_CONFIG.className);
+    setRaccoonMode((raccoonEl.dataset.state || "idle") === "idle" ? "sleep" : "awake");
+    applyRaccoonStateVisual(raccoonEl.dataset.state || "idle");
+    if (raccoonSpriteState.rafId) cancelAnimationFrame(raccoonSpriteState.rafId);
+    raccoonSpriteState.rafId = requestAnimationFrame(animateRaccoonSprite);
+  } catch (err) {
+    console.warn("raccoon-sprite-disabled", err);
+  }
 }
 
 function drawIdleCreatureFrame(state) {
@@ -5405,6 +6049,7 @@ async function bootPigeonSprite() {
   }
 }
 void bootPigeonSprite();
+void bootRaccoonSprite();
 for (const config of IDLE_CREATURE_SPRITES) {
   void bootIdleCreatureSprite(config);
 }
@@ -5514,17 +6159,40 @@ window.addEventListener("resize", () => {
 /* Static tooltip copy */
 [
   ["auth-chip", "Sign in with Firebase for cloud collaboration mode."],
-  ["settings-chip", "Open account, country, mail, API, and reset controls."],
+  ["settings-chip", "Open account, country, mail, add-on, onchain, sentiment, API, and reset controls."],
   ["country-chip", "Open Goblin-Country settings and collaboration panels."],
   ["mail-chip", "Open friends, requests, and direct-message threads."],
+  ["addon-chip", "Enable local Goblintown add-ons and verifier tool packs."],
+  ["onchain-chip", "Look up Solana addresses and send findings into a rite."],
+  ["onchain-address", "Enter a Solana wallet, token account, mint, or program address."],
+  ["onchain-lookup", "Build a read-only Solana profile with balance, account, tokens, activity, notes, and warnings."],
+  ["onchain-analyze", "Pre-fill a rite with this Solana summary and verifier tools enabled."],
+  ["onchain-signature", "Enter a Solana transaction signature to inspect."],
+  ["onchain-transaction", "Fetch parsed transaction status, signers, instructions, fee, and capped logs."],
+  ["sentiment-chip", "Open free and optional-key sentiment sources for project quality research."],
+  ["sentiment-query", "Enter a project, token, team, protocol, repository, or market to check."],
+  ["sentiment-project", "Fetch project sentiment from no-key baseline sources and configured optional sources."],
+  ["sentiment-market", "Fetch broad crypto market sentiment and trending attention."],
+  ["sentiment-secret-source", "Choose which optional connector key to save locally."],
+  ["sentiment-secret", "Paste an optional API key or token; it is stored locally server-side."],
+  ["sentiment-save-secret", "Save the optional sentiment key in the local secret file."],
+  ["sentiment-clear-secret", "Delete the selected locally stored sentiment key."],
   ["provider-chip", "Configure local provider, model slots, and API key storage."],
   ["reset-chip", "Open reset controls."],
   ["btn-rite", "Start a new rite run immediately."],
+  ["btn-thesis", "Build a quality thesis about a project, team, product, or protocol."],
   ["btn-plan", "Create a planned multi-step rite."],
   ["btn-asteroid", "Open the destructive full reset flow."],
   ["ops-toggle", "Collapse or expand the command sidebar."],
   ["ops-line", "Type a Goblintown CLI command here."],
   ["ops-run", "Run the command currently entered in the sidebar."],
+  ["thesis-subject", "Name the project, protocol, team, product, repository, market, or decision to evaluate."],
+  ["thesis-horizon", "Set the evaluation horizon for the thesis memo."],
+  ["thesis-solana", "Optional Solana wallet, token account, mint, or program address for read-only evidence."],
+  ["thesis-signature", "Optional Solana transaction signature for read-only transaction evidence."],
+  ["thesis-context", "Add the angle the thesis should weigh most heavily."],
+  ["thesis-globs", "Optional repository files for the scavenger to read before building the thesis."],
+  ["thesis-remember", "Load relevant prior artifacts before generating the thesis."],
   ["country-enabled", "Enable or disable country-mode collaboration."],
   ["country-backend", "Choose Local peer mode or Firebase cloud mode."],
   ["country-search-code", "Search countries by short country ID code."],
@@ -5655,6 +6323,452 @@ async function refreshStats() {
     if (r.ok) applyStats(await r.json());
   } catch {}
 }
+
+/* Add-ons menu */
+function renderAddonMenu(payload) {
+  const addons = payload.addons || [];
+  addonList.innerHTML = "";
+  let enabledCount = 0;
+  let solanaEnabled = false;
+  for (const addon of addons) {
+    if (addon.enabled) enabledCount++;
+    if (addon.id === "onchain-solana") solanaEnabled = !!addon.enabled;
+    const row = document.createElement("div");
+    row.className = "addon-row";
+
+    const copy = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = addon.label || addon.id;
+    const desc = document.createElement("span");
+    desc.textContent = addon.description || "";
+    copy.appendChild(title);
+    copy.appendChild(desc);
+
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !!addon.enabled;
+    input.onchange = async () => {
+      addonStatus.textContent = "Saving add-on...";
+      try {
+        const r = await fetch("/api/addons", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: addon.id, enabled: input.checked }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const next = await r.json();
+        renderAddonMenu(next);
+        setTicker("add-on " + addon.id + (input.checked ? " enabled" : " disabled"));
+      } catch (err) {
+        input.checked = !input.checked;
+        addonStatus.textContent = "Save failed: " + (err.message || err);
+      }
+    };
+    label.appendChild(input);
+    label.appendChild(document.createTextNode("Enabled"));
+
+    row.appendChild(copy);
+    row.appendChild(label);
+    addonList.appendChild(row);
+  }
+  setSettingsActionText(addonChip, "Add-ons", enabledCount + " on ▾");
+  setSettingsActionText(onchainChip, "Onchain", solanaEnabled ? "Solana on ▾" : "Solana off ▾");
+  addonStatus.textContent = addons.length
+    ? "Add-ons extend verifier tools. Solana is read-only and never signs transactions."
+    : "No add-ons available.";
+}
+async function loadAddonMenu() {
+  try {
+    const r = await fetch("/api/addons");
+    if (!r.ok) throw new Error(await r.text());
+    renderAddonMenu(await r.json());
+  } catch (err) {
+    addonStatus.textContent = "Add-ons unavailable: " + (err.message || err);
+  }
+}
+addonChip.onclick = () => {
+  closeSettingsPopover();
+  closeTopPopovers("addon-popover");
+  addonPopover.classList.toggle("open");
+  if (addonPopover.classList.contains("open")) void loadAddonMenu();
+};
+loadAddonMenu();
+
+/* Solana onchain lookup */
+let lastOnchainSummary = null;
+function shortAddress(value) {
+  const text = String(value || "");
+  return text.length > 14 ? text.slice(0, 6) + "..." + text.slice(-6) : text;
+}
+function renderOnchainSummary(summary) {
+  const lines = [
+    "address: " + summary.address,
+    summary.inferredType ? "type: " + summary.inferredType : "",
+    "rpc: " + summary.rpcUrl,
+    "mode: read-only",
+  ].filter(Boolean);
+  if (summary.balance) {
+    lines.push("balance: " + summary.balance.sol + " SOL (" + summary.balance.lamports + " lamports)");
+  }
+  if (summary.account) {
+    lines.push(
+      "account: " + (summary.account.exists ? "exists" : "missing") +
+        (summary.account.owner ? " owner=" + shortAddress(summary.account.owner) : "") +
+        (summary.account.executable !== undefined ? " executable=" + summary.account.executable : ""),
+    );
+  }
+  if (summary.parsedAccount && summary.parsedAccount.parsedType) {
+    lines.push("parsed: " + summary.parsedAccount.parsedType + (summary.parsedAccount.program ? " via " + summary.parsedAccount.program : ""));
+  }
+  if (summary.tokens) {
+    lines.push("token accounts: " + summary.tokens.count + (summary.tokens.truncated ? " (truncated)" : ""));
+    (summary.tokens.accounts || []).slice(0, 5).forEach((token) => {
+      lines.push("  - " + shortAddress(token.mint || "unknown mint") + " " + (token.uiAmountString || token.amount || ""));
+    });
+  }
+  if (summary.activity) {
+    lines.push("activity: " + summary.activity.signatureCount + " recent signature(s), " + summary.activity.failedCount + " failed");
+    (summary.activity.signatures || []).slice(0, 5).forEach((sig) => {
+      lines.push("  - " + shortAddress(sig.signature) + " slot=" + sig.slot + (sig.confirmationStatus ? " " + sig.confirmationStatus : ""));
+    });
+  } else if (summary.signatures) {
+    lines.push("recent signatures: " + summary.signatures.count);
+    (summary.signatures.signatures || []).slice(0, 5).forEach((sig) => {
+      lines.push("  - " + shortAddress(sig.signature) + " slot=" + sig.slot + (sig.confirmationStatus ? " " + sig.confirmationStatus : ""));
+    });
+  }
+  if ((summary.notes || []).length) {
+    lines.push("notes:");
+    summary.notes.forEach((note) => lines.push("  - " + note));
+  }
+  if ((summary.warnings || []).length) {
+    lines.push("warnings:");
+    summary.warnings.forEach((warning) => lines.push("  - " + warning));
+  }
+  if ((summary.errors || []).length) {
+    lines.push("partial errors:");
+    summary.errors.forEach((err) => lines.push("  - " + err));
+  }
+  onchainOutput.textContent = lines.join("\\n");
+}
+function renderOnchainTransaction(tx) {
+  const lines = [
+    "signature: " + tx.signature,
+    "rpc: " + tx.rpcUrl,
+    "mode: read-only",
+    "found: " + tx.found,
+  ];
+  if (tx.found) {
+    lines.push("status: " + (tx.status || "unknown") + (tx.feeLamports !== undefined ? " fee=" + tx.feeLamports + " lamports" : ""));
+    if (tx.slot !== undefined) lines.push("slot: " + tx.slot + (tx.blockTime ? " blockTime=" + tx.blockTime : ""));
+    if ((tx.signers || []).length) lines.push("signers: " + tx.signers.map(shortAddress).join(", "));
+    if ((tx.instructions || []).length) {
+      lines.push("instructions:");
+      tx.instructions.slice(0, 8).forEach((ix) => {
+        lines.push("  - " + [ix.program, ix.type, ix.programId && shortAddress(ix.programId)].filter(Boolean).join(" / "));
+      });
+    }
+    if ((tx.logMessages || []).length) {
+      lines.push("logs:");
+      tx.logMessages.slice(0, 8).forEach((log) => lines.push("  - " + log.slice(0, 180)));
+    }
+  }
+  onchainOutput.textContent = lines.join("\\n");
+}
+function buildOnchainAnalysisTask(summary) {
+  const parts = [
+    "Analyze this Solana address using read-only onchain evidence.",
+    "Address: " + summary.address,
+    summary.inferredType ? "Inferred type: " + summary.inferredType : "",
+    "RPC: " + summary.rpcUrl,
+  ].filter(Boolean);
+  if (summary.balance) parts.push("Balance: " + summary.balance.sol + " SOL (" + summary.balance.lamports + " lamports)");
+  if (summary.account) {
+    parts.push(
+      "Account: " + (summary.account.exists ? "exists" : "missing") +
+        (summary.account.owner ? ", owner " + summary.account.owner : "") +
+        (summary.account.executable !== undefined ? ", executable " + summary.account.executable : ""),
+    );
+  }
+  if (summary.parsedAccount?.parsedType) parts.push("Parsed account type: " + summary.parsedAccount.parsedType);
+  if (summary.tokens) parts.push("Token accounts: " + summary.tokens.count + (summary.tokens.truncated ? " (truncated)" : ""));
+  if (summary.activity) {
+    parts.push("Activity: " + summary.activity.signatureCount + " recent signatures; failed=" + summary.activity.failedCount);
+    parts.push(
+      "Recent signatures: " +
+        (summary.activity.signatures || []).slice(0, 5).map((sig) => sig.signature + " slot " + sig.slot).join("; "),
+    );
+  } else if (summary.signatures) {
+    parts.push(
+      "Recent signatures: " +
+        (summary.signatures.signatures || []).slice(0, 5).map((sig) => sig.signature + " slot " + sig.slot).join("; "),
+    );
+  }
+  if ((summary.notes || []).length) parts.push("Notes: " + summary.notes.join("; "));
+  if ((summary.warnings || []).length) parts.push("Warnings: " + summary.warnings.join("; "));
+  if ((summary.errors || []).length) parts.push("Lookup errors: " + summary.errors.join("; "));
+  parts.push("Use the Solana verifier tools, especially solana.profile, solana.activity, and solana.transaction when relevant. Give a concise risk/usefulness readout. Do not assume wallet ownership, intent, or identity without evidence.");
+  return parts.join("\\n");
+}
+async function lookupOnchainAddress() {
+  const address = (onchainAddress.value || "").trim();
+  if (!address) {
+    onchainStatus.textContent = "Enter a Solana address first.";
+    onchainAddress.focus();
+    return;
+  }
+  onchainLookup.disabled = true;
+  onchainAnalyze.disabled = true;
+  onchainStatus.textContent = "Looking up Solana address...";
+  onchainOutput.textContent = "loading...";
+  try {
+    const r = await fetch("/api/onchain/solana/lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address }),
+    });
+    const payload = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(payload.error || "lookup failed");
+    lastOnchainSummary = payload;
+    renderOnchainSummary(payload);
+    onchainAnalyze.disabled = false;
+    onchainStatus.textContent = "Lookup ready. Analysis opens a rite with troll tools enabled.";
+    setTicker("solana lookup: " + shortAddress(payload.address), true);
+  } catch (err) {
+    lastOnchainSummary = null;
+    onchainOutput.textContent = "";
+    onchainStatus.textContent = "Lookup failed: " + (err.message || err);
+  } finally {
+    onchainLookup.disabled = false;
+  }
+}
+async function lookupOnchainTransaction() {
+  const signature = (onchainSignature.value || "").trim();
+  if (!signature) {
+    onchainStatus.textContent = "Enter a Solana transaction signature first.";
+    onchainSignature.focus();
+    return;
+  }
+  onchainTransaction.disabled = true;
+  onchainStatus.textContent = "Inspecting Solana transaction...";
+  onchainOutput.textContent = "loading...";
+  try {
+    const r = await fetch("/api/onchain/solana/transaction", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ signature }),
+    });
+    const payload = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(payload.error || "transaction lookup failed");
+    renderOnchainTransaction(payload);
+    onchainStatus.textContent = "Transaction summary ready.";
+    setTicker("solana tx: " + shortAddress(payload.signature), true);
+  } catch (err) {
+    onchainOutput.textContent = "";
+    onchainStatus.textContent = "Transaction lookup failed: " + (err.message || err);
+  } finally {
+    onchainTransaction.disabled = false;
+  }
+}
+onchainChip.onclick = () => {
+  closeSettingsPopover();
+  closeTopPopovers("onchain-popover");
+  onchainPopover.classList.toggle("open");
+  if (onchainPopover.classList.contains("open")) setTimeout(() => onchainAddress.focus(), 30);
+};
+onchainLookup.onclick = lookupOnchainAddress;
+onchainTransaction.onclick = lookupOnchainTransaction;
+onchainAddress.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    lookupOnchainAddress();
+  }
+});
+onchainSignature.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    lookupOnchainTransaction();
+  }
+});
+onchainAnalyze.onclick = () => {
+  if (!lastOnchainSummary) return;
+  onchainPopover.classList.remove("open");
+  closeTopPopovers("");
+  openRiteForm(false);
+  $("rf-task").value = buildOnchainAnalysisTask(lastOnchainSummary);
+  $("rf-troll-tools").checked = true;
+  $("rf-remember").checked = true;
+};
+
+/* Sentiment sources */
+let sentimentSourcePayload = null;
+function renderSentimentSources(payload) {
+  sentimentSourcePayload = payload;
+  const sources = payload.sources || [];
+  sentimentSources.innerHTML = "";
+  sentimentSecretSource.innerHTML = "";
+  let configured = 0;
+  let optionalCount = 0;
+  for (const source of sources) {
+    if (source.configured) configured++;
+    const row = document.createElement("div");
+    row.className = "addon-row";
+    const copy = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = source.label || source.id;
+    const desc = document.createElement("span");
+    desc.textContent = (source.secretEnv ? source.secretEnv + " · " : "no key · ") + (source.description || "");
+    copy.appendChild(title);
+    copy.appendChild(desc);
+    const state = document.createElement("span");
+    state.textContent = source.configured ? "on" : "optional";
+    row.appendChild(copy);
+    row.appendChild(state);
+    sentimentSources.appendChild(row);
+    if (source.secretEnv) {
+      optionalCount++;
+      const option = document.createElement("option");
+      option.value = source.id;
+      option.textContent = source.id + " (" + source.secretEnv + ")";
+      sentimentSecretSource.appendChild(option);
+    }
+  }
+  setSettingsActionText(sentimentChip, "Sentiment", configured + "/" + sources.length + " sources ▾");
+  sentimentStatus.textContent = "Baseline sources are free/no-key. Optional configured sources: " + Math.max(0, configured - 2) + "/" + optionalCount + ".";
+}
+async function loadSentimentSources() {
+  try {
+    const r = await fetch("/api/sentiment/sources");
+    if (!r.ok) throw new Error(await r.text());
+    renderSentimentSources(await r.json());
+  } catch (err) {
+    sentimentStatus.textContent = "Sentiment sources unavailable: " + (err.message || err);
+  }
+}
+function renderSentimentSummary(summary) {
+  const lines = [
+    summary.query ? "query: " + summary.query : "market sentiment",
+    "generated: " + summary.generatedAt,
+  ];
+  if ((summary.signals || []).length) {
+    lines.push("signals:");
+    summary.signals.forEach((signal) => {
+      lines.push("  - " + signal.source + " / " + signal.label);
+      if (signal.classification || signal.value !== undefined) {
+        lines.push("    score: " + [signal.classification, signal.value !== undefined ? signal.value : ""].filter(Boolean).join(" / "));
+      }
+      lines.push("    " + signal.summary);
+      if (signal.url) lines.push("    " + signal.url);
+    });
+  } else {
+    lines.push("signals: none returned");
+  }
+  const failed = (summary.sources || []).filter((source) => !source.ok);
+  if (failed.length) {
+    lines.push("partial source errors:");
+    failed.forEach((source) => lines.push("  - " + source.id + ": " + (source.error || "failed")));
+  }
+  sentimentOutput.textContent = lines.join("\\n");
+}
+async function runMarketSentiment() {
+  sentimentMarket.disabled = true;
+  sentimentProject.disabled = true;
+  sentimentStatus.textContent = "Checking market sentiment...";
+  sentimentOutput.textContent = "loading...";
+  try {
+    const r = await fetch("/api/sentiment/market");
+    const payload = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(payload.error || "market sentiment failed");
+    renderSentimentSummary(payload);
+    sentimentStatus.textContent = "Market sentiment ready.";
+    setTicker("sentiment: market", true);
+  } catch (err) {
+    sentimentOutput.textContent = "";
+    sentimentStatus.textContent = "Market sentiment failed: " + (err.message || err);
+  } finally {
+    sentimentMarket.disabled = false;
+    sentimentProject.disabled = false;
+  }
+}
+async function runProjectSentiment() {
+  const query = (sentimentQuery.value || "").trim();
+  if (!query) {
+    sentimentStatus.textContent = "Enter a project, token, team, protocol, or repo first.";
+    sentimentQuery.focus();
+    return;
+  }
+  sentimentProject.disabled = true;
+  sentimentMarket.disabled = true;
+  sentimentStatus.textContent = "Checking project sentiment...";
+  sentimentOutput.textContent = "loading...";
+  try {
+    const r = await fetch("/api/sentiment/project", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    const payload = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(payload.error || "project sentiment failed");
+    renderSentimentSummary(payload);
+    sentimentStatus.textContent = "Project sentiment ready.";
+    setTicker("sentiment: " + query.slice(0, 36), true);
+  } catch (err) {
+    sentimentOutput.textContent = "";
+    sentimentStatus.textContent = "Project sentiment failed: " + (err.message || err);
+  } finally {
+    sentimentProject.disabled = false;
+    sentimentMarket.disabled = false;
+  }
+}
+async function saveSentimentSecret(clear) {
+  const source = sentimentSecretSource.value;
+  const secret = (sentimentSecret.value || "").trim();
+  if (!source) {
+    sentimentStatus.textContent = "Choose a keyed sentiment source.";
+    return;
+  }
+  if (!clear && !secret) {
+    sentimentStatus.textContent = "Paste a key or token first.";
+    sentimentSecret.focus();
+    return;
+  }
+  sentimentStatus.textContent = clear ? "Clearing key..." : "Saving key locally...";
+  try {
+    const r = await fetch("/api/sentiment/secret", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(clear ? { source, clear: true } : { source, secret }),
+    });
+    const payload = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(payload.error || "secret update failed");
+    sentimentSecret.value = "";
+    renderSentimentSources(payload);
+    sentimentStatus.textContent = clear ? "Local key cleared." : "Local key saved. Env vars still override local secrets.";
+  } catch (err) {
+    sentimentStatus.textContent = "Secret update failed: " + (err.message || err);
+  }
+}
+sentimentChip.onclick = () => {
+  closeSettingsPopover();
+  closeTopPopovers("sentiment-popover");
+  sentimentPopover.classList.toggle("open");
+  if (sentimentPopover.classList.contains("open")) {
+    void loadSentimentSources();
+    setTimeout(() => sentimentQuery.focus(), 30);
+  }
+};
+sentimentMarket.onclick = runMarketSentiment;
+sentimentProject.onclick = runProjectSentiment;
+sentimentSaveSecret.onclick = () => saveSentimentSecret(false);
+sentimentClearSecret.onclick = () => saveSentimentSecret(true);
+sentimentQuery.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    runProjectSentiment();
+  }
+});
+loadSentimentSources();
 
 /* Provider menu */
 let providerPresets = [];
@@ -8251,6 +9365,7 @@ function setState(id, state) {
   if (!el) return;
   el.dataset.state = state;
   if (id === "c-pigeon") applyPigeonStateVisual(state);
+  if (id === "c-raccoon") applyRaccoonStateVisual(state);
 }
 function playVariantAnim(id, variants, ms, varsObj) {
   const el = $(id);
@@ -8268,8 +9383,11 @@ function pounceVariant() {
 }
 function stompVariant() { playVariantAnim("c-ogre", ["stomp-a","stomp-b"], 1500); }
 function scurryVariant() {
+  const dir = Math.random() < 0.5 ? -1 : 1;
+  const sx = dir * irand(180, 260);
+  playRaccoonScurry(dir < 0 ? "left" : "right");
   playVariantAnim("c-raccoon", ["scurry-a","scurry-b"], 1800, {
-    "--sx": irand(180, 260) + "px", "--sy": -irand(40, 80) + "px"
+    "--sx": sx + "px", "--sy": -irand(40, 80) + "px"
   });
 }
 function gavelVariant() { playVariantAnim("c-troll", ["gavel-a","gavel-b"], 1600); }
@@ -8498,6 +9616,12 @@ function resetRunStage(isPlan, packSize) {
   renderGoblinSlots(isPlan ? 3 : Math.max(1, packSize || 3));
 }
 
+function setLaunchButtonsDisabled(disabled) {
+  $("btn-rite").disabled = disabled;
+  $("btn-thesis").disabled = disabled;
+  $("btn-plan").disabled = disabled;
+}
+
 function runModeFromRecord(record) {
   if (record.mode === "plan") return "plan";
   if (record.mode === "rite") return "rite";
@@ -8544,8 +9668,7 @@ async function refreshResumePanel(runId, fallbackIsPlan) {
     const record = await r.json();
     if (canResumeRecord(record)) {
       showResumePanel(record);
-      $("btn-rite").disabled = false;
-      $("btn-plan").disabled = false;
+      setLaunchButtonsDisabled(false);
       $("clock").textContent = (fallbackIsPlan ? "plan" : "rite") + " · " + runStatus(record);
     }
   } catch {}
@@ -8989,8 +10112,7 @@ $("resume-start").onclick = async () => {
     const packSize = resumeRecord && resumeRecord.packSize ? resumeRecord.packSize : 3;
     lastTask = resumeRecord ? resumeRecord.task : lastTask;
     resetRunStage(isPlan, packSize);
-    $("btn-rite").disabled = true;
-    $("btn-plan").disabled = true;
+    setLaunchButtonsDisabled(true);
     $("clock").textContent = isPlan ? "plan running" : "rite running";
     rememberActiveRun(body.runId, isPlan);
     history.replaceState(null, "", "/?run=" + encodeURIComponent(body.runId));
@@ -9088,10 +10210,18 @@ function openRiteForm(asPlan) {
   setTimeout(() => $("rf-task").focus(), 50);
 }
 function closeRiteForm() { $("rite-overlay").classList.remove("open"); }
+function openThesisForm() {
+  $("thesis-overlay").classList.add("open");
+  setTimeout(() => $("thesis-subject").focus(), 50);
+}
+function closeThesisForm() { $("thesis-overlay").classList.remove("open"); }
 $("btn-rite").onclick = () => openRiteForm(false);
+$("btn-thesis").onclick = openThesisForm;
 $("btn-plan").onclick = () => openRiteForm(true);
 $("rf-cancel").onclick = closeRiteForm;
+$("thesis-cancel").onclick = closeThesisForm;
 $("rite-overlay").addEventListener("click", (e) => { if (e.target === $("rite-overlay")) closeRiteForm(); });
+$("thesis-overlay").addEventListener("click", (e) => { if (e.target === $("thesis-overlay")) closeThesisForm(); });
 
 /* Rite/plan submission */
 let activeStream = null;
@@ -9121,8 +10251,7 @@ $("rite-form").addEventListener("submit", async (e) => {
   closeRiteForm();
   hideResumePanel();
   lastTask = payload.task;
-  $("btn-rite").disabled = true;
-  $("btn-plan").disabled = true;
+  setLaunchButtonsDisabled(true);
   $("clock").textContent = isPlan ? "plan running" : "rite running";
   resetRunStage(isPlan, payload.packSize);
   setTicker(isPlan ? "POSTing plan ..." : "POSTing rite ...", true);
@@ -9141,8 +10270,48 @@ $("rite-form").addEventListener("submit", async (e) => {
     openStream(runId, isPlan);
   } catch (err) {
     setTicker("error: " + (err.message || err));
-    $("btn-rite").disabled = false;
-    $("btn-plan").disabled = false;
+    setLaunchButtonsDisabled(false);
+    $("clock").textContent = "idle";
+  }
+});
+
+$("thesis-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const thesisScanGlobs = (fd.get("scanGlobs") || "").toString()
+    .split(/\\r?\\n/).map(s => s.trim()).filter(Boolean);
+  const payload = {
+    subject: fd.get("subject"),
+    horizon: fd.get("horizon"),
+    solanaAddress: fd.get("solanaAddress"),
+    solanaSignature: fd.get("solanaSignature"),
+    context: fd.get("context"),
+    scanGlobs: thesisScanGlobs,
+    remember: !!fd.get("remember"),
+  };
+  closeThesisForm();
+  hideResumePanel();
+  lastTask = "Thesis: " + (payload.subject || "");
+  setLaunchButtonsDisabled(true);
+  $("clock").textContent = "thesis running";
+  resetRunStage(false, 3);
+  setTicker("POSTing thesis ...", true);
+
+  try {
+    const startRes = await fetch("/api/thesis", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!startRes.ok) throw new Error(await startRes.text());
+    const { runId } = await startRes.json();
+    setTicker("thesis " + runId + " started", true);
+    rememberActiveRun(runId, false);
+    history.replaceState(null, "", "/?run=" + encodeURIComponent(runId));
+    openStream(runId, false);
+  } catch (err) {
+    setTicker("thesis error: " + (err.message || err));
+    setLaunchButtonsDisabled(false);
     $("clock").textContent = "idle";
   }
 });
@@ -9231,8 +10400,7 @@ function openStream(runId, isPlan, opts) {
     activeStream = null;
     clearRememberedRun(runId);
     hideResumePanel();
-    $("btn-rite").disabled = false;
-    $("btn-plan").disabled = false;
+    setLaunchButtonsDisabled(false);
     $("clock").textContent = "idle";
     setTimeout(refreshStats, 400);
     setTimeout(() => {
@@ -9266,8 +10434,7 @@ function openStream(runId, isPlan, opts) {
     setTicker("error: " + msg);
     es.close();
     activeStream = null;
-    $("btn-rite").disabled = false;
-    $("btn-plan").disabled = false;
+    setLaunchButtonsDisabled(false);
     $("clock").textContent = "idle";
     setTimeout(() => refreshResumePanel(runId, isPlan), 350);
   });
@@ -9385,11 +10552,24 @@ async function handleStep(step, opts) {
       break;
     case "specialist:cluster:done": {
       const names = (step.clusters || []).map((c) => c.name).join(", ");
+      if (!(step.clusters || []).length) {
+        setTicker("no specialist clusters returned", true);
+        dispatchBubble($("c-troll"), "no repair focus found", "fail");
+        break;
+      }
       setTicker("clusters: " + names, true);
       // Replace the failed pack with specialist 🧐 sprites
       renderSpecialistSlots(step.clusters.length);
       break;
     }
+    case "specialist:cluster:empty":
+      setTicker("specialist recovery skipped: " + step.reason, true);
+      dispatchBubble($("c-troll"), "specialists skipped: " + step.reason, "fail");
+      break;
+    case "specialist:cluster:error":
+      setTicker("specialist recovery failed", true);
+      dispatchBubble($("c-troll"), "specialist error: " + String(step.message || "").slice(0, 90), "fail");
+      break;
     case "specialist:spawn": {
       const slot = specialistByIndex[step.index];
       if (slot) {
@@ -9514,8 +10694,7 @@ async function attachToRunFromUrl() {
     const label = record.done ? status : "watching live";
     $("clock").textContent = isPlan ? "plan · " + label : "rite · " + label;
     setTicker((isPlan ? "plan " : "rite ") + runId + " · " + label, true);
-    $("btn-rite").disabled = !record.done;
-    $("btn-plan").disabled = !record.done;
+    setLaunchButtonsDisabled(!record.done);
     if (canResumeRecord(record)) {
       showResumePanel(record);
     } else {

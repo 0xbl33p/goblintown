@@ -9,6 +9,8 @@
  *   - shell.run:    run a single shell command. Disabled unless
  *                   GOBLINTOWN_TOOLS_SHELL=1 AND a per-call --shell-cmd
  *                   allowlist is provided to the warren.
+ *   - add-ons:      optional tool packs can contribute extra verifier tools.
+ *                   The bundled Solana add-on is read-only.
  *
  * Tool-use is OPT-IN. Default troll remains pure-LLM. When --troll-tools is
  * passed, the troll runs a single tool-use round before producing its verdict.

@@ -1,6 +1,6 @@
 {
   "name": "goblintown",
-  "version": "0.5.0-beta.0",
+  "version": "0.5.2-beta.0",
   "description": "Multi-agent orchestration protocol on top of OpenAI.",
   "license": "MIT",
   "author": "0XBL33P",
@@ -40,7 +40,7 @@
     "pack:check": "npm pack --dry-run",
     "release:check": "npm run clean && npm run test && npm run pack:check",
     "clean": "rimraf dist",
-    "test": "npm run build && node --test dist/__tests__/drift.test.js dist/__tests__/reward.test.js dist/__tests__/hoard.test.js dist/__tests__/federation.test.js dist/__tests__/audit.test.js dist/__tests__/reward-plugin.test.js dist/__tests__/graph.test.js dist/__tests__/ban-list.test.js dist/__tests__/concurrency.test.js dist/__tests__/budget.test.js dist/__tests__/run-store.test.js dist/__tests__/export-compare.test.js dist/__tests__/pack-prompt.test.js dist/__tests__/banners.test.js dist/__tests__/openai-client.test.js dist/__tests__/providers.test.js dist/__tests__/provider-ui.test.js dist/__tests__/settings-menu.test.js dist/__tests__/cloud-mode.test.js dist/__tests__/tank-sprites.test.js dist/__tests__/asteroid.test.js dist/__tests__/docs-help.test.js dist/__tests__/formatting.test.js dist/__tests__/artifact.test.js dist/__tests__/specialist.test.js dist/__tests__/trace-export.test.js dist/__tests__/planner.test.js dist/__tests__/debate.test.js dist/__tests__/tools.test.js dist/__tests__/embeddings.test.js dist/__tests__/fold.test.js dist/__tests__/country.test.js",
+    "test": "npm run build && node --test dist/__tests__/drift.test.js dist/__tests__/reward.test.js dist/__tests__/hoard.test.js dist/__tests__/federation.test.js dist/__tests__/audit.test.js dist/__tests__/reward-plugin.test.js dist/__tests__/graph.test.js dist/__tests__/ban-list.test.js dist/__tests__/concurrency.test.js dist/__tests__/budget.test.js dist/__tests__/run-store.test.js dist/__tests__/export-compare.test.js dist/__tests__/pack-prompt.test.js dist/__tests__/banners.test.js dist/__tests__/openai-client.test.js dist/__tests__/providers.test.js dist/__tests__/provider-ui.test.js dist/__tests__/settings-menu.test.js dist/__tests__/cloud-mode.test.js dist/__tests__/tank-sprites.test.js dist/__tests__/asteroid.test.js dist/__tests__/docs-help.test.js dist/__tests__/formatting.test.js dist/__tests__/artifact.test.js dist/__tests__/specialist.test.js dist/__tests__/specialist-observability.test.js dist/__tests__/trace-export.test.js dist/__tests__/planner.test.js dist/__tests__/debate.test.js dist/__tests__/tools.test.js dist/__tests__/addons.test.js dist/__tests__/onchain-ui.test.js dist/__tests__/solana.test.js dist/__tests__/solana-tools.test.js dist/__tests__/thesis.test.js dist/__tests__/thesis-ui.test.js dist/__tests__/sentiment.test.js dist/__tests__/sentiment-ui.test.js dist/__tests__/embeddings.test.js dist/__tests__/fold.test.js dist/__tests__/country.test.js",
     "prepublishOnly": "npm run clean && npm run build && npm test"
   },
   "publishConfig": {

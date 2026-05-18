@@ -21,6 +21,29 @@ export {
   clearProviderSecretForRoot,
 } from "../provider-secrets.js";
 export {
+  addonStatusPayload,
+  availableAddons,
+  buildToolRegistry,
+  isAddonEnabled,
+  normalizeAddonId,
+  normalizeAddonSettings,
+  setAddonEnabled,
+} from "../addons.js";
+export {
+  createSolanaRpcClient,
+  normalizeSolanaAddress,
+  normalizeSolanaRpcUrl,
+  type SolanaAccountInfo,
+  type SolanaBalance,
+  type SolanaRpcClient,
+  type SolanaSignatureInfo,
+  type SolanaTokenAccount,
+} from "../solana.js";
+export {
+  createSolanaTools,
+  type SolanaToolOptions,
+} from "../solana-tools.js";
+export {
   builtinTools,
   parseToolCallsJson,
   renderToolCatalog,
@@ -34,6 +57,7 @@ export {
   type Artifact,
   type ArtifactClaim,
   type ArtifactEvidence,
+  type AddonConfig,
   type CountryConfig,
   type CountryJoinRequest,
   type CountryQueuedRite,

@@ -295,6 +295,11 @@ export interface ProviderConfig {
   outputFormat?: OutputFormat;
 }
 
+export interface AddonConfig {
+  enabled?: boolean;
+  config?: Record<string, string | number | boolean>;
+}
+
 export interface WarrenPeer {
   name: string;
   url: string;
@@ -353,6 +358,8 @@ export interface WarrenManifest {
   defaultModelOgre: string;
   defaultModelTroll: string;
   provider?: ProviderConfig;
+  /** Optional installable Goblintown add-ons keyed by add-on id. */
+  addons?: Record<string, AddonConfig>;
   /** Optional shared secret for HMAC-authenticated federation. */
   peerSecret?: string;
   /** Known peer Warrens in the same goblin-country. */

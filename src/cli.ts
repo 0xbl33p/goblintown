@@ -8,6 +8,12 @@ try {
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { auditRite } from "./audit.js";
+import {
+  addonStatusPayload,
+  buildToolRegistry,
+  normalizeAddonId,
+  setAddonEnabled,
+} from "./addons.js";
 import { printBanner } from "./banners.js";
 import { compareRites } from "./compare.js";
 import {
@@ -30,6 +36,32 @@ import { loadRewardPlugin } from "./reward-plugin.js";
 import { ensureRunDir, loadAllRuns, loadRun } from "./run-store.js";
 import { previewScan, scavenge } from "./scavenge.js";
 import { serve } from "./server.js";
+import {
+  profileSolanaAddress,
+  summarizeSolanaActivity,
+  summarizeSolanaToken,
+  summarizeSolanaTransaction,
+  type SolanaAddressProfile,
+  type SolanaActivitySummary,
+  type SolanaTokenSummary,
+  type SolanaTransactionSummary,
+} from "./solana.js";
+import {
+  clearSentimentSecretForRoot,
+  normalizeSentimentSecretSource,
+  setSentimentSecretForRoot,
+} from "./sentiment-secrets.js";
+import {
+  sentimentSourcesPayload,
+  summarizeMarketSentiment,
+  summarizeProjectSentiment,
+  type SentimentSummary,
+} from "./sentiment.js";
+import {
+  buildThesisTask,
+  collectThesisEvidence,
+  normalizeThesisInput,
+} from "./thesis.js";
 import { exportRunAsMasTrace } from "./trace-export.js";
 import { MODEL_SLOTS, PROVIDER_PRESETS } from "./providers.js";
 import {
@@ -74,13 +106,21 @@ Usage:
       --debate:           run an inter-agent debate round after the pack proposes.
       --troll-tools:      enable verifier tool-use during troll review (json/regex/http.head).
 
+  goblintown thesis "<subject>" [--horizon <30d>] [--context "..."] [--scan <glob>]...
+                                [--solana <address>] [--signature <sig>] [--remember]
+      Build a project-quality thesis memo: team, product, technology,
+      ecosystem position, traction, advantages, risks, invalidation triggers,
+      and evidence gaps. It is not a buy/sell recommendation. Solana flags
+      add read-only onchain diligence context. --scan gives the Raccoon repo
+      files to inspect before the pack writes the thesis.
+
   goblintown ancestry <riteId>
       Print the artifact lineage for a rite (parents → this → children).
 
   goblintown plan "<task>" [--max-nodes <N>] [--max-replan <N>] [--budget <tokens>]
                           [--cite <riteId>]... [--remember] [--format freeform|markdown|json]
       Use the Planner to decompose the task into a DAG of sub-rites and
-      execute them in order (Phase 3). Each sub-rite produces its own artifact;
+      execute them in order. Each sub-rite produces its own artifact;
       dependent sub-rites consume them. On a node failure the planner is
       re-invoked (recursive replan, max depth 2 by default).
 
@@ -89,8 +129,8 @@ Usage:
       xxzcc/awesome-llm-mas-rl).
 
   goblintown fold [--threshold <N>] [--min-overlap <K>] [--max-cluster <S>] [--min-age-days <D>]
-      Phase 6: fold related older artifacts into higher-level summary
-      artifacts (Pigeon-Scribe). Defaults: threshold=30, overlap=2, max=6, age=7d.
+      Fold related older artifacts into higher-level summary artifacts
+      (Pigeon-Scribe). Defaults: threshold=30, overlap=2, max=6, age=7d.
 
   goblintown reset [--all|--hoard|--artifacts|--runs] [--yes]
       Reset the town. Default scope (--all) clears the entire hoard
@@ -163,11 +203,29 @@ Usage:
       Show the bundled Goblintown Cloud project, first-run Local Only vs Goblintown Cloud choice,
       Settings -> Account controls, and optional Firebase env overrides.
 
+  goblintown addon [ls]
+  goblintown addon enable solana
+  goblintown addon disable solana
+  goblintown addon solana <address>
+  goblintown addon solana tx <signature>
+      Manage optional local add-ons. The Solana add-on contributes read-only
+      onchain verifier tools when --troll-tools is enabled, plus direct
+      profile/activity/token/transaction lookup commands.
+
+  goblintown sentiment sources
+  goblintown sentiment market
+  goblintown sentiment project "<query>"
+  goblintown sentiment key set <source> --value <secret>
+  goblintown sentiment key clear <source>
+      Inspect free sentiment sources, run no-key market/project sentiment
+      summaries, and store optional API keys locally in .goblintown/secrets.json.
+      Sources: coingecko, dune, neynar, santiment, cryptopanic, lunarcrush.
+
   goblintown serve [--port <N>]
       Start the Tank UI. Default port=7777.
       First run asks Local Only vs Goblintown Cloud; later change it in Settings -> Account.
-      Settings also contains Country, Mail, API Provider, and Reset -> Asteroid Mode.
-      Optional sprite sheets and logo are loaded from site/assets.
+      Settings also contains Country, Mail, Add-ons, API Provider, and Reset -> Asteroid Mode.
+      Bundled sprite sheets and the Goblintown wordmark are loaded from site/assets.
 
 Environment:
   OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare / ancestry)
@@ -185,8 +243,16 @@ Environment:
   GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
   GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini
   GOBLINTOWN_MODEL_SCRIBE     default: gpt-5.4-mini  (Pigeon-as-Scribe artifact distillation)
-  GOBLINTOWN_EMBEDDING_MODEL  default: text-embedding-3-small  (artifact retrieval, Phase 6)
+  GOBLINTOWN_EMBEDDING_MODEL  default: text-embedding-3-small  (artifact retrieval)
   GOBLINTOWN_TOOLS_HTTP       set to 1 to enable http.head verifier tool (default disabled)
+  GOBLINTOWN_TOOLS_SOLANA     set to 1 to enable the Solana onchain add-on without changing warren.json
+  GOBLINTOWN_SOLANA_RPC_URL   optional Solana RPC endpoint (default: https://api.mainnet-beta.solana.com)
+  COINGECKO_API_KEY           optional sentiment key; overrides local .goblintown/secrets.json
+  DUNE_API_KEY                optional sentiment key; overrides local .goblintown/secrets.json
+  NEYNAR_API_KEY              optional sentiment key; overrides local .goblintown/secrets.json
+  SANTIMENT_API_KEY           optional sentiment key; overrides local .goblintown/secrets.json
+  CRYPTOPANIC_AUTH_TOKEN      optional sentiment token; overrides local .goblintown/secrets.json
+  LUNARCRUSH_API_KEY          optional sentiment key; overrides local .goblintown/secrets.json
   GOBLINTOWN_MAX_CONCURRENCY  default: 5 (in-flight API calls)
   GOBLINTOWN_SERVER_URL       default base URL for country discover/join/requests commands
   (also: GREMLIN, RACCOON, PIGEON)
@@ -214,6 +280,8 @@ async function main(): Promise<void> {
       return cmdQuest(argv.slice(1));
     case "rite":
       return cmdRite(argv.slice(1));
+    case "thesis":
+      return cmdThesis(argv.slice(1));
     case "reroll":
       return cmdReroll(argv.slice(1));
     case "export":
@@ -240,6 +308,11 @@ async function main(): Promise<void> {
       return cmdCountry(argv.slice(1));
     case "cloud":
       return cmdCloud(argv.slice(1));
+    case "addon":
+    case "addons":
+      return cmdAddon(argv.slice(1));
+    case "sentiment":
+      return cmdSentiment(argv.slice(1));
     case "serve":
       return cmdServe(argv.slice(1));
     case "ancestry":
@@ -444,7 +517,7 @@ async function cmdRite(args: string[]): Promise<void> {
     process.stdout.write(`(reward plugin: ${rewardPlugin.source})\n`);
   }
 
-  // Phase 1+6 memory: load any --cite'd or --remember'd artifacts.
+  // Memory context: load any --cite'd or --remember'd artifacts.
   const parentArtifacts: Artifact[] = [];
   for (const riteId of cites) {
     const a = await w.hoard.getArtifactByRiteId(riteId);
@@ -487,6 +560,7 @@ async function cmdRite(args: string[]): Promise<void> {
     specialistCap,
     debate,
     trollTools,
+    tools: trollTools ? buildToolRegistry(w.manifest) : undefined,
     budgetTokens,
     maxOutputTokensPerCall,
     outputFormat,
@@ -514,6 +588,68 @@ async function cmdRite(args: string[]): Promise<void> {
   }
 
   process.stdout.write(`\n— winning loot —\n\n${result.winnerLoot.output}\n`);
+}
+
+async function cmdThesis(args: string[]): Promise<void> {
+  const positional = args.filter((a) => !a.startsWith("--"));
+  const subject = positional[0];
+  if (!subject) {
+    process.stderr.write(
+      `usage: goblintown thesis "<subject>" [--horizon <30d>] [--context "..."] [--scan <glob>]... [--solana <address>] [--signature <sig>] [--remember]\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const flags = parseFlags(args);
+  const w = await loadWarren(process.cwd());
+  const rewardPlugin = await loadRewardPlugin(w.root);
+  const input = normalizeThesisInput({
+    subject,
+    horizon: flags.horizon,
+    context: flags.context,
+    solanaAddress: flags.solana,
+    solanaSignature: flags.signature ?? flags.tx,
+  });
+  const evidence = await collectThesisEvidence(input);
+  const task = buildThesisTask(input, evidence);
+  const parentArtifacts: Artifact[] = [];
+  if (flags.remember === "true") {
+    const all = await w.hoard.allArtifacts();
+    const { findRelevantArtifactsEmbedded } = await import("./embeddings.js");
+    parentArtifacts.push(
+      ...(await findRelevantArtifactsEmbedded({
+        artifacts: all,
+        queryText: task,
+        limit: 3,
+        hoard: w.hoard,
+      })),
+    );
+  }
+  process.stdout.write(
+    `Building thesis for "${truncate(input.subject, 70)}" (horizon=${input.horizon})...\n`,
+  );
+  if (evidence.warnings.length) {
+    process.stdout.write(`Partial evidence warnings: ${evidence.warnings.join("; ")}\n`);
+  }
+  const t0 = Date.now();
+  const result = await performRite({
+    task,
+    packSize: flags.pack ? Number(flags.pack) : 3,
+    scanGlobs: collectFlag(args, "scan"),
+    cwd: w.root,
+    hoard: w.hoard,
+    personality: flags.personality as Personality | undefined,
+    rewardFn: rewardPlugin.fn,
+    debate: true,
+    trollTools: true,
+    tools: buildToolRegistry(w.manifest),
+    outputFormat: "markdown",
+    parentArtifacts,
+    onStep: (s) => process.stdout.write(formatRiteStep(s) + "\n"),
+  });
+  const dt = ((Date.now() - t0) / 1000).toFixed(1);
+  process.stdout.write(`\nThesis rite ${result.rite.id} finished in ${dt}s — ${result.rite.outcome}.\n\n`);
+  process.stdout.write(result.winnerLoot.output + "\n");
 }
 
 function formatRiteStep(s: RiteStep): string {
@@ -550,6 +686,10 @@ function formatRiteStep(s: RiteStep): string {
       return `  pack failed; clustering failure modes...`;
     case "specialist:cluster:done":
       return `  identified ${s.clusters.length} cluster(s): ${s.clusters.map((c) => `${c.name}[${c.severity}]`).join(", ")}`;
+    case "specialist:cluster:empty":
+      return `  specialist recovery skipped: ${s.reason}`;
+    case "specialist:cluster:error":
+      return `  specialist recovery failed: ${truncate(s.message, 120)}`;
     case "specialist:spawn":
       return `    specialist #${s.index + 1} → focus: "${truncate(s.focus, 80)}"`;
     case "specialist:done":
@@ -724,7 +864,7 @@ async function cmdAudit(args: string[]): Promise<void> {
     for (const w of report.warnings) process.stdout.write(`  ⚠ ${w}\n`);
   }
   if (report.artifact) {
-    process.stdout.write(`\nArtifact (Phase 1):\n`);
+    process.stdout.write(`\nArtifact memory:\n`);
     process.stdout.write(`  id:             ${report.artifact.id}\n`);
     process.stdout.write(`  parents:        ${report.artifact.parentArtifactIds.length}\n`);
     process.stdout.write(`  children:       ${report.artifactChildren?.length ?? 0}\n`);
@@ -732,10 +872,10 @@ async function cmdAudit(args: string[]): Promise<void> {
     process.stdout.write(`  open questions: ${report.artifact.openQuestions.length}\n`);
     process.stdout.write(`  next steps:     ${report.artifact.nextSteps.length}\n`);
   } else {
-    process.stdout.write(`\nArtifact (Phase 1): none (scribe failed or skipped)\n`);
+    process.stdout.write(`\nArtifact memory: none (scribe failed or skipped)\n`);
   }
   if ((r.specialistLootIds?.length ?? 0) > 0) {
-    process.stdout.write(`\nSpecialist recovery (Phase 2): ${r.specialistLootIds!.length} specialist(s)\n`);
+    process.stdout.write(`\nSpecialist recovery: ${r.specialistLootIds!.length} specialist(s)\n`);
     for (const sid of r.specialistLootIds!) {
       const v = r.specialistVerdicts?.[sid];
       process.stdout.write(`  ${sid}  ${v ? `${v.passed ? "PASS" : "FAIL"} score=${v.score.toFixed(2)}` : "(no verdict)"}\n`);
@@ -1505,6 +1645,329 @@ async function cmdCloud(args: string[]): Promise<void> {
       `  FIREBASE_MESSAGING_SENDER_ID\n` +
       `  FIREBASE_MEASUREMENT_ID\n`,
   );
+}
+
+async function cmdAddon(args: string[]): Promise<void> {
+  const sub = args[0] ?? "ls";
+  if (sub === "--help" || sub === "-h" || sub === "help") {
+    process.stdout.write(
+      `usage:\n` +
+        `  goblintown addon ls\n` +
+        `  goblintown addon enable solana\n` +
+        `  goblintown addon disable solana\n` +
+        `  goblintown addon solana <address>\n` +
+        `  goblintown addon solana activity <address>\n` +
+        `  goblintown addon solana token <address>\n` +
+        `  goblintown addon solana tx <signature>\n\n` +
+        `Add-ons are local Warren settings. The Solana add-on only contributes read-only investigator tools.\n`,
+    );
+    return;
+  }
+
+  if (sub === "solana") {
+    return cmdAddonSolana(args.slice(1));
+  }
+
+  const w = await loadWarren(process.cwd());
+  if (sub === "ls" || sub === "list") {
+    const payload = addonStatusPayload(w.manifest);
+    process.stdout.write(`Goblintown add-ons:\n`);
+    for (const addon of payload.addons) {
+      process.stdout.write(
+        `  ${addon.enabled ? "on " : "off"}  ${addon.id.padEnd(16)} ${addon.label}\n` +
+          `       tools: ${addon.toolNames.join(", ")}\n`,
+      );
+    }
+    return;
+  }
+
+  if (sub === "enable" || sub === "disable") {
+    const id = normalizeAddonId(args[1]);
+    if (!id) {
+      process.stderr.write(`usage: goblintown addon ${sub} solana\n`);
+      process.exitCode = 1;
+      return;
+    }
+    setAddonEnabled(w.manifest, id, sub === "enable");
+    await saveWarrenManifest(w);
+    process.stdout.write(`${sub === "enable" ? "Enabled" : "Disabled"} add-on ${id}.\n`);
+    return;
+  }
+
+  process.stderr.write(`Unknown addon command: ${sub}\n`);
+  process.exitCode = 1;
+}
+
+async function cmdAddonSolana(args: string[]): Promise<void> {
+  const sub = args[0] ?? "";
+  const value = ["profile", "lookup", "activity", "token", "tx", "transaction"].includes(sub)
+    ? args[1]
+    : args[0];
+  if (!value) {
+    process.stderr.write(
+      `usage: goblintown addon solana <address>\n` +
+        `       goblintown addon solana activity <address>\n` +
+        `       goblintown addon solana token <address>\n` +
+        `       goblintown addon solana tx <signature>\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    if (sub === "activity") {
+      process.stdout.write(formatSolanaActivity(await summarizeSolanaActivity(value)) + "\n");
+      return;
+    }
+    if (sub === "token") {
+      process.stdout.write(formatSolanaToken(await summarizeSolanaToken(value)) + "\n");
+      return;
+    }
+    if (sub === "tx" || sub === "transaction") {
+      process.stdout.write(formatSolanaTransaction(await summarizeSolanaTransaction(value)) + "\n");
+      return;
+    }
+    const summary = await profileSolanaAddress(value);
+    process.stdout.write(formatSolanaSummary(summary) + "\n");
+  } catch (err) {
+    process.stderr.write(`Solana lookup failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+  }
+}
+
+async function cmdSentiment(args: string[]): Promise<void> {
+  const sub = args[0] ?? "sources";
+  if (sub === "--help" || sub === "-h" || sub === "help") {
+    process.stdout.write(
+      `usage:\n` +
+        `  goblintown sentiment sources\n` +
+        `  goblintown sentiment market\n` +
+        `  goblintown sentiment project "<query>"\n` +
+        `  goblintown sentiment key set <source> --value <secret>\n` +
+        `  goblintown sentiment key clear <source>\n\n` +
+        `No-key baseline sources ship enabled: Alternative.me and GDELT.\n` +
+        `Optional keys are stored locally in .goblintown/secrets.json unless env vars are set.\n` +
+        `Env vars: COINGECKO_API_KEY, DUNE_API_KEY, NEYNAR_API_KEY, SANTIMENT_API_KEY, CRYPTOPANIC_AUTH_TOKEN, LUNARCRUSH_API_KEY.\n`,
+    );
+    return;
+  }
+
+  const w = await loadWarren(process.cwd());
+  if (sub === "sources" || sub === "source" || sub === "ls" || sub === "list") {
+    process.stdout.write(formatSentimentSources(sentimentSourcesPayload(w.root)) + "\n");
+    return;
+  }
+
+  if (sub === "market") {
+    try {
+      process.stdout.write(
+        formatSentimentSummary(await summarizeMarketSentiment({ root: w.root })) + "\n",
+      );
+    } catch (err) {
+      process.stderr.write(`Sentiment lookup failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (sub === "project") {
+    const query = args.slice(1).filter((a) => !a.startsWith("--")).join(" ").trim();
+    if (!query) {
+      process.stderr.write(`usage: goblintown sentiment project "<query>"\n`);
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      process.stdout.write(
+        formatSentimentSummary(await summarizeProjectSentiment(query, { root: w.root })) + "\n",
+      );
+    } catch (err) {
+      process.stderr.write(`Project sentiment lookup failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (sub === "key") {
+    const action = args[1] ?? "";
+    const source = normalizeSentimentSecretSource(args[2]);
+    if (!source || (action !== "set" && action !== "clear" && action !== "rm")) {
+      process.stderr.write(
+        `usage: goblintown sentiment key set <source> --value <secret>\n` +
+          `       goblintown sentiment key clear <source>\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (action === "set") {
+      const value = parseFlags(args.slice(3)).value?.trim();
+      if (!value) {
+        process.stderr.write(`--value is required\n`);
+        process.exitCode = 1;
+        return;
+      }
+      await setSentimentSecretForRoot(w.root, source, value);
+      process.stdout.write(`Saved local sentiment key for ${source} in .goblintown/secrets.json.\n`);
+      return;
+    }
+    await clearSentimentSecretForRoot(w.root, source);
+    process.stdout.write(`Cleared local sentiment key for ${source}.\n`);
+    return;
+  }
+
+  process.stderr.write(`Unknown sentiment command: ${sub}\n`);
+  process.exitCode = 1;
+}
+
+function formatSolanaSummary(summary: SolanaAddressProfile): string {
+  const lines = [
+    `Solana address: ${summary.address}`,
+    `type: ${summary.inferredType}`,
+    `RPC: ${summary.rpcUrl}`,
+    `mode: read-only`,
+  ];
+  if (summary.balance) {
+    lines.push(`balance: ${summary.balance.sol} SOL (${summary.balance.lamports} lamports)`);
+  }
+  if (summary.account) {
+    lines.push(
+      `account: ${summary.account.exists ? "exists" : "missing"}` +
+        (summary.account.owner ? ` owner=${summary.account.owner}` : "") +
+        (summary.account.executable !== undefined ? ` executable=${summary.account.executable}` : ""),
+    );
+  }
+  if (summary.tokens) {
+    lines.push(`token accounts: ${summary.tokens.count}${summary.tokens.truncated ? " (truncated)" : ""}`);
+    for (const token of summary.tokens.accounts.slice(0, 5)) {
+      lines.push(`  - ${token.mint ?? "unknown mint"} ${token.uiAmountString ?? token.amount ?? ""}`.trimEnd());
+    }
+  }
+  if (summary.signatures) {
+    lines.push(`recent signatures: ${summary.signatures.count}`);
+    for (const sig of summary.signatures.signatures.slice(0, 5)) {
+      lines.push(`  - ${sig.signature} slot=${sig.slot}${sig.confirmationStatus ? ` ${sig.confirmationStatus}` : ""}`);
+    }
+  }
+  if (summary.activity) {
+    lines.push(`activity: ${summary.activity.signatureCount} recent, failed=${summary.activity.failedCount}`);
+  }
+  if (summary.notes.length) {
+    lines.push(`notes:`);
+    for (const note of summary.notes) lines.push(`  - ${note}`);
+  }
+  if (summary.warnings.length) {
+    lines.push(`warnings:`);
+    for (const warning of summary.warnings) lines.push(`  - ${warning}`);
+  }
+  if (summary.errors.length) {
+    lines.push(`partial errors:`);
+    for (const err of summary.errors) lines.push(`  - ${err}`);
+  }
+  return lines.join("\n");
+}
+
+function formatSolanaActivity(activity: SolanaActivitySummary): string {
+  const lines = [
+    `Solana activity: ${activity.address}`,
+    `RPC: ${activity.rpcUrl}`,
+    `mode: read-only`,
+    `recent signatures: ${activity.signatureCount}`,
+    `failed: ${activity.failedCount}`,
+  ];
+  if (activity.latestSignature) lines.push(`latest: ${activity.latestSignature} slot=${activity.latestSlot ?? "unknown"}`);
+  for (const sig of activity.signatures.slice(0, 10)) {
+    lines.push(`  - ${sig.signature} slot=${sig.slot}${sig.err ? " FAILED" : ""}`);
+  }
+  for (const note of activity.notes) lines.push(`note: ${note}`);
+  return lines.join("\n");
+}
+
+function formatSolanaTransaction(tx: SolanaTransactionSummary): string {
+  const lines = [
+    `Solana transaction: ${tx.signature}`,
+    `RPC: ${tx.rpcUrl}`,
+    `mode: read-only`,
+    `found: ${tx.found}`,
+  ];
+  if (tx.found) {
+    lines.push(`status: ${tx.status ?? "unknown"}${tx.feeLamports !== undefined ? ` fee=${tx.feeLamports}` : ""}`);
+    if (tx.slot !== undefined) lines.push(`slot: ${tx.slot}`);
+    if (tx.signers.length) lines.push(`signers: ${tx.signers.join(", ")}`);
+    if (tx.instructions.length) {
+      lines.push(`instructions:`);
+      for (const ix of tx.instructions.slice(0, 10)) {
+        lines.push(`  - ${[ix.program, ix.type, ix.programId].filter(Boolean).join(" / ")}`);
+      }
+    }
+    if (tx.logMessages.length) {
+      lines.push(`logs:`);
+      for (const log of tx.logMessages.slice(0, 8)) lines.push(`  - ${log}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatSolanaToken(token: SolanaTokenSummary): string {
+  const lines = [
+    `Solana token: ${token.address}`,
+    `RPC: ${token.rpcUrl}`,
+    `mode: read-only`,
+    `kind: ${token.kind}`,
+  ];
+  if (token.kind === "mint") {
+    lines.push(`supply: ${token.supply ?? "unknown"}${token.uiSupply ? ` (${token.uiSupply})` : ""}`);
+    if (token.decimals !== undefined) lines.push(`decimals: ${token.decimals}`);
+    if (token.mintAuthority !== undefined) lines.push(`mint authority: ${token.mintAuthority ?? "none"}`);
+    if (token.freezeAuthority !== undefined) lines.push(`freeze authority: ${token.freezeAuthority ?? "none"}`);
+  } else if (token.kind === "token-account") {
+    if (token.mint) lines.push(`mint: ${token.mint}`);
+    if (token.tokenOwner) lines.push(`owner: ${token.tokenOwner}`);
+    lines.push(`amount: ${token.uiAmountString ?? token.amount ?? "unknown"}`);
+  }
+  for (const note of token.notes) lines.push(`note: ${note}`);
+  return lines.join("\n");
+}
+
+function formatSentimentSources(payload: ReturnType<typeof sentimentSourcesPayload>): string {
+  const lines = [
+    `Sentiment sources:`,
+    `local secrets: ${payload.localSecretsPath ?? ".goblintown/secrets.json"}`,
+  ];
+  for (const source of payload.sources) {
+    lines.push(
+      `  ${source.configured ? "on " : "off"}  ${source.id.padEnd(14)} ${source.label}` +
+        (source.secretEnv ? ` (${source.secretEnv})` : " (no key)"),
+    );
+    lines.push(`       ${source.free}; ${source.description}`);
+  }
+  return lines.join("\n");
+}
+
+function formatSentimentSummary(summary: SentimentSummary): string {
+  const lines = [
+    summary.query ? `Sentiment for: ${summary.query}` : "Market sentiment",
+    `generated: ${summary.generatedAt}`,
+  ];
+  if (summary.signals.length) {
+    lines.push("signals:");
+    for (const signal of summary.signals) {
+      const parts = [
+        signal.label,
+        signal.classification,
+        signal.value !== undefined ? String(signal.value) : "",
+      ].filter(Boolean);
+      lines.push(`  - ${signal.source}: ${parts.join(" / ")}`);
+      lines.push(`    ${signal.summary}`);
+      if (signal.url) lines.push(`    ${signal.url}`);
+    }
+  } else {
+    lines.push("signals: none returned");
+  }
+  const failed = summary.sources.filter((source) => !source.ok);
+  if (failed.length) {
+    lines.push("partial source errors:");
+    for (const source of failed) lines.push(`  - ${source.id}: ${source.error ?? "failed"}`);
+  }
+  return lines.join("\n");
 }
 
 async function cmdPlan(args: string[]): Promise<void> {

@@ -8,7 +8,7 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const serverSource = readFileSync(join(repoRoot, "src", "server.ts"), "utf8");
 
 describe("tank sprite assets", () => {
-  it("wires optional idle sprites into the tank", () => {
+  it("wires bundled tank sprites into the tank", () => {
     assert.match(serverSource, /id="c-gremlin-sprite"/);
     assert.match(serverSource, /id="c-ogre-sprite"/);
     assert.match(serverSource, /id="c-raccoon-sprite"/);
@@ -16,6 +16,8 @@ describe("tank sprite assets", () => {
     assert.match(serverSource, /gremlin-idle\.png/);
     assert.match(serverSource, /ogre-idle\.png/);
     assert.match(serverSource, /raccoon-sleep\.png/);
+    assert.match(serverSource, /raccoon-get-up\.png/);
+    assert.match(serverSource, /raccoon-scurry\.png/);
     assert.match(serverSource, /troll-idle\.png/);
     assert.match(serverSource, /gtowntextmark\.png/);
     assert.match(serverSource, /class="tank-logo-mark"/);
@@ -35,6 +37,13 @@ describe("tank sprite assets", () => {
     assert.match(serverSource, /src: "\/assets\/raccoon-sleep\.png"[\s\S]*?rows: 1/);
     assert.match(serverSource, /src: "\/assets\/raccoon-sleep\.png"[\s\S]*?totalFrames: 16/);
     assert.match(serverSource, /src: "\/assets\/raccoon-sleep\.png"[\s\S]*?fps: 5/);
+    assert.match(serverSource, /getUpSrc: "\/assets\/raccoon-get-up\.png"/);
+    assert.match(serverSource, /scurrySrc: "\/assets\/raccoon-scurry\.png"/);
+    assert.match(serverSource, /getUpFrames: 23/);
+    assert.match(serverSource, /scurryFrames: 10/);
+    assert.match(serverSource, /function playRaccoonTransition/);
+    assert.match(serverSource, /function playRaccoonScurry/);
+    assert.match(serverSource, /raccoonSpriteState\.facing/);
     assert.match(serverSource, /src: "\/assets\/troll-idle\.png"[\s\S]*?cols: 24/);
     assert.match(serverSource, /src: "\/assets\/troll-idle\.png"[\s\S]*?rows: 1/);
     assert.match(serverSource, /src: "\/assets\/troll-idle\.png"[\s\S]*?totalFrames: 24/);
@@ -45,10 +54,12 @@ describe("tank sprite assets", () => {
     assert.match(serverSource, /\.creature\.troll-animated\[data-state="idle"\] \.idle-sprite/);
   });
 
-  it("ships the configured idle sprite sheets", () => {
+  it("ships the configured tank sprite sheets", () => {
     assert.equal(existsSync(join(repoRoot, "site", "assets", "gremlin-idle.png")), true);
     assert.equal(existsSync(join(repoRoot, "site", "assets", "ogre-idle.png")), true);
     assert.equal(existsSync(join(repoRoot, "site", "assets", "raccoon-sleep.png")), true);
+    assert.equal(existsSync(join(repoRoot, "site", "assets", "raccoon-get-up.png")), true);
+    assert.equal(existsSync(join(repoRoot, "site", "assets", "raccoon-scurry.png")), true);
     assert.equal(existsSync(join(repoRoot, "site", "assets", "troll-idle.png")), true);
     assert.equal(existsSync(join(repoRoot, "site", "assets", "gtowntextmark.png")), true);
   });

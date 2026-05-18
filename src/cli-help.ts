@@ -30,13 +30,21 @@ Usage:
       --debate:           run an inter-agent debate round after the pack proposes.
       --troll-tools:      enable verifier tool-use during troll review (json/regex/http.head).
 
+  goblintown thesis "<subject>" [--horizon <30d>] [--context "..."] [--scan <glob>]...
+                                [--solana <address>] [--signature <sig>] [--remember]
+      Build a project-quality thesis memo: team, product, technology,
+      ecosystem position, traction, advantages, risks, invalidation triggers,
+      and evidence gaps. It is not a buy/sell recommendation. Solana flags
+      add read-only onchain diligence context. --scan gives the Raccoon repo
+      files to inspect before the pack writes the thesis.
+
   goblintown ancestry <riteId>
       Print the artifact lineage for a rite (parents → this → children).
 
   goblintown plan "<task>" [--max-nodes <N>] [--max-replan <N>] [--budget <tokens>]
                           [--cite <riteId>]... [--remember] [--format freeform|markdown|json]
       Use the Planner to decompose the task into a DAG of sub-rites and
-      execute them in order (Phase 3). Each sub-rite produces its own artifact;
+      execute them in order. Each sub-rite produces its own artifact;
       dependent sub-rites consume them. On a node failure the planner is
       re-invoked (recursive replan, max depth 2 by default).
 
@@ -45,8 +53,8 @@ Usage:
       xxzcc/awesome-llm-mas-rl).
 
   goblintown fold [--threshold <N>] [--min-overlap <K>] [--max-cluster <S>] [--min-age-days <D>]
-      Phase 6: fold related older artifacts into higher-level summary
-      artifacts (Pigeon-Scribe). Defaults: threshold=30, overlap=2, max=6, age=7d.
+      Fold related older artifacts into higher-level summary artifacts
+      (Pigeon-Scribe). Defaults: threshold=30, overlap=2, max=6, age=7d.
 
   goblintown reset [--all|--hoard|--artifacts|--runs] [--yes]
       Reset the town. Default scope (--all) clears the entire hoard
@@ -119,11 +127,29 @@ Usage:
       Show the bundled Goblintown Cloud project, first-run Local Only vs Goblintown Cloud choice,
       Settings -> Account controls, and optional Firebase env overrides.
 
+  goblintown addon [ls]
+  goblintown addon enable solana
+  goblintown addon disable solana
+  goblintown addon solana <address>
+  goblintown addon solana tx <signature>
+      Manage optional local add-ons. The Solana add-on contributes read-only
+      onchain verifier tools when --troll-tools is enabled and can run direct
+      read-only profile/activity/token/transaction lookups.
+
+  goblintown sentiment sources
+  goblintown sentiment market
+  goblintown sentiment project "<query>"
+  goblintown sentiment key set <source> --value <secret>
+  goblintown sentiment key clear <source>
+      Inspect free sentiment sources, run no-key market/project sentiment
+      summaries, and store optional API keys locally in .goblintown/secrets.json.
+      Sources: coingecko, dune, neynar, santiment, cryptopanic, lunarcrush.
+
   goblintown serve [--port <N>]
       Start the Tank UI. Default port=7777.
       First run asks Local Only vs Goblintown Cloud; later change it in Settings -> Account.
-      Settings also contains Country, Mail, API Provider, and Reset -> Asteroid Mode.
-      Optional sprite sheets and logo are loaded from site/assets.
+      Settings also contains Country, Mail, Add-ons, API Provider, and Reset -> Asteroid Mode.
+      Bundled sprite sheets and the Goblintown wordmark are loaded from site/assets.
 
 Environment:
   OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare / ancestry)
@@ -141,8 +167,16 @@ Environment:
   GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
   GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini
   GOBLINTOWN_MODEL_SCRIBE     default: gpt-5.4-mini  (Pigeon-as-Scribe artifact distillation)
-  GOBLINTOWN_EMBEDDING_MODEL  default: text-embedding-3-small  (artifact retrieval, Phase 6)
+  GOBLINTOWN_EMBEDDING_MODEL  default: text-embedding-3-small  (artifact retrieval)
   GOBLINTOWN_TOOLS_HTTP       set to 1 to enable http.head verifier tool (default disabled)
+  GOBLINTOWN_TOOLS_SOLANA     set to 1 to enable the Solana onchain add-on without changing warren.json
+  GOBLINTOWN_SOLANA_RPC_URL   optional Solana RPC endpoint (default: https://api.mainnet-beta.solana.com)
+  COINGECKO_API_KEY           optional sentiment key; overrides local .goblintown/secrets.json
+  DUNE_API_KEY                optional sentiment key; overrides local .goblintown/secrets.json
+  NEYNAR_API_KEY              optional sentiment key; overrides local .goblintown/secrets.json
+  SANTIMENT_API_KEY           optional sentiment key; overrides local .goblintown/secrets.json
+  CRYPTOPANIC_AUTH_TOKEN      optional sentiment token; overrides local .goblintown/secrets.json
+  LUNARCRUSH_API_KEY          optional sentiment key; overrides local .goblintown/secrets.json
   GOBLINTOWN_MAX_CONCURRENCY  default: 5 (in-flight API calls)
   GOBLINTOWN_SERVER_URL       default base URL for country discover/join/requests commands
   (also: GREMLIN, RACCOON, PIGEON)

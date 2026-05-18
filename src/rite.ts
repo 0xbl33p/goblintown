@@ -13,6 +13,7 @@ import { ogreFallback } from "./fallback.js";
 import { clusterFailures, pickSeedLoot, runSpecialistRerite } from "./specialist.js";
 import { runDebateRound } from "./debate.js";
 import { makeThinkingRelay } from "./streaming.js";
+import type { ToolDefinition } from "./tools.js";
 import type {
   Artifact,
   Loot,
@@ -48,6 +49,8 @@ export interface RiteOptions {
   debate?: boolean;
   /** Phase 5: enable verifier tool-use during troll review. */
   trollTools?: boolean;
+  /** Optional verifier tools used when trollTools is true. */
+  tools?: ToolDefinition[];
   /** Optional formatting constraint for answer-producing calls. */
   outputFormat?: OutputFormat;
 }
@@ -69,6 +72,8 @@ export type RiteStep =
   | { kind: "review:verdict"; verdict: TrollVerdict }
   | { kind: "specialist:cluster:start" }
   | { kind: "specialist:cluster:done"; clusters: { name: string; severity: "high"|"medium"|"low"; description: string }[] }
+  | { kind: "specialist:cluster:empty"; reason: string }
+  | { kind: "specialist:cluster:error"; message: string }
   | { kind: "specialist:spawn"; index: number; focus: string }
   | { kind: "specialist:done"; lootId: string; index: number }
   | { kind: "specialist:verdict"; verdict: TrollVerdict; index: number }
@@ -304,6 +309,7 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
       hoard: opts.hoard,
       riteId,
       withTools: opts.trollTools,
+      tools: opts.tools,
       onToolCalls: (calls) =>
         onStep({ kind: "tool:calls", calls: calls.map((c) => ({ name: c.name, args: c.args })) }),
       onToolResults: (results) =>
@@ -366,7 +372,11 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
           })),
         });
 
-        if (seed && clusters.length > 0 && checkBudget("specialist")) {
+        if (!seed) {
+          onStep({ kind: "specialist:cluster:empty", reason: "no failed seed output available" });
+        } else if (clusters.length === 0) {
+          onStep({ kind: "specialist:cluster:empty", reason: "failure clustering returned no repair focus" });
+        } else if (checkBudget("specialist")) {
           const seedScore = rite.trollVerdicts[seed.id]?.score ?? 0;
           const result = await runSpecialistRerite({
             riteId,
@@ -401,8 +411,11 @@ export async function performRite(opts: RiteOptions): Promise<RiteResult> {
             specialistWinner = result.winner;
           }
         }
-      } catch {
-        // recovery is best-effort; fall through to ogre
+      } catch (err) {
+        onStep({
+          kind: "specialist:cluster:error",
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 

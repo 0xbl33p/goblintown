@@ -23,7 +23,7 @@ describe("settings launcher", () => {
     assert.doesNotMatch(stripMarkup, /id="btn-asteroid"/);
   });
 
-  it("collects account, country, mail, API, and a nested reset menu in the settings launcher", () => {
+  it("collects account, country, mail, add-ons, API, and a nested reset menu in the settings launcher", () => {
     const settingsStart = serverSource.indexOf('id="settings-popover"');
     const settingsEnd = serverSource.indexOf('id="provider-popover"', settingsStart);
     assert.notEqual(settingsStart, -1);
@@ -33,11 +33,14 @@ describe("settings launcher", () => {
     assert.match(settingsMarkup, /data-settings-label="Account"/);
     assert.match(settingsMarkup, /data-settings-label="Country"/);
     assert.match(settingsMarkup, /data-settings-label="Mail"/);
+    assert.match(settingsMarkup, /data-settings-label="Add-ons"/);
     assert.match(settingsMarkup, /data-settings-label="API"/);
     assert.match(settingsMarkup, /id="reset-chip"[\s\S]*<span>Reset<\/span>[\s\S]*Reset ▸/);
     assert.match(settingsMarkup, /id="settings-reset-panel"[\s\S]*id="btn-asteroid"[\s\S]*Asteroid Mode/);
     assert.match(serverSource, /const settingsChip = \$\("settings-chip"\)/);
     assert.match(serverSource, /const resetChip = \$\("reset-chip"\)/);
+    assert.match(serverSource, /const addonChip = \$\("addon-chip"\)/);
+    assert.match(serverSource, /fetch\("\/api\/addons"/);
     assert.match(serverSource, /function setResetMenuOpen/);
     assert.match(serverSource, /function setSettingsActionText/);
     assert.match(serverSource, /closeSettingsPopover\(\)/);

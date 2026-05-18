@@ -1,12 +1,15 @@
 # Goblintown
 
-A multi-agent orchestration protocol on top of OpenAI. Goblintown turns "ask
-the model" into a planning agent with memory and self-correction: a small
-fleet of specialized creatures that decompose tasks into a DAG, scavenge
-context, race against each other, debate, attack each other's outputs,
-spawn focused specialists when the pack fails, and hand the surviving
-answer back as a signed, content-addressed artifact that future rites can
-build on.
+Goblintown is a local-first multi-agent orchestration protocol with a live
+browser Tank UI, resumable runs, typed memory, provider routing, and optional
+Goblintown Cloud sign-in. It turns "ask the model" into a planning agent with
+memory and self-correction: a small fleet of specialized creatures that
+decompose tasks into a DAG, scavenge context, race against each other, debate,
+attack each other's outputs, spawn focused specialists when the pack fails, and
+hand the surviving answer back as a signed, content-addressed artifact that
+future rites can build on.
+
+Current beta release line: `goblintown@beta`.
 
 ## Background
 
@@ -25,7 +28,7 @@ This project takes that ban list as a roster.
 | **Goblin** | Worker. Cheap, high-temperature, dispatched in packs. Each pack member gets a different personality; an optional debate round lets them revise after seeing each other's proposals. |
 | **Gremlin** | Adversarial. Tries to break each candidate output (per-goblin chaos pass). |
 | **Raccoon** | Scavenger. Returns only the facts a task actually needs. Also loads relevant prior **Artifacts** when memory is enabled. |
-| **Troll** | Reviewer. Default-rejects. Returns a JSON verdict. May invoke verifier tools (`json.parse`, `regex.match`, `http.head`) before scoring. |
+| **Troll** | Reviewer. Default-rejects. Returns a JSON verdict. May invoke verifier tools (`json.parse`, `regex.match`, `http.head`, and enabled add-on tools) before scoring. |
 | **Ogre** | Heavyweight. Deep reasoning, called only when the pack and the **Specialists** both fail. |
 | **Pigeon** | Carrier and **Scribe**. Compresses and routes artifacts between Warrens (federation), and distills each completed Rite into a typed Artifact (memory). |
 | **Specialist Goblin** | A focused recovery worker spawned when the pack fails Troll review. Each one targets a single dominant failure mode identified by clustering the gremlin's critiques. |
@@ -223,24 +226,39 @@ that future rites can cite.
 
 ## Install
 
+### npm
+
+```bash
+npm install -g goblintown@beta
+goblintown --help
+goblintown serve --port 7777
+```
+
+You can also run it without a global install:
+
+```bash
+npx goblintown@beta --help
+npx goblintown@beta serve --port 7777
+```
+
+`goblintown serve` opens the Tank UI at `http://localhost:7777/`. On first run
+the Tank asks whether this Warren should stay local-only or use Goblintown
+Cloud. Sprites, the Goblintown wordmark, Matter.js Asteroid Mode, and the CLI
+entrypoint are included in the npm package.
+
+Set a provider API key for any command that calls a creature. You can set it in
+your shell, or save it from **Settings -> API Provider** in the Tank. Local
+Ollama uses a harmless dummy key if no local key env var is set. LM Studio can
+run without a key only when its server authentication is disabled; if
+authentication is enabled, set `LM_API_TOKEN`.
+
 ### Local development
 
 ```bash
 npm install
 npm run build
+npm run serve -- --port 7777
 ```
-
-### npm package (after publish)
-
-```bash
-npm install -g goblintown
-goblintown --help
-```
-
-Set a provider API key for any command that calls a creature. Local Ollama uses
-a harmless dummy key if no local key env var is set. LM Studio can run without a
-key only when its server authentication is disabled; if authentication is
-enabled, set `LM_API_TOKEN`.
 
 ## Usage
 
@@ -293,6 +311,15 @@ goblintown audit <riteId>
 goblintown graph <riteId|lootId>     # now includes artifact lineage
 goblintown serve --port 7777        # Tank UI + first-run Local Only / Cloud choice
 goblintown cloud                    # bundled Cloud setup + optional Firebase overrides
+goblintown addon ls                 # local tool-pack add-ons
+goblintown addon enable solana      # read-only Solana verifier tools
+goblintown addon solana <address>   # direct read-only Solana address lookup
+goblintown addon solana tx <sig>    # parsed read-only transaction lookup
+goblintown thesis "Jito" --solana <address> --remember
+                                    # project-quality thesis, not a trade call
+goblintown sentiment sources        # free/no-key + optional-key sentiment sources
+goblintown sentiment market         # broad market sentiment baseline
+goblintown sentiment project "Jito" # project/team/protocol sentiment context
 
 # federation
 goblintown send --to ../other-warren    --loot <id>
@@ -324,10 +351,11 @@ goblintown country run --task "Audit this migration plan" --all --pack 2
 
 ## Goblintown Cloud
 
-The app stays download-and-run friendly. On first `goblintown serve`, the Tank
-asks whether this Warren should **Stay Local** or **Use Goblintown Cloud**:
+Goblintown is download-and-run friendly. On first `goblintown serve`, the Tank
+asks whether this Warren should **Stay Local** or **Use Goblintown Cloud**.
+That choice can be changed later from **Settings -> Account**.
 
-- **Stay Local** keeps memory, runs, provider secrets, and reset state on this
+- **Stay Local** keeps memory, runs, provider secrets, and reset state on the
   machine. Cloud sign-in, public discovery, direct messages, and remote country
   metadata stay disabled.
 - **Use Goblintown Cloud** signs in through the bundled Firebase project
@@ -335,10 +363,10 @@ asks whether this Warren should **Stay Local** or **Use Goblintown Cloud**:
   discovery, mail, and country metadata. Local rite/run files still remain in
   `.goblintown/`.
 
-You can change the choice later from **Settings -> Account**. Reset lives under
-**Settings -> Reset -> Asteroid Mode** so the destructive path is deliberately
-buried. Asteroid Mode can destroy only the local town or, after a second
-confirmation, request cloud-data deletion for the signed-in account.
+Reset lives under **Settings -> Reset -> Asteroid Mode** so the destructive
+path is deliberately buried. Asteroid Mode can destroy only the local town or,
+after a second confirmation, request cloud-data deletion for the signed-in
+account.
 
 Normal users do not need Firebase keys. Forks and private deployments can use
 optional Firebase overrides:
@@ -352,6 +380,98 @@ optional Firebase overrides:
 - `FIREBASE_MEASUREMENT_ID`
 
 `goblintown cloud` prints the same local/cloud mode summary from the CLI.
+
+## Thesis Engine
+
+The thesis engine turns Goblintown into a diligence loop for any subject:
+a protocol, company, open-source project, team, product, repository, market,
+or technical decision. It asks the pack to evaluate quality and advantages:
+team credibility, product and technical quality, ecosystem position, traction,
+durability of advantages, risks, invalidation triggers, and evidence gaps.
+It is explicitly **not a buy/sell recommendation** and should not frame the
+answer around buyability.
+
+```bash
+goblintown thesis "Firedancer validator client" \
+  --horizon 90d \
+  --context "Focus on engineering quality, ecosystem advantage, and execution risk" \
+  --scan "README.md"
+
+goblintown thesis "Jito" --solana <address> --remember
+```
+
+For Solana-first research, pass `--solana <address>` and optionally
+`--signature <sig>`. Goblintown adds read-only onchain context from the Solana
+adapter before running the same debate, verifier-tool, and memory-backed rite
+path. The Tank exposes the same workflow with the **THESIS** button.
+Use `--scan "<glob>"` to give the Raccoon repository files before the thesis
+pack writes. User-provided context and scanned files count as evidence; missing
+evidence should be labeled **Unknown / Unverified**, not treated as a negative
+signal by itself.
+
+## Sentiment Sources
+
+Sentiment is a local-first research layer for thesis work and Solana-first
+diligence. It starts with free/no-key sources, then lets power users add
+optional connectors without leaking secrets into the browser:
+
+```bash
+goblintown sentiment sources
+goblintown sentiment market
+goblintown sentiment project "Jito"
+goblintown sentiment key set coingecko --value <secret>
+goblintown sentiment key clear coingecko
+```
+
+The baseline sources are Alternative.me Fear & Greed and GDELT news tone.
+Optional connectors are CoinGecko, Dune, Neynar/Farcaster, Santiment,
+CryptoPanic, and LunarCrush. Keys can come from environment variables or the
+local secret file at `.goblintown/secrets.json` with `0600` permissions. Env
+vars win over local secrets:
+
+- `COINGECKO_API_KEY`
+- `DUNE_API_KEY`
+- `NEYNAR_API_KEY`
+- `SANTIMENT_API_KEY`
+- `CRYPTOPANIC_AUTH_TOKEN`
+- `LUNARCRUSH_API_KEY`
+
+The Tank exposes the same controls in **Settings -> Sentiment**. It can run
+market or project sentiment checks and save/clear optional keys server-side;
+raw keys are never returned to the page.
+
+## Add-ons
+
+Goblintown add-ons are local tool packs stored in `warren.json`. Enable the
+bundled Solana pack from **Settings -> Add-ons** or the CLI, then use
+**Settings -> Onchain** for direct address lookup and rite handoff:
+
+```bash
+goblintown addon ls
+goblintown addon enable solana
+goblintown addon solana <address>
+goblintown addon solana activity <address>
+goblintown addon solana token <address>
+goblintown addon solana tx <signature>
+```
+
+When `--troll-tools` is enabled, the Solana add-on gives the Troll read-only
+investigator tools: `solana.profile`, `solana.activity`,
+`solana.transaction`, `solana.token`, plus lower-level `solana.balance`,
+`solana.account`, `solana.tokens`, `solana.signatures`, and
+`solana.rpcHealth`. It never holds keys, signs transactions, swaps, or submits
+transactions. The default endpoint is
+`https://api.mainnet-beta.solana.com`; override it with
+`GOBLINTOWN_SOLANA_RPC_URL`. `GOBLINTOWN_TOOLS_SOLANA=1` also enables the
+tools for the current process without changing `warren.json`.
+
+The Tank Onchain panel builds a profile with inferred address type, SOL
+balance, account metadata, parsed token data when available, SPL token
+accounts, recent activity, notes, and warnings for a wallet, mint, token
+account, or program address. It can also inspect a transaction signature.
+**Analyze with Goblintown** pre-fills a rite with that profile and turns on
+Troll verifier tools so the pack can inspect the same address with read-only
+Solana RPC evidence.
 
 ## Models
 
@@ -567,39 +687,48 @@ unassigned roles can auto-fall back to the lead.
   no manual URL entry required).
 - Opening a thread auto-marks unread messages as read.
 
-## Browser-driven rites (SSE)
+## Tank UI and resumable runs
 
-`goblintown serve` exposes `/rite/new` — an HTML form that POSTs to
-`/api/rite` and subscribes to `/api/rite/<runId>/stream` for live progress.
-Run state is persisted to `.goblintown/runs/<runId>.json`, so the SSE
-history replays after a server restart; in-flight rites are marked
-interrupted on boot.
+`goblintown serve` starts the Tank at `/`, a live diorama for rites, plans,
+Settings, Cloud mode, provider routing, country collaboration, mail, and reset.
+The Tank POSTs to `/api/rite` or `/api/plan`, subscribes to
+`/api/rite/<runId>/stream`, and renders each streamed event as creature state,
+thinking bubbles, DAG progress, and final output.
+
+Run state is persisted to `.goblintown/runs/<runId>.json`, so SSE history
+replays after a server restart. In-flight rites are marked interrupted on boot
+and can be resumed from the Tank's run recovery prompt. `/?run=<runId>` attaches
+the Tank to any existing run. `/rite/new` still exists as a plain HTML fallback.
 
 ### Tank sprite and background assets
 
-The Tank UI can render sprite sheets and a low-opacity wordmark from files in
-`site/assets/`:
+Sprites are the default Tank presentation. The npm package ships these assets
+from `site/assets/`:
 
 - `pigeon-walk-right.png`
 - `pigeon-walk-left.png`
-- `pigeon-peck.png` (optional idle peck cycle)
-- `raccoon-sleep.png` (optional idle sleep loop)
-- `troll-idle.png` (optional idle loop)
-- `gremlin-idle.png` (optional idle loop)
-- `ogre-idle.png` (optional idle loop)
-- `gtowntextmark.png` (optional decorative background wordmark)
+- `pigeon-peck.png`
+- `raccoon-sleep.png`
+- `raccoon-get-up.png`
+- `raccoon-scurry.png`
+- `troll-idle.png`
+- `gremlin-idle.png`
+- `ogre-idle.png`
+- `gtowntextmark.png`
 
 Pigeon sprite sheet expectations: `5x5` layout, `25` frames, transparent
-background. Idle creature sheet layouts are documented in
-`site/assets/README.md`.
+background. Creature sheet layouts are documented in `site/assets/README.md`.
 
 Runtime behavior:
 
-- missing sheets fall back to emoji;
-- missing left-walk sheet mirrors the right-walk sheet;
+- the Tank loads sprite sheets by default and falls back to emoji only when an
+  asset is missing in a fork or local development checkout;
+- missing pigeon left-walk sheet mirrors the right-walk sheet;
 - duplicate adjacent frames are de-duplicated at load time;
-- when the peck sheet is present, a peck cycle is triggered at random idle
-  intervals between ~40 and 120 seconds.
+- the pigeon peck cycle triggers at random idle intervals between ~40 and 120
+  seconds;
+- the raccoon plays sleep -> get up -> scurry, mirrors scurry for left/right
+  movement, and runs the get-up sheet backward before returning to sleep;
 - the wordmark floats centered in the Tank field at low opacity.
 
 ## Layout
@@ -612,7 +741,7 @@ Runtime behavior:
     loot/<id>.json
     quests/<id>.json
     rites/<id>.json
-    artifacts/<id>.json     # Phase 1 typed artifacts (Pigeon-Scribe)
+    artifacts/<id>.json     # typed artifacts (Pigeon-Scribe)
     inbox/<id>.json
     outbox/<id>.json
   runs/<runId>.json         # SSE-streamed run state (rite or plan)
@@ -643,6 +772,9 @@ Runtime behavior:
 | GET    | `/api/trace/:runId`               | Run as an LLM-MAS Orchestration Trace |
 | GET    | `/api/providers`, `/api/provider` | Provider presets and active provider config |
 | POST   | `/api/provider`                   | Update provider config and saved local key |
+| GET    | `/api/addons`                     | Add-on status for the current Warren |
+| POST   | `/api/addons`                     | Enable/disable a local add-on |
+| POST   | `/api/onchain/solana/lookup`      | Read-only Solana address summary |
 | GET    | `/api/country`                    | Full country state for current Warren |
 | GET    | `/api/country/public`             | Public country identity for discovery |
 | GET    | `/api/country/discover`           | Discoverable country list + random open sample |
@@ -663,43 +795,52 @@ Runtime behavior:
 npm test
 ```
 
-231 tests, no OpenAI calls. Pure-function coverage across drift, reward,
+270 tests, no OpenAI calls. Pure-function coverage across drift, reward,
 Hoard content-addressing, federation signatures (incl. HMAC), audit
 aggregation, reward plugin loader, graph rendering, concurrency semaphore,
 budget tracker, run persistence, markdown export, rite comparison, plus the
 newer subsystems: artifact retrieval and JSON parsing, specialist failure
 clustering, planner DAG validation and topological order, debate prompt
-construction, verifier tool dispatch, embeddings ranking math (cosine, RRF
-fusion), context-folding clustering, provider routing, output formatting, cloud
-mode, Settings menu reset flows, sprite assets, and trace-export schema mapping.
+construction, verifier tool dispatch, add-on registry, Solana read-only lookup,
+profile/activity/transaction/token summaries, thesis prompt and evidence
+construction, Tank thesis workflow wiring, sentiment source/key handling,
+sentiment CLI and Settings wiring, embeddings ranking math (cosine, RRF fusion),
+context-folding clustering, provider routing, output formatting, cloud mode,
+Settings menu reset flows, sprite assets, and trace-export schema mapping.
 
-## Phases
+## Current scope
 
-Goblintown shipped in six phases on top of the original race-and-judge
-pipeline. Each one composes with the others and is independently testable.
+The `0.5.0-beta.0` package is a complete local-first app and CLI. These pieces
+ship together and are covered by the test suite:
 
-| # | Capability | What it adds | Opt-in flag |
-| --- | --- | --- | --- |
-| 1 | **Memory** (typed Artifacts) | Pigeon-Scribe distills every Rite into a structured JSON artifact (claims, evidence, open questions, next steps). Future rites cite or auto-load relevant artifacts. | `--cite <riteId>`, `--remember` |
-| 1.5 | **Trace export** | Exports any run to the academic LLM-MAS Orchestration Trace schema (10 event types, 8 edge types, topology classification). | `goblintown export-trace` |
-| 2 | **Specialist recovery** | When the goblin pack all-fails Troll review, cluster the failure modes (1 LLM call), spawn 1-3 focused Specialist Goblins that take the best seed and surgically fix one mode each, then re-judge. Only escalates to the Ogre if specialists also fail. | on by default; disable with `--no-specialist` |
-| 3 | **Planning** (DAG of sub-rites) | Planner emits a typed DAG; topological executor runs each node as a sub-rite, feeding parent artifacts forward; recursive replan on node failure (max depth 2). Each node carries its own `packSize` and `personality` (dynamic spawning). | `goblintown plan "<task>"`, `▶ PLAN` button |
-| 4 | **Inter-agent debate** | After the initial pack proposes, run one debate round where each goblin sees the others' outputs and may revise. Replaces the originals so downstream stages judge the post-debate version. Closes the O3 (communication) gap from the LLM-MAS-RL survey. | `--debate` |
-| 5 | **Verifier-as-reward** (Troll tools) | Optional tool-use round during Troll review: built-in `json.parse`, `regex.match`, and (network-gated) `http.head`. Tool results are fed back to the verdict prompt for stronger ground-truth signal. | `--troll-tools` |
-| 6 | **Polish** | OpenAI-embeddings-based artifact retrieval with reciprocal-rank-fusion fallback to keywords; context-folding (`goblintown fold`) merges related older artifacts into higher-level summaries; `audit` and `graph` walk the artifact lineage across rites. | (transparent) |
+| Area | What ships now | Entry point |
+| --- | --- | --- |
+| **Tank UI** | Live creature diorama, default sprite sheets, centered wordmark, result panel, resumable runs, Settings, Onchain lookup, and Asteroid Mode. | `goblintown serve` |
+| **Memory** | Pigeon-Scribe distills every Rite into a structured JSON artifact with claims, evidence, open questions, next steps, and parent links. | `--cite <riteId>`, `--remember` |
+| **Planning** | Planner emits a typed DAG; the executor runs each node as a sub-rite, feeds artifacts forward, and replans after node failures. | `goblintown plan "<task>"`, Tank `PLAN` |
+| **Specialist recovery** | Failed packs are clustered by dominant failure mode, then 1-3 focused Specialist Goblins repair the best seed before Ogre escalation. | on by default; `--no-specialist` disables |
+| **Debate** | Goblins can see peer proposals and revise once before Gremlin/Troll review. | `--debate` |
+| **Verifier tools** | Troll can invoke `json.parse`, `regex.match`, gated `http.head`, and enabled add-on tools before scoring. | `--troll-tools` |
+| **Add-ons** | Optional local tool packs. The bundled Solana add-on contributes read-only onchain investigator tools for address profiles, activity, parsed transactions, token mint/account data, balances, account metadata, token accounts, signatures, and RPC health. | Settings -> Add-ons/Onchain, `goblintown addon solana <address>`, `goblintown addon solana tx <signature>` |
+| **Thesis engine** | Quality-and-advantage thesis memos for any project, team, product, protocol, or decision. Solana flags add read-only onchain diligence context. It is not a buy/sell recommendation. | Tank `THESIS`, `goblintown thesis "<subject>"` |
+| **Sentiment** | Free/no-key Alternative.me and GDELT baselines plus optional CoinGecko, Dune, Neynar, Santiment, CryptoPanic, and LunarCrush keys stored locally in `.goblintown/secrets.json`. | Settings -> Sentiment, `goblintown sentiment sources`, `goblintown sentiment project "<query>"` |
+| **Provider routing** | OpenAI, OpenRouter, Ollama, LM Studio, Groq, Together, Mistral, DeepSeek, Anthropic, Gemini, and custom OpenAI-compatible endpoints. | Settings -> API Provider, `goblintown route` |
+| **Goblintown Cloud** | Bundled Firebase-backed SSO, friend codes, discovery, mail, and country metadata for users who opt in. | first-run prompt, Settings -> Account |
+| **Federation and Country** | Filesystem/HTTP artifact delivery, friend requests, direct messages, country discovery, join approvals, and team role assignment. | Settings -> Country/Mail, `goblintown country` |
+| **Trace and audit** | Run export to LLM-MAS trace schema, artifact lineage graphing, audit, compare, reroll, and context folding. | `export-trace`, `graph`, `audit`, `fold` |
 
-The Tank (`goblintown serve`) renders all of this as a tamagotchi-style live
-village: each creature has a home (cave, perch, bridge, dump pile,
-workshop), tokens stream into per-creature thinking bubbles, the DAG panel
-lights up node-by-node during a plan, and the result panel slides up at
-the end with the actual winning output.
+The Tank renders the protocol as a tamagotchi-style live village: each creature
+has a home, tokens stream into per-creature thinking bubbles, the DAG panel
+lights up node-by-node during a plan, and the result panel slides up with the
+actual winning output.
 
 ## Research foundations
 
-Goblintown is an engineering project, not a research paper, but the design
-of Phases 1–6 is opinionated by what's working in current LLM multi-agent
-systems work. We deliberately stay in the **prompted, training-free** slice
-of the literature so everything runs with just an OpenAI-compatible API key.
+Goblintown is an engineering project, not a research paper, but the core
+orchestration design is opinionated by what's working in current LLM
+multi-agent systems. We deliberately stay in the **prompted, training-free**
+slice of the literature so everything runs with just an OpenAI-compatible API
+key.
 
 The following references were the most direct influences on the architecture.
 
@@ -712,29 +853,29 @@ the hardcoded ban list described in this postmortem.
 *Learning to Orchestrate Agents in Natural Language with the Conductor.*
 arXiv:2512.04388 (2025). The Conductor is RL-trained, but its ideas of
 *dynamic topology selection* and *recursive-self-as-worker* are stolen here
-as prompted heuristics inside the Planner (Phase 3) and the recursive
-replan loop in `plan-executor.ts`.
+as prompted heuristics inside the Planner and the recursive replan loop in
+`plan-executor.ts`.
 
 [3] **Zhou, & Chan.** *ADEMA: Knowledge-State Orchestration for
-Long-Horizon Synthesis.* arXiv:2604.25849 (2026). Goblintown's typed
-Artifact (Phase 1) is a direct adaptation of ADEMA's "epistemic
-bookkeeping": every rite emits structured claims, evidence, open
-questions, and next steps that the next rite consumes.
+Long-Horizon Synthesis.* arXiv:2604.25849 (2026). Goblintown's typed Artifact
+memory is a direct adaptation of ADEMA's "epistemic bookkeeping": every rite
+emits structured claims, evidence, open questions, and next steps that the next
+rite consumes.
 
 [4] **Saeidi, et al.** *FAMA: Failure-Aware Meta-Agentic Framework.*
-arXiv:2604.25135 (2026). The Specialist re-rite layer (Phase 2) follows
+arXiv:2604.25135 (2026). The Specialist re-rite layer follows
 FAMA's pattern of analyzing failure trajectories and spawning a minimal
 specialist that targets the dominant error, rather than rolling a fresh
 pack or jumping straight to a heavyweight model.
 
 [5] **Parmar.** *MCP Workflow Engine: Separating Intelligence from
-Execution.* arXiv:2605.00827 (2026). The plan-then-execute split (Phase 3)
-— a single LLM emits a declarative DAG, then a deterministic engine walks
-it — comes from this paper. We use prompting where MCP-Workflow uses a
-formal protocol, but the shape is the same.
+Execution.* arXiv:2605.00827 (2026). The plan-then-execute split — a single
+LLM emits a declarative DAG, then a deterministic engine walks it — comes from
+this paper. We use prompting where MCP-Workflow uses a formal protocol, but the
+shape is the same.
 
 [6] **Zou, J., et al.** *Latent Collaboration in Multi-Agent Systems.*
-arXiv:2511.20639 (2025). The optional debate round (Phase 4) is inspired
+arXiv:2511.20639 (2025). The optional debate round is inspired
 by this training-free latent-space-communication result; we surface it as
 an explicit prompted exchange where each goblin sees its peers' outputs
 before revising. This was the only debate paper in our survey that
@@ -742,7 +883,7 @@ reported a meaningful gain without any fine-tuning.
 
 [7] **Peng, Z., et al.** *CriticLean: Critic-Guided Reinforcement Learning
 for Mathematical Formalization.* arXiv:2507.06181 (2025). The
-verifier-as-reward pattern in the Troll's tool-use round (Phase 5) — using
+verifier-as-reward pattern in the Troll's tool-use round — using
 a deterministic verifier to ground a critic's score — comes from
 CriticLean's RL setup, applied here as plain tool-calling.
 
@@ -752,10 +893,10 @@ Multi-Agent Systems through Orchestration Traces.*
 <https://github.com/xxzcc/awesome-llm-mas-rl> (May 2026). The survey's
 **five orchestration sub-decisions** (spawn / delegate / communicate /
 aggregate / stop) were the diagnostic that surfaced goblintown's biggest
-gap: agents weren't communicating with each other. That directly motivated
-Phase 4 (debate). The repo's **JSON Schema for orchestration traces** is
-adopted as goblintown's `goblintown export-trace` output format (Phase
-1.5), so traces are interoperable with any tooling built around it.
+gap: agents weren't communicating with each other. That directly motivated the
+debate round. The repo's **JSON Schema for orchestration traces** is adopted as
+goblintown's `goblintown export-trace` output format, so traces are
+interoperable with any tooling built around it.
 
 ### Out of scope (deliberately)
 
