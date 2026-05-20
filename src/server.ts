@@ -4131,18 +4131,28 @@ function tankHtml(
   .creature.pos-pigeon[data-state="idle"] { animation: none; }
   .pos-gremlin { top: 9%;  right: 12%; }
   .pos-ogre    { top: 35%; left: 7%; }
-  .pos-goblins { bottom: 17%; left: 50%; transform: translateX(-50%); }
+  .pos-goblins { bottom: 14%; left: 50%; transform: translateX(-50%); width: min(92%, 760px); }
   .pos-raccoon { bottom: 8%; left: 12%; }
   .pos-troll   { bottom: 11%; right: 11%; }
 
-  .goblin-pile { display: flex; gap: 1.2rem; align-items: flex-end; }
-  .goblin-pile .creature { position: static; font-size: 2.2rem; }
-  .goblin-pile .badge {
-    align-self: center; margin-left: 0.4rem;
-    padding: 2px 7px; border: 1px solid var(--line); background: var(--bg-deep);
-    color: var(--accent); font-size: 0.7rem; border-radius: 3px; letter-spacing: 0.06em;
+  .goblin-pile {
+    display: flex; flex-wrap: wrap-reverse; gap: 0.45rem 0.7rem;
+    align-items: flex-end; justify-content: center;
   }
-  .goblin-wrap { display: flex; flex-direction: column; align-items: center; }
+  .goblin-pile .creature { position: static; font-size: 2.2rem; }
+  .goblin-wrap {
+    width: 72px; min-height: 92px;
+    display: flex; flex-direction: column; align-items: center;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .goblin-wrap[data-home="true"] { opacity: 0; transform: translateY(10px) scale(0.72); pointer-events: none; }
+  .goblin-wrap[data-home="false"] { opacity: 1; transform: translateY(0) scale(1); }
+  .goblin-sprite {
+    width: 76px; height: 76px; display: block;
+    image-rendering: pixelated;
+  }
+  .creature.goblin-sprite-animated .emoji { display: none; }
+  .creature.goblin-sprite-animated .goblin-sprite { display: block; }
   .personality {
     margin-top: 0.15rem; font-size: 0.58rem; color: var(--muted);
     letter-spacing: 0.1em; text-transform: uppercase;
@@ -4167,7 +4177,9 @@ function tankHtml(
   .bubble::after { content: ""; position: absolute; width: 0; height: 0; border: 6px solid transparent; }
   .bubble[data-tail="bl"]::after { bottom: -12px; left: 14px; border-top-color: var(--bubble-border); }
   .bubble[data-tail="br"]::after { bottom: -12px; right: 14px; border-top-color: var(--bubble-border); }
+  .bubble[data-tail="bc"]::after { bottom: -12px; left: 50%; transform: translateX(-50%); border-top-color: var(--bubble-border); }
   .bubble[data-tail="tl"]::after { top: -12px; left: 14px; border-bottom-color: var(--bubble-border); }
+  .bubble[data-tail="tc"]::after { top: -12px; left: 50%; transform: translateX(-50%); border-bottom-color: var(--bubble-border); }
   @keyframes bubble-in  { to { opacity: 1; transform: translateY(0); } }
   @keyframes bubble-out { to { opacity: 0; transform: translateY(-4px); } }
 
@@ -5362,6 +5374,40 @@ const IDLE_CREATURE_SPRITES = [
     fps: 6,
   },
 ];
+
+const GOBLIN_VARIANT_WEIGHTS = [
+  { variant: "green", weight: 0.46 },
+  { variant: "fire", weight: 0.27 },
+  { variant: "spear", weight: 0.17 },
+  { variant: "sceptre", weight: 0.10 },
+];
+
+const GOBLIN_ACTION_SHEETS = {
+  green: {
+    argue: { src: "/assets/goblin-green-argue.png", frames: 12, fps: 9 },
+    defend: { src: "/assets/goblin-green-defend.png", frames: 12, fps: 10 },
+    "go-home": { src: "/assets/goblin-green-go-home.png", frames: 12, fps: 10 },
+    "come-out": { src: "/assets/goblin-green-come-out.png", frames: 12, fps: 10 },
+  },
+  fire: {
+    argue: { src: "/assets/goblin-fire-argue.png", frames: 12, fps: 9 },
+    defend: { src: "/assets/goblin-fire-defend.png", frames: 12, fps: 10 },
+    "go-home": { src: "/assets/goblin-fire-go-home.png", frames: 14, fps: 10 },
+    "come-out": { src: "/assets/goblin-fire-come-out.png", frames: 12, fps: 10 },
+  },
+  spear: {
+    argue: { src: "/assets/goblin-spear-argue.png", frames: 12, fps: 9 },
+    defend: { src: "/assets/goblin-spear-defend.png", frames: 12, fps: 10 },
+    "go-home": { src: "/assets/goblin-spear-go-home.png", frames: 12, fps: 10 },
+    "come-out": { src: "/assets/goblin-spear-come-out.png", frames: 13, fps: 10 },
+  },
+  sceptre: {
+    argue: { src: "/assets/goblin-sceptre-argue.png", frames: 12, fps: 9 },
+    defend: { src: "/assets/goblin-sceptre-defend.png", frames: 22, fps: 12 },
+    "go-home": { src: "/assets/goblin-sceptre-go-home.png", frames: 12, fps: 10 },
+    "come-out": { src: "/assets/goblin-sceptre-come-out.png", frames: 12, fps: 10 },
+  },
+};
 
 /* Pigeon sprite renderer */
 const PIGEON_SPRITE_CONFIG = {
@@ -9433,29 +9479,32 @@ setTimeout(maybeStartOnboarding, 120);
 /* Bubbles */
 const MAX_BUBBLES = 3;
 const activeBubbles = [];
+function positionBubbleAboveTarget(b, creatureEl, preferredWidth) {
+  const tankRect = tank.getBoundingClientRect();
+  const cRect = creatureEl.getBoundingClientRect();
+  const cx = cRect.left - tankRect.left + cRect.width / 2;
+  const cy = cRect.top - tankRect.top;
+  const bw = Math.min(preferredWidth || b.offsetWidth || 220, tankRect.width - 16);
+  b.style.width = bw + "px";
+  const bh = b.offsetHeight || 56;
+  let left = cx - bw / 2;
+  left = Math.max(8, Math.min(tankRect.width - bw - 8, left));
+  let top = cy - bh - 14;
+  if (top < 8) top = Math.max(8, cy - bh - 4);
+  b.style.left = left + "px";
+  b.style.top = top + "px";
+  b.dataset.tail = "bc";
+}
 function dispatchBubble(creatureEl, text, kind, lifetime) {
   if (!creatureEl) return;
   kind = kind || "say";
   lifetime = lifetime || 4400;
-  const tankRect = tank.getBoundingClientRect();
-  const cRect = creatureEl.getBoundingClientRect();
-  const cx = cRect.left - tankRect.left + cRect.width / 2;
-  const cy = cRect.top  - tankRect.top;
-  const onLeft = cx < tankRect.width / 2;
 
   const b = document.createElement("div");
   b.className = "bubble kind-" + kind;
   b.textContent = text;
   bubbleLayer.appendChild(b);
-
-  const bw = 200;
-  let left = onLeft ? cx + 14 : cx - bw + 14;
-  left = Math.max(8, Math.min(tankRect.width - bw - 8, left));
-  let top = cy - 56;
-  if (top < 8) top = cy + cRect.height + 12;
-  b.style.left = left + "px";
-  b.style.top = top + "px";
-  b.dataset.tail = (top < cy) ? (onLeft ? "bl" : "br") : "tl";
+  positionBubbleAboveTarget(b, creatureEl, 200);
 
   activeBubbles.push(b);
   if (activeBubbles.length > MAX_BUBBLES) {
@@ -9520,6 +9569,160 @@ const goblinByIndex = {};
 const goblinByLootId = {};
 const specialistByIndex = {};
 const specialistByLootId = {};
+const goblinImageCache = new Map();
+
+function pickGoblinVariant() {
+  const roll = Math.random();
+  let cursor = 0;
+  for (const entry of GOBLIN_VARIANT_WEIGHTS) {
+    cursor += entry.weight;
+    if (roll <= cursor) return entry.variant;
+  }
+  return GOBLIN_VARIANT_WEIGHTS[GOBLIN_VARIANT_WEIGHTS.length - 1].variant;
+}
+
+function getGoblinSheet(variant, action) {
+  const byVariant = GOBLIN_ACTION_SHEETS[variant] || GOBLIN_ACTION_SHEETS.green;
+  return byVariant[action] || byVariant["come-out"];
+}
+
+function loadGoblinSheet(src) {
+  if (!goblinImageCache.has(src)) {
+    goblinImageCache.set(src, loadPigeonSheet(src));
+  }
+  return goblinImageCache.get(src);
+}
+
+function cleanupGoblinSlot(slot) {
+  if (!slot) return;
+  if (slot.rafId) cancelAnimationFrame(slot.rafId);
+  if (slot.actionTimer) clearTimeout(slot.actionTimer);
+  if (slot.goHomeTimer) clearTimeout(slot.goHomeTimer);
+  slot.rafId = 0;
+  slot.actionTimer = 0;
+  slot.goHomeTimer = 0;
+}
+
+function drawGoblinFrame(slot) {
+  if (!slot || !slot.ctx || !slot.canvas || !slot.image) return;
+  const order = slot.frameOrder && slot.frameOrder.length ? slot.frameOrder : [0];
+  const rawFrame = order[slot.frameCursor % order.length] || 0;
+  const frame = Math.max(0, Math.min(rawFrame, slot.frames - 1));
+  const frameW = Math.floor(slot.image.naturalWidth / slot.frames);
+  const frameH = slot.image.naturalHeight;
+  if (!frameW || !frameH) return;
+
+  const dw = slot.canvas.width;
+  const dh = slot.canvas.height;
+  const scale = Math.min(dw / frameW, dh / frameH);
+  const drawW = frameW * scale;
+  const drawH = frameH * scale;
+  const dx = (dw - drawW) / 2;
+  const dy = dh - drawH;
+
+  slot.ctx.clearRect(0, 0, dw, dh);
+  slot.ctx.imageSmoothingEnabled = false;
+  slot.ctx.drawImage(slot.image, frame * frameW, 0, frameW, frameH, dx, dy, drawW, drawH);
+}
+
+function tickGoblinAction(slot, ts) {
+  if (!slot || !slot.image) return;
+  if (!slot.lastTickMs) slot.lastTickMs = ts;
+  const delta = Math.max(0, ts - slot.lastTickMs);
+  slot.lastTickMs = ts;
+  const frameMs = 1000 / Math.max(1, slot.fps || 10);
+  slot.frameAccumulatorMs += delta;
+
+  while (slot.frameAccumulatorMs >= frameMs) {
+    slot.frameAccumulatorMs -= frameMs;
+    if (slot.frameCursor < slot.frameOrder.length - 1) {
+      slot.frameCursor += 1;
+    } else if (slot.loop) {
+      slot.frameCursor = 0;
+    }
+  }
+
+  drawGoblinFrame(slot);
+  if (slot.loop || slot.frameCursor < slot.frameOrder.length - 1) {
+    slot.rafId = requestAnimationFrame((nextTs) => tickGoblinAction(slot, nextTs));
+  } else {
+    slot.rafId = 0;
+  }
+}
+
+async function holdGoblinStanding(slot) {
+  if (!slot || slot.wrap.dataset.home === "true") return;
+  cleanupGoblinSlot(slot);
+  const token = ++slot.actionToken;
+  const sheet = getGoblinSheet(slot.variant, "come-out");
+  try {
+    const image = await loadGoblinSheet(sheet.src);
+    if (token !== slot.actionToken) return;
+    slot.image = image;
+    slot.frames = sheet.frames;
+    slot.frameOrder = [sheet.frames - 1];
+    slot.frameCursor = 0;
+    slot.loop = false;
+    slot.el.dataset.action = "standing";
+    slot.el.dataset.state = slot.el.dataset.state === "winner" ? "winner" : "idle";
+    drawGoblinFrame(slot);
+  } catch {
+    slot.el.classList.remove("goblin-sprite-animated");
+  }
+}
+
+async function playGoblinAction(slot, action, options) {
+  if (!slot) return;
+  options = options || {};
+  cleanupGoblinSlot(slot);
+  const token = ++slot.actionToken;
+  const sheet = getGoblinSheet(slot.variant, action);
+  slot.wrap.dataset.home = "false";
+  slot.el.dataset.action = action;
+  slot.el.dataset.state = options.state || "active";
+  try {
+    const image = await loadGoblinSheet(sheet.src);
+    if (token !== slot.actionToken) return;
+    slot.image = image;
+    slot.frames = sheet.frames;
+    slot.frameOrder = buildLinearFrameOrder(sheet.frames);
+    slot.frameCursor = 0;
+    slot.frameAccumulatorMs = 0;
+    slot.lastTickMs = 0;
+    slot.fps = sheet.fps;
+    slot.loop = !!options.loop;
+    drawGoblinFrame(slot);
+    slot.rafId = requestAnimationFrame((ts) => tickGoblinAction(slot, ts));
+    const duration = options.durationMs || Math.ceil((sheet.frames / sheet.fps) * 1000);
+    slot.actionTimer = setTimeout(() => {
+      if (token !== slot.actionToken) return;
+      if (options.homeOnEnd) {
+        cleanupGoblinSlot(slot);
+        slot.wrap.dataset.home = "true";
+        slot.el.dataset.state = "home";
+        clearThinkingBubble("goblin#" + slot.index);
+      } else if (options.loop) {
+        holdGoblinStanding(slot);
+      }
+    }, duration + 80);
+  } catch {
+    slot.el.classList.remove("goblin-sprite-animated");
+  }
+}
+
+function goHomeGoblinSlot(slot, delayMs) {
+  if (!slot || slot.wrap.dataset.home === "true") return;
+  if (slot.goHomeTimer) clearTimeout(slot.goHomeTimer);
+  const delay = Math.max(0, delayMs || 0);
+  slot.goHomeTimer = setTimeout(() => {
+    slot.goHomeTimer = 0;
+    playGoblinAction(slot, "go-home", { homeOnEnd: true, state: "idle" });
+  }, delay);
+}
+
+function goHomeAllGoblins(delayMs) {
+  Object.values(goblinByIndex).forEach((slot) => goHomeGoblinSlot(slot, delayMs || 0));
+}
 
 /* Live "thinking" bubbles (one per slot, updated in place) */
 const thinkingBubbles = {};
@@ -9539,6 +9742,13 @@ function resolveThinkingTarget(slot) {
 function updateThinkingBubble(slot, text) {
   const target = resolveThinkingTarget(slot);
   if (!target) return;
+  if (slot.indexOf("goblin#") === 0) {
+    const idx = +slot.slice("goblin#".length);
+    const goblin = goblinByIndex[idx] || goblinByIndex[idx % Math.max(1, Object.keys(goblinByIndex).length)];
+    if (goblin && goblin.wrap.dataset.home !== "true" && goblin.el.dataset.action !== "argue") {
+      playGoblinAction(goblin, "argue", { loop: true, durationMs: 1600 });
+    }
+  }
   let b = thinkingBubbles[slot];
   if (!b) {
     b = document.createElement("div");
@@ -9547,20 +9757,10 @@ function updateThinkingBubble(slot, text) {
     thinkingBubbles[slot] = b;
   }
   const tankRect = tank.getBoundingClientRect();
-  const cRect = target.getBoundingClientRect();
-  const cx = cRect.left - tankRect.left + cRect.width / 2;
-  const cy = cRect.top  - tankRect.top;
-  const onLeft = cx < tankRect.width / 2;
-  const bw = 280;
-  let left = onLeft ? cx + 14 : cx - bw + 14;
-  left = Math.max(8, Math.min(tankRect.width - bw - 8, left));
-  let top = cy - 90;
-  if (top < 8) top = cy + cRect.height + 12;
-  b.style.left = left + "px";
-  b.style.top = top + "px";
   // Show tail of streaming text so the bubble doesn't grow unbounded
   const tail = text.length > 240 ? "…" + text.slice(-240) : text;
   b.textContent = tail;
+  positionBubbleAboveTarget(b, target, Math.min(280, tankRect.width - 16));
 }
 function clearThinkingBubble(slot) {
   const b = thinkingBubbles[slot];
@@ -9573,33 +9773,62 @@ function clearAllThinkingBubbles() {
   Object.keys(thinkingBubbles).forEach(clearThinkingBubble);
 }
 function renderGoblinSlots(packSize) {
+  Object.values(goblinByIndex).forEach(cleanupGoblinSlot);
   goblinPile.innerHTML = "";
   Object.keys(goblinByIndex).forEach(k => delete goblinByIndex[k]);
   Object.keys(goblinByLootId).forEach(k => delete goblinByLootId[k]);
-  const visible = Math.min(packSize, 3);
+  const visible = Math.max(1, Math.floor(packSize || 1));
   for (let i = 0; i < visible; i++) {
+    const variant = pickGoblinVariant();
     const wrap = document.createElement("div");
     wrap.className = "goblin-wrap";
+    wrap.dataset.home = "true";
     const div = document.createElement("div");
-    div.className = "creature goblin";
-    div.dataset.state = "idle";
+    div.className = "creature goblin goblin-sprite-animated";
+    div.dataset.state = "home";
+    div.dataset.variant = variant;
     div.style.setProperty("--sway-dur", (3 + Math.random() * 2.5).toFixed(2) + "s");
     div.style.setProperty("--sway-x", irand(2,4) + "px");
     div.style.setProperty("--sway-delay", (-Math.random() * 3).toFixed(2) + "s");
-    div.innerHTML = '<span class="emoji">👺</span>';
+    const canvas = document.createElement("canvas");
+    canvas.className = "goblin-sprite";
+    canvas.width = 128;
+    canvas.height = 128;
+    canvas.setAttribute("aria-hidden", "true");
+    div.appendChild(canvas);
+    const emoji = document.createElement("span");
+    emoji.className = "emoji";
+    emoji.textContent = "👺";
+    div.appendChild(emoji);
     const tag = document.createElement("span");
     tag.className = "personality";
-    tag.textContent = "—";
+    tag.textContent = variant;
     wrap.appendChild(div);
     wrap.appendChild(tag);
     goblinPile.appendChild(wrap);
-    goblinByIndex[i] = { el: div, tag, lootId: null, personality: null };
-  }
-  if (packSize > 3) {
-    const badge = document.createElement("div");
-    badge.className = "badge";
-    badge.textContent = "+" + (packSize - 3);
-    goblinPile.appendChild(badge);
+    goblinByIndex[i] = {
+      el: div,
+      wrap,
+      canvas,
+      ctx: canvas.getContext("2d"),
+      tag,
+      index: i,
+      variant,
+      lootId: null,
+      personality: null,
+      image: null,
+      frames: 1,
+      fps: 10,
+      frameOrder: [0],
+      frameCursor: 0,
+      frameAccumulatorMs: 0,
+      lastTickMs: 0,
+      rafId: 0,
+      actionTimer: 0,
+      goHomeTimer: 0,
+      actionToken: 0,
+      loop: false,
+    };
   }
 }
 
@@ -9608,7 +9837,10 @@ function setGoblinAll(state) {
 }
 
 function renderSpecialistSlots(count) {
+  Object.values(goblinByIndex).forEach(cleanupGoblinSlot);
   goblinPile.innerHTML = "";
+  Object.keys(goblinByIndex).forEach(k => delete goblinByIndex[k]);
+  Object.keys(goblinByLootId).forEach(k => delete goblinByLootId[k]);
   Object.keys(specialistByIndex).forEach(k => delete specialistByIndex[k]);
   Object.keys(specialistByLootId).forEach(k => delete specialistByLootId[k]);
   const visible = Math.min(Math.max(1, count || 1), 3);
@@ -9635,7 +9867,7 @@ function renderSpecialistSlots(count) {
 function resetCreatures() {
   ["c-raccoon","c-gremlin","c-troll","c-pigeon"].forEach(id => setState(id,"idle"));
   setState("c-ogre","cave");
-  setGoblinAll("idle");
+  goHomeAllGoblins(0);
 }
 
 /* First-line snippet helper */
@@ -10518,6 +10750,7 @@ function openStream(runId, isPlan, opts) {
     setTimeout(() => {
       ["c-raccoon","c-gremlin","c-troll","c-pigeon"].forEach(id => setState(id,"idle"));
       setState("c-ogre","cave");
+      goHomeAllGoblins(0);
       hideDag();
     }, 4000);
     if (d.riteId) {
@@ -10548,6 +10781,7 @@ function openStream(runId, isPlan, opts) {
     activeStream = null;
     setLaunchButtonsDisabled(false);
     $("clock").textContent = "idle";
+    goHomeAllGoblins(300);
     setTimeout(() => refreshResumePanel(runId, isPlan), 350);
   });
 }
@@ -10574,10 +10808,19 @@ async function handleStep(step, opts) {
       break;
     case "pack:start":
       setTicker("pack of " + step.size + " dispatched", true);
-      setGoblinAll("active");
+      renderGoblinSlots(step.size);
+      Object.values(goblinByIndex).forEach((slot, i) => {
+        if (!replay) {
+          playGoblinAction(slot, "come-out", { state: "active", durationMs: 1300 + i * 90 });
+        } else {
+          slot.wrap.dataset.home = "false";
+          slot.el.dataset.state = "active";
+          holdGoblinStanding(slot);
+        }
+      });
       break;
     case "pack:goblin": {
-      const slot = goblinByIndex[step.index] || goblinByIndex[step.index % 3];
+      const slot = goblinByIndex[step.index] || goblinByIndex[step.index % Math.max(1, Object.keys(goblinByIndex).length)];
       if (slot) {
         slot.lootId = step.lootId;
         goblinByLootId[step.lootId] = slot;
@@ -10585,7 +10828,7 @@ async function handleStep(step, opts) {
           slot.personality = step.personality;
           slot.tag.textContent = step.personality;
         }
-        if (!replay) hopGoblin(slot.el);
+        if (!replay) playGoblinAction(slot, "argue", { durationMs: 1600 });
         clearThinkingBubble("goblin#" + step.index);
         if (!replay) {
           const snippet = await fetchLootSnippet(step.lootId, 70);
@@ -10596,7 +10839,10 @@ async function handleStep(step, opts) {
     }
     case "debate:start":
       setTicker("debate round " + step.round + " · " + step.size + " goblins exchanging", true);
-      Object.values(goblinByIndex).forEach((g) => { g.el.dataset.state = "active"; hopGoblin(g.el); });
+      Object.values(goblinByIndex).forEach((slot) => {
+        if (!replay) playGoblinAction(slot, "argue", { loop: true, durationMs: 1800 });
+        else slot.el.dataset.state = "active";
+      });
       break;
     case "debate:goblin": {
       const slot = goblinByIndex[step.index];
@@ -10605,6 +10851,7 @@ async function handleStep(step, opts) {
         goblinByLootId[step.lootId] = slot;
         clearThinkingBubble("goblin#" + step.index);
         if (!replay) {
+          playGoblinAction(slot, "argue", { durationMs: 1600 });
           const snippet = await fetchLootSnippet(step.lootId, 70);
           if (snippet) dispatchBubble(slot.el, "↻ " + snippet);
         }
@@ -10618,11 +10865,17 @@ async function handleStep(step, opts) {
       setState("c-gremlin","active");
       pounceVariant();
       setTicker("gremlin attacking", true);
+      Object.values(goblinByIndex).forEach((slot) => {
+        if (!replay) playGoblinAction(slot, "defend", { loop: true, durationMs: 1800 });
+        else slot.el.dataset.state = "active";
+      });
       break;
     case "chaos:done": {
       if (!replay) {
         const snippet = await fetchLootSnippet(step.gremlinId, 70);
         if (snippet) dispatchBubble($("c-gremlin"), snippet, "attack");
+        const slot = goblinByLootId[step.goblinId];
+        if (slot) playGoblinAction(slot, "defend", { durationMs: 1400 });
       }
       setState("c-gremlin","idle");
       break;
@@ -10653,8 +10906,10 @@ async function handleStep(step, opts) {
       if (slot && passed) {
         slot.el.dataset.state = "winner";
         dispatchBubble(slot.el, "👑 winner · " + v.score.toFixed(2) + " shinies", "win");
+        goHomeGoblinSlot(slot, 2600);
       } else if (slot && !passed) {
         slot.el.dataset.state = "fail";
+        goHomeGoblinSlot(slot, 1400);
       }
       break;
     }

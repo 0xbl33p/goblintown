@@ -83,5 +83,6 @@ every 40 to 120 seconds), then resumes walking. The raccoon plays the get-up
 sheet on active scan, the scurry sheet during handoff, and the get-up sheet in
 reverse before returning to sleep. Gremlin, troll, and ogre idle sheets loop in
 place while preserving the normal tank state glow and dimming effects. Goblin
-action sheets are bundled for the future hut/action renderer and should remain
-variant-specific instead of being collapsed into a single generic sheet.
+action sheets drive the live Tank rite lifecycle: come out, argue, defend, and
+go home. Keep them variant-specific instead of collapsing them into a single
+generic sheet.

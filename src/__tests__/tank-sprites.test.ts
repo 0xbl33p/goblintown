@@ -73,6 +73,29 @@ describe("tank sprite assets", () => {
       assert.deepEqual(dimensions, { width: sheet.width, height: sheet.height });
     }
   });
+
+  it("wires Goblintown goblin action sheets into the live Tank renderer", () => {
+    assert.match(serverSource, /const GOBLIN_VARIANT_WEIGHTS = \[/);
+    assert.match(serverSource, /variant: "green"[\s\S]*?variant: "fire"[\s\S]*?variant: "spear"[\s\S]*?variant: "sceptre"/);
+    assert.match(serverSource, /const GOBLIN_ACTION_SHEETS = \{/);
+    for (const sheet of goblinActionSheets) {
+      assert.match(serverSource, new RegExp(sheet.filename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    }
+    assert.match(serverSource, /function pickGoblinVariant/);
+    assert.match(serverSource, /function playGoblinAction/);
+    assert.match(serverSource, /function holdGoblinStanding/);
+    assert.match(serverSource, /function goHomeGoblinSlot/);
+    assert.match(serverSource, /function goHomeAllGoblins/);
+    assert.match(serverSource, /const visible = Math\.max\(1, Math\.floor\(packSize \|\| 1\)\)/);
+    assert.doesNotMatch(serverSource, /Math\.min\(packSize,\s*3\)/);
+    assert.match(serverSource, /renderGoblinSlots\(step\.size\)/);
+    assert.match(serverSource, /playGoblinAction\(slot, "come-out"/);
+    assert.match(serverSource, /playGoblinAction\(slot, "argue"/);
+    assert.match(serverSource, /playGoblinAction\(slot, "defend"/);
+    assert.match(serverSource, /goHomeGoblinSlot\(slot/);
+    assert.match(serverSource, /function positionBubbleAboveTarget/);
+    assert.match(serverSource, /left = cx - bw \/ 2/);
+  });
 });
 
 const goblinActionSheets = [
