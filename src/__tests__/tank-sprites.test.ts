@@ -123,6 +123,24 @@ describe("tank sprite assets", () => {
     assert.match(doneBlock[0], /goHomeAllGoblins\(1200\)/);
   });
 
+  it("wakes and scurries the raccoon when prior artifacts are recalled", () => {
+    assert.match(serverSource, /function cueRaccoonWork\(options\)/);
+    assert.match(serverSource, /function cueRaccoonScurryAfterWake/);
+    assert.match(serverSource, /setState\("c-raccoon","active"\);[\s\S]*?cueRaccoonScurryAfterWake/);
+
+    const artifactBlock = serverSource.match(/case "artifacts:loaded":[\s\S]*?break;/);
+    assert.ok(artifactBlock);
+    assert.match(artifactBlock[0], /cueRaccoonWork\(\{ scurry: !replay \}\)/);
+
+    const scavengeStartBlock = serverSource.match(/case "scavenge:start":[\s\S]*?break;/);
+    assert.ok(scavengeStartBlock);
+    assert.match(scavengeStartBlock[0], /cueRaccoonWork\(\)/);
+
+    const scavengeDoneBlock = serverSource.match(/case "scavenge:done":[\s\S]*?break;/);
+    assert.ok(scavengeDoneBlock);
+    assert.match(scavengeDoneBlock[0], /cueRaccoonScurryAfterWake\(\)/);
+  });
+
   it("clears all Tank text boxes before goblins go home", () => {
     assert.match(serverSource, /function clearAllTextBubbles/);
     const goHomeSlot = serverSource.match(/function goHomeGoblinSlot\(slot, delayMs\) \{[\s\S]*?\n\}/);

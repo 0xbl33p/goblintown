@@ -5513,6 +5513,7 @@ const raccoonSpriteState = {
   rafId: 0,
   images: { sleep: null, getUp: null, scurry: null },
 };
+let raccoonScurryTimer = 0;
 
 function setRaccoonFacing(facing) {
   raccoonSpriteState.facing = facing === "left" ? "left" : "right";
@@ -5674,12 +5675,53 @@ function playRaccoonScurry(facing) {
   return true;
 }
 
+function clearRaccoonScurryTimer() {
+  if (raccoonScurryTimer) {
+    clearTimeout(raccoonScurryTimer);
+    raccoonScurryTimer = 0;
+  }
+}
+
+function raccoonScurryDelayMs() {
+  if (!raccoonSpriteState.enabled) return 0;
+  if (
+    raccoonSpriteState.mode === "sleep" ||
+    raccoonSpriteState.mode === "sleep-down" ||
+    raccoonSpriteState.mode === "wake"
+  ) {
+    return Math.ceil((RACCOON_SPRITE_CONFIG.getUpFrames / RACCOON_SPRITE_CONFIG.getUpFps) * 1000) + 80;
+  }
+  return 80;
+}
+
+function cueRaccoonScurryAfterWake() {
+  if (
+    raccoonSpriteState.enabled &&
+    (raccoonSpriteState.mode === "sleep" || raccoonSpriteState.mode === "sleep-down")
+  ) {
+    setState("c-raccoon","active");
+  }
+  clearRaccoonScurryTimer();
+  const delay = raccoonScurryDelayMs();
+  raccoonScurryTimer = setTimeout(() => {
+    raccoonScurryTimer = 0;
+    scurryVariant();
+  }, delay);
+}
+
+function cueRaccoonWork(options) {
+  options = options || {};
+  setState("c-raccoon","active");
+  if (options.scurry) cueRaccoonScurryAfterWake();
+}
+
 function applyRaccoonStateVisual(state) {
   const wantsIdle = state === "idle";
   raccoonSpriteState.requestedState = wantsIdle ? "idle" : "active";
   if (!raccoonSpriteState.enabled) return;
 
   if (wantsIdle) {
+    clearRaccoonScurryTimer();
     if (raccoonSpriteState.mode === "sleep" || raccoonSpriteState.mode === "sleep-down") return;
     playRaccoonTransition("down");
     return;
@@ -11046,16 +11088,17 @@ async function handleStep(step, opts) {
       updateThinkingBubble(step.slot, step.text);
       return;
     case "scavenge:start":
-      setState("c-raccoon","active");
+      cueRaccoonWork();
       setTicker("raccoon scanning corpus", true);
       dispatchBubble($("c-raccoon"), "foraging " + (step.globs || []).join(", "));
       break;
     case "scavenge:done":
-      scurryVariant();
+      cueRaccoonScurryAfterWake();
       setTicker("raccoon → goblins", true);
       dispatchBubble($("c-raccoon"), "scanned " + step.fileCount + " file" + (step.fileCount === 1 ? "" : "s"));
       break;
     case "artifacts:loaded":
+      cueRaccoonWork({ scurry: !replay });
       setTicker("raccoon recalled " + step.count + " prior artifact" + (step.count === 1 ? "" : "s"), true);
       dispatchBubble($("c-raccoon"), "📜 loaded " + step.count + " prior artifact" + (step.count === 1 ? "" : "s"));
       break;
