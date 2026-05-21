@@ -725,8 +725,8 @@ Runtime behavior:
   asset is missing in a fork or local development checkout;
 - missing pigeon left-walk sheet mirrors the right-walk sheet;
 - duplicate adjacent frames are de-duplicated at load time;
-- the pigeon peck cycle triggers at random idle intervals between ~40 and 120
-  seconds;
+- the pigeon peck cycle triggers within the first few idle seconds, repeats
+  every ~14 to 35 seconds, and queues a quick peck after scribing finishes;
 - the raccoon plays sleep -> get up -> scurry, mirrors scurry for left/right
   movement, and runs the get-up sheet backward before returning to sleep;
 - the wordmark floats centered in the Tank field at low opacity.

@@ -5446,10 +5446,10 @@ const PIGEON_PECK_CONFIG = {
   cols: 5,
   rows: 5,
   totalFrames: 25,
-  firstMinIntervalMs: 6_000,
-  firstMaxIntervalMs: 14_000,
-  minIntervalMs: 40_000,
-  maxIntervalMs: 120_000,
+  firstMinIntervalMs: 1_500,
+  firstMaxIntervalMs: 4_000,
+  minIntervalMs: 14_000,
+  maxIntervalMs: 35_000,
   fps: 8,
 };
 const PIGEON_WIRE_NUDGE_UP_PX = 12;
@@ -5934,13 +5934,20 @@ function scheduleNextPigeonPeck(ts, opts) {
   pigeonSpriteState.nextPeckAtMs = now + nextPigeonPeckDelayMs(initial);
 }
 
+function queuePigeonPeckSoon(delayMs) {
+  if (!pigeonSpriteState.enabled || !pigeonSpriteState.images.peck) return;
+  if (!pigeonSpriteState.peckFrameOrder.length) return;
+  const delay = Math.max(0, Number(delayMs) || 0);
+  pigeonSpriteState.nextPeckAtMs = performance.now() + delay;
+}
+
 function startPigeonPeck(ts) {
   if (!pigeonSpriteState.images.peck) return false;
   if (!pigeonSpriteState.peckFrameOrder.length) return false;
   if (pigeonSpriteState.mode === "peck") return true;
   pigeonSpriteState.mode = "peck";
   pigeonSpriteState.frameCursor = 0;
-  pigeonSpriteState.peckLoopsLeft = 1;
+  pigeonSpriteState.peckLoopsLeft = 2;
   pigeonSpriteState.peckStepBudget = Math.max(
     1,
     pigeonSpriteState.peckFrameOrder.length * pigeonSpriteState.peckLoopsLeft
@@ -11299,6 +11306,8 @@ async function handleStep(step, opts) {
       dispatchBubble($("c-pigeon"), "📜 scribing this rite...");
       break;
     case "scribe:done":
+      setState("c-pigeon","idle");
+      queuePigeonPeckSoon(350);
       setTicker("artifact " + step.artifactId + " stashed", true);
       dispatchBubble($("c-pigeon"), "📜 " + step.artifactId);
       break;

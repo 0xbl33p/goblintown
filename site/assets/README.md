@@ -79,10 +79,11 @@ Expected decorative tank assets:
 The UI automatically falls back to emoji only if files are removed or missing in
 a fork/local checkout. If `pigeon-walk-left.png` is missing, the right sheet is
 mirrored at runtime. The pigeon randomly plays a peck cycle while idle (roughly
-every 40 to 120 seconds), then resumes walking. The raccoon plays the get-up
-sheet on active scan, the scurry sheet during handoff, and the get-up sheet in
-reverse before returning to sleep. Gremlin, troll, and ogre idle sheets loop in
-place while preserving the normal tank state glow and dimming effects. Goblin
-action sheets drive the live Tank rite lifecycle: come out, argue, defend, and
-go home. Keep them variant-specific instead of collapsing them into a single
-generic sheet.
+within the first few seconds, then every 14 to 35 seconds), then resumes
+walking. After scribing finishes, the pigeon returns to idle and queues a quick
+peck so the handoff is visible. The raccoon plays the get-up sheet on active
+scan, the scurry sheet during handoff, and the get-up sheet in reverse before
+returning to sleep. Gremlin, troll, and ogre idle sheets loop in place while
+preserving the normal tank state glow and dimming effects. Goblin action sheets
+drive the live Tank rite lifecycle: come out, argue, defend, and go home. Keep
+them variant-specific instead of collapsing them into a single generic sheet.

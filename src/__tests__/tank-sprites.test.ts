@@ -141,6 +141,23 @@ describe("tank sprite assets", () => {
     assert.match(scavengeDoneBlock[0], /cueRaccoonScurryAfterWake\(\)/);
   });
 
+  it("makes the pigeon peck visible after idle and scribe activity", () => {
+    const peckConfig = serverSource.match(/const PIGEON_PECK_CONFIG = \{[\s\S]*?\n\};/);
+    assert.ok(peckConfig);
+    assert.match(peckConfig[0], /firstMinIntervalMs: 1_500/);
+    assert.match(peckConfig[0], /firstMaxIntervalMs: 4_000/);
+    assert.match(peckConfig[0], /minIntervalMs: 14_000/);
+    assert.match(peckConfig[0], /maxIntervalMs: 35_000/);
+
+    assert.match(serverSource, /function queuePigeonPeckSoon\(delayMs\)/);
+    assert.match(serverSource, /pigeonSpriteState\.peckLoopsLeft = 2/);
+
+    const scribeDoneBlock = serverSource.match(/case "scribe:done":[\s\S]*?break;/);
+    assert.ok(scribeDoneBlock);
+    assert.match(scribeDoneBlock[0], /setState\("c-pigeon","idle"\)/);
+    assert.match(scribeDoneBlock[0], /queuePigeonPeckSoon\(350\)/);
+  });
+
   it("clears all Tank text boxes before goblins go home", () => {
     assert.match(serverSource, /function clearAllTextBubbles/);
     const goHomeSlot = serverSource.match(/function goHomeGoblinSlot\(slot, delayMs\) \{[\s\S]*?\n\}/);
