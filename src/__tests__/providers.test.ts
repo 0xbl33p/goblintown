@@ -69,6 +69,7 @@ describe("provider presets", () => {
     const runtime = resolveProviderRuntime(
       { preset: "ollama", outputFormat: "markdown" },
       {},
+      {},
     );
 
     assert.equal(runtime.id, "ollama");
@@ -78,12 +79,24 @@ describe("provider presets", () => {
   });
 
   it("does not send a malformed dummy token to LM Studio", () => {
-    const runtime = resolveProviderRuntime({ preset: "lmstudio" }, {});
+    const runtime = resolveProviderRuntime({ preset: "lmstudio" }, {}, {});
 
     assert.equal(runtime.id, "lmstudio");
     assert.equal(runtime.apiKeyEnv, "LM_API_TOKEN");
     assert.equal(runtime.apiKey, "");
     assert.equal(runtime.missingApiKey, undefined);
+  });
+
+  it("keeps explicit empty stored provider secrets hermetic", () => {
+    const runtime = resolveProviderRuntime(
+      { preset: "groq" },
+      {},
+      {},
+    );
+
+    assert.equal(runtime.apiKey, "");
+    assert.equal(runtime.apiKeySource, "none");
+    assert.equal(runtime.missingApiKey, "GROQ_API_KEY");
   });
 
   it("uses LM_API_TOKEN for LM Studio even when an older env name is configured", () => {
