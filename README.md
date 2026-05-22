@@ -812,7 +812,7 @@ Settings menu reset flows, sprite assets, and trace-export schema mapping.
 
 ## Current scope
 
-The `0.5.0-beta.0` package is a complete local-first app and CLI. These pieces
+The `0.6.0-beta.1` package is a complete local-first app and CLI. These pieces
 ship together and are covered by the test suite:
 
 | Area | What ships now | Entry point |
