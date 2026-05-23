@@ -14,6 +14,10 @@ import {
   setAddonEnabled,
 } from "./addons.js";
 import {
+  normalizeChatMessages,
+  runSingleGoblinChat,
+} from "./chat.js";
+import {
   MAX_PEERS,
   MAX_TEAM_MEMBERS,
   makeCountryName,
@@ -394,6 +398,9 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
 
   app.get("/", async (_req, res) => renderGoblinMode(warren, runs, res));
   app.get("/tank", async (_req, res) => renderHome(warren, runs, res));
+  app.get("/chat", (_req, res) =>
+    res.send(layout("Single Goblin Chat", chatPage())),
+  );
   app.get("/rite/new", (_req, res) =>
     res.send(layout("New Rite", newRiteForm())),
   );
@@ -417,6 +424,33 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
   app.post("/api/plan", async (req, res) =>
     startPlanRun(warren, runs, runDir, req, res),
   );
+  app.post("/api/chat", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const messages = normalizeChatMessages(body.messages);
+    if (messages.length === 0 || messages[messages.length - 1].role !== "user") {
+      res.status(400).json({ error: "messages must end with a user message" });
+      return;
+    }
+    const personality =
+      typeof body.personality === "string"
+        ? (body.personality as Personality)
+        : "chipper";
+    const rawMaxOutputTokens = Number(body.maxOutputTokens ?? 900);
+    const maxOutputTokens = Number.isFinite(rawMaxOutputTokens)
+      ? Math.max(64, Math.min(4000, Math.floor(rawMaxOutputTokens)))
+      : 900;
+    try {
+      const result = await runSingleGoblinChat({
+        messages,
+        personality,
+        maxOutputTokens,
+        hoard: warren.hoard,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
   app.get("/api/rite/:runId/stream", (req, res) =>
     streamRiteRun(runs, req, res),
   );
@@ -3007,6 +3041,7 @@ function newRiteForm(): string {
              <option value="chipper">chipper</option>
              <option value="stoic">stoic</option>
              <option value="feral">feral</option>
+             <option value="goblin_mode">goblin_mode</option>
            </select>
          </label>
          &nbsp;<label><input type="checkbox" name="noFallback"> skip Ogre fallback</label>
@@ -3055,6 +3090,173 @@ function newRiteForm(): string {
           append("✖ error: " + msg);
           es.close();
         });
+      });
+    </script>
+  `;
+}
+
+function chatPage(): string {
+  return `
+    <p><a href="/">&larr; Tank</a> · <a href="/runs">Runs</a></p>
+    <h1>Single Goblin Chat</h1>
+    <style>
+      .chat-shell { display: grid; gap: .85rem; max-width: 860px; }
+      .chat-toolbar { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+      .chat-toolbar label { display: inline-flex; align-items: center; gap: .4rem; }
+      .chat-log { min-height: 360px; max-height: 58vh; overflow-y: auto; background: #0a0e08; border: 1px solid #1f2d18; padding: .9rem; }
+      .chat-msg { margin: 0 0 .85rem; padding: .7rem .8rem; border-left: 3px solid #2a3d22; background: rgba(20, 32, 26, .55); white-space: pre-wrap; word-break: break-word; }
+      .chat-msg.user { border-left-color: #8fcf52; }
+      .chat-msg.assistant { border-left-color: #5a7042; }
+      .chat-role { display: block; color: #5a7042; font-size: 11px; text-transform: uppercase; margin-bottom: .25rem; }
+      .chat-compose { display: grid; gap: .5rem; }
+      .chat-compose textarea, .chat-toolbar select, .chat-toolbar input { background: #0a0e08; color: #d8efb6; border: 1px solid #2a3d22; border-radius: 3px; padding: .55rem; font: inherit; }
+      .chat-actions { display: flex; gap: .5rem; align-items: center; }
+      .chat-actions button { background: #1f3a14; color: #d8efb6; border: 1px solid #416b26; border-radius: 3px; padding: .5rem .8rem; font: inherit; cursor: pointer; }
+      .chat-actions button.secondary { background: #14201a; border-color: #2a3d22; }
+      .chat-actions button:disabled { opacity: .55; cursor: wait; }
+      .chat-offer { display: none; border: 1px solid #2a3d22; background: #101a12; padding: .75rem; }
+      .chat-offer.open { display: flex; gap: .75rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+      .chat-offer button { background: #1f3a14; color: #d8efb6; border: 1px solid #416b26; border-radius: 3px; padding: .45rem .7rem; font: inherit; cursor: pointer; }
+      .chat-status { color: #5a7042; }
+    </style>
+    <div class="chat-shell">
+      <div class="chat-toolbar">
+        <label>Personality
+          <select id="chat-personality">
+            <option value="chipper">chipper</option>
+            <option value="nerdy">nerdy</option>
+            <option value="stoic">stoic</option>
+            <option value="cynical">cynical</option>
+            <option value="feral">feral</option>
+            <option value="goblin_mode">goblin_mode</option>
+          </select>
+        </label>
+        <label>Max tokens
+          <input id="chat-max" type="number" min="64" max="4000" value="900">
+        </label>
+        <span class="chat-status" id="chat-status">ready</span>
+      </div>
+      <div class="chat-log" id="chat-log" aria-live="polite"></div>
+      <div class="chat-offer" id="chat-offer">
+        <span id="chat-offer-text"></span>
+        <button id="chat-offer-run" type="button">Run Goblintown</button>
+      </div>
+      <form class="chat-compose" id="chat-form">
+        <textarea id="chat-input" rows="4" placeholder="Ask the single Goblin anything..." required></textarea>
+        <div class="chat-actions">
+          <button id="chat-send" type="submit">Send</button>
+          <button class="secondary" id="chat-clear" type="button">Clear</button>
+        </div>
+      </form>
+    </div>
+    <script>
+      const messages = [];
+      const log = document.getElementById("chat-log");
+      const form = document.getElementById("chat-form");
+      const input = document.getElementById("chat-input");
+      const send = document.getElementById("chat-send");
+      const clear = document.getElementById("chat-clear");
+      const status = document.getElementById("chat-status");
+      const personality = document.getElementById("chat-personality");
+      const maxTokens = document.getElementById("chat-max");
+      const offer = document.getElementById("chat-offer");
+      const offerText = document.getElementById("chat-offer-text");
+      const offerRun = document.getElementById("chat-offer-run");
+      let offeredTask = "";
+
+      function escHtml(value) {
+        return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+      }
+
+      function renderMessage(message, lootId) {
+        const node = document.createElement("div");
+        node.className = "chat-msg " + message.role;
+        const loot = lootId ? ' <a href="/loot/' + encodeURIComponent(lootId) + '">loot</a>' : "";
+        node.innerHTML = '<span class="chat-role">' + message.role + loot + '</span>' + escHtml(message.content);
+        log.appendChild(node);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function renderGoblintownOffer(nextOffer) {
+        if (!nextOffer || !nextOffer.task) {
+          offer.classList.remove("open");
+          offeredTask = "";
+          return;
+        }
+        offeredTask = nextOffer.task;
+        offerText.textContent = nextOffer.requested
+          ? "Goblintown requested. Start a full pack rite for this prompt?"
+          : "This looks complex enough for the full Goblintown pack.";
+        offer.classList.add("open");
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const content = input.value.trim();
+        if (!content) return;
+        const userMessage = { role: "user", content };
+        messages.push(userMessage);
+        renderMessage(userMessage);
+        input.value = "";
+        send.disabled = true;
+        status.textContent = "thinking";
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messages,
+              personality: personality.value,
+              maxOutputTokens: Number(maxTokens.value || 900),
+            }),
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || response.statusText);
+          messages.push(body.message);
+          renderMessage(body.message, body.lootId);
+          renderGoblintownOffer(body.goblintownOffer);
+          status.textContent = body.lootId ? "saved " + body.lootId : "ready";
+        } catch (err) {
+          status.textContent = err instanceof Error ? err.message : String(err);
+        } finally {
+          send.disabled = false;
+          input.focus();
+        }
+      });
+
+      clear.addEventListener("click", () => {
+        messages.splice(0, messages.length);
+        log.innerHTML = "";
+        status.textContent = "ready";
+        renderGoblintownOffer(null);
+        input.focus();
+      });
+
+      offerRun.addEventListener("click", async () => {
+        const task = offeredTask.trim();
+        if (!task) return;
+        offerRun.disabled = true;
+        status.textContent = "starting Goblintown";
+        try {
+          const response = await fetch("/api/rite", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              task,
+              packSize: 3,
+              personality: personality.value,
+              remember: true,
+            }),
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || response.statusText);
+          status.innerHTML = 'Goblintown running: <a href="/?run=' + encodeURIComponent(body.runId) + '">open run</a>';
+          offer.classList.remove("open");
+        } catch (err) {
+          status.textContent = err instanceof Error ? err.message : String(err);
+        } finally {
+          offerRun.disabled = false;
+        }
       });
     </script>
   `;
@@ -4408,6 +4610,51 @@ function tankHtml(
     .provider-route-extra { grid-column: auto; }
     .provider-route-row > div:nth-child(4) { grid-column: auto; }
     .provider-route-slot { padding-bottom: 0; }
+    body { padding: 0; }
+    .warren {
+      width: 100vw;
+      height: 100vh;
+      border-radius: 0;
+      border-left: 0;
+      border-right: 0;
+    }
+    .strip {
+      gap: 0.55rem;
+      padding: 0.48rem 0.55rem;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .strip .stat,
+    .strip .tier {
+      display: none;
+    }
+    .workarea {
+      grid-template-columns: 56px 1fr;
+    }
+    .ops-sidebar {
+      padding: 0.45rem 0.28rem;
+    }
+    .ops-quick .btn {
+      min-height: 2rem;
+      font-size: 0.5rem;
+      padding: 0.32rem 0.14rem;
+    }
+    .ops-examples,
+    .ops-output {
+      display: none;
+    }
+    .chat-thread {
+      padding: 0.85rem;
+    }
+    .chat-input-row {
+      grid-template-columns: 1fr;
+    }
+    .chat-input-row button {
+      width: 100%;
+    }
+    .chat-offer-inline.open {
+      display: grid;
+    }
   }
   .country-chip {
     border: 1px solid var(--line);
@@ -4755,7 +5002,7 @@ function tankHtml(
 
   .workarea {
     display: grid;
-    grid-template-columns: 290px 1fr;
+    grid-template-columns: 76px 1fr;
     min-height: 0;
     border-bottom: 1px solid var(--line);
   }
@@ -4763,11 +5010,11 @@ function tankHtml(
   .ops-sidebar {
     border-right: 1px solid var(--line);
     background: rgba(8, 12, 8, 0.95);
-    padding: 0.7rem;
+    padding: 0.55rem 0.42rem;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    gap: 0.6rem;
+    gap: 0.45rem;
     overflow: auto;
   }
   .ops-head {
@@ -4777,8 +5024,11 @@ function tankHtml(
     gap: 0.4rem;
   }
   .ops-sidebar h3 {
-    margin: 0;
-    font-size: 0.74rem;
+    margin: 0 auto;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    text-align: center;
+    font-size: 0.62rem;
     color: var(--fg-bright);
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -4797,17 +5047,18 @@ function tankHtml(
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.6rem;
+    gap: 0.45rem;
   }
   .ops-quick {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     gap: 0.3rem;
   }
   .ops-quick .btn {
-    padding: 0.45rem 0.4rem;
-    font-size: 0.66rem;
+    padding: 0.44rem 0.22rem;
+    font-size: 0.58rem;
     letter-spacing: 0.07em;
+    min-height: 2.2rem;
   }
   .ops-subtle {
     color: var(--muted);
@@ -4820,11 +5071,7 @@ function tankHtml(
     padding: 0.52rem 0.65rem;
     font-size: 0.68rem;
   }
-  .ops-row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 0.4rem;
-  }
+  .ops-row { display: none; }
   .ops-input, .ops-select {
     width: 100%;
     background: var(--bg);
@@ -4858,22 +5105,23 @@ function tankHtml(
   .ops-examples summary {
     cursor: pointer;
     color: var(--accent);
-    font-size: 0.72rem;
+    font-size: 0.58rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     margin-bottom: 0.5rem;
+    text-align: center;
   }
   .ops-examples[open] summary { margin-bottom: 0.55rem; }
   .ops-output {
-    min-height: 0;
-    flex: 1;
+    min-height: 4.2rem;
+    flex: 0 0 auto;
     border: 1px solid var(--line);
     background: rgba(5,8,5,0.85);
     padding: 0.5rem;
     overflow: auto;
     white-space: pre-wrap;
     word-break: break-word;
-    font-size: 0.72rem;
+    font-size: 0.58rem;
     line-height: 1.35;
     color: var(--fg);
   }
@@ -4897,6 +5145,160 @@ function tankHtml(
   .tank {
     position: relative; overflow: hidden;
     background: linear-gradient(180deg, var(--sky) 0%, #0c1310 65%, #0a0e08 100%);
+  }
+  .tank.chat-mode {
+    background: var(--bg-deep);
+    overflow: hidden;
+  }
+  .tank:not(.chat-mode) .chat-main { display: none; }
+  .tank.chat-mode .tank-logo-mark,
+  .tank.chat-mode .star,
+  .tank.chat-mode .mountains,
+  .tank.chat-mode .skyline,
+  .tank.chat-mode .smoke,
+  .tank.chat-mode .banner,
+  .tank.chat-mode .trees,
+  .tank.chat-mode .lantern,
+  .tank.chat-mode .ground,
+  .tank.chat-mode .ground-shadow,
+  .tank.chat-mode .pigeon-wire,
+  .tank.chat-mode .gremlin-perch,
+  .tank.chat-mode .ogre-cave,
+  .tank.chat-mode .ogre-cave-label,
+  .tank.chat-mode .workshop,
+  .tank.chat-mode .troll-bridge,
+  .tank.chat-mode .raccoon-dump,
+  .tank.chat-mode .hoard,
+  .tank.chat-mode .creature,
+  .tank.chat-mode .pos-goblins,
+  .tank.chat-mode .goblin-pile,
+  .tank.chat-mode .bubble-layer,
+  .tank.chat-mode .dag-panel,
+  .tank.chat-mode .result-panel {
+    display: none !important;
+  }
+  .chat-main {
+    position: absolute;
+    inset: 0;
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-deep);
+  }
+  .chat-thread {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: clamp(1rem, 3vw, 2.2rem);
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+  .chat-message {
+    width: min(840px, 100%);
+    white-space: pre-wrap;
+    word-break: break-word;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.82rem 0.95rem;
+    background: rgba(20,32,26,0.52);
+  }
+  .chat-message.user {
+    align-self: flex-end;
+    border-color: rgba(143,207,82,0.42);
+    background: rgba(31,58,20,0.32);
+  }
+  .chat-message.assistant,
+  .chat-message.system {
+    align-self: flex-start;
+  }
+  .chat-role {
+    display: block;
+    margin-bottom: 0.32rem;
+    color: var(--muted);
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .chat-composer {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--line);
+    padding: 0.8rem clamp(0.8rem, 2vw, 1.4rem);
+    background: rgba(8,12,8,0.98);
+  }
+  .chat-composer-inner {
+    width: min(920px, 100%);
+    margin: 0 auto;
+    display: grid;
+    gap: 0.55rem;
+  }
+  .chat-offer-inline {
+    display: none;
+    border: 1px solid rgba(143,207,82,0.28);
+    border-radius: 8px;
+    background: rgba(16,26,18,0.92);
+    padding: 0.62rem 0.7rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    color: var(--fg);
+  }
+  .chat-offer-inline.open { display: flex; }
+  .chat-input-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.55rem;
+    align-items: end;
+  }
+  .chat-input-row textarea {
+    min-height: 4.4rem;
+    max-height: 12rem;
+    resize: vertical;
+    width: 100%;
+    background: var(--bg);
+    color: var(--fg-bright);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.75rem 0.85rem;
+    font: inherit;
+  }
+  .chat-input-row textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .chat-input-row button,
+  .chat-offer-inline button {
+    min-height: 2.6rem;
+    border: 1px solid var(--accent);
+    background: #1f3a14;
+    color: var(--fg-bright);
+    border-radius: 8px;
+    padding: 0.52rem 0.85rem;
+    font: inherit;
+    cursor: pointer;
+  }
+  .chat-input-row button:disabled,
+  .chat-offer-inline button:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
+  .chat-meta-row {
+    display: flex;
+    gap: 0.65rem;
+    align-items: center;
+    flex-wrap: wrap;
+    color: var(--muted);
+    font-size: 0.68rem;
+  }
+  .chat-meta-row select,
+  .chat-meta-row input {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 0.28rem 0.38rem;
+    font: inherit;
+    font-size: 0.68rem;
   }
   .tank-logo-mark {
     position: absolute; top: 50%; left: 50%; z-index: 0;
@@ -5959,6 +6361,7 @@ function tankHtml(
     </div>
     <div class="ops-main" id="ops-main">
       <div class="ops-quick">
+        <button class="btn primary" id="btn-chat" type="button">CHAT</button>
         <button class="btn primary" id="btn-rite" type="button">NEW RITE</button>
         <button class="btn" id="btn-thesis" type="button">THESIS</button>
         <button class="btn" id="btn-sentiment" type="button">SENTIMENT</button>
@@ -5988,7 +6391,43 @@ function tankHtml(
     </div>
   </aside>
 
-  <div class="tank" id="tank">
+  <div class="tank chat-mode" id="tank">
+    <section class="chat-main" id="chat-main" aria-label="Single Goblin chat">
+      <div class="chat-thread" id="chat-thread" aria-live="polite">
+        <div class="chat-message assistant">
+          <span class="chat-role">single goblin</span>
+          Ask anything. This surface uses one regular model call. When a prompt needs the full town, I will offer Goblintown without starting it automatically.
+        </div>
+      </div>
+      <form class="chat-composer" id="root-chat-form">
+        <div class="chat-composer-inner">
+          <div class="chat-offer-inline" id="root-chat-offer">
+            <span id="root-chat-offer-text">This looks complex enough for the full Goblintown pack.</span>
+            <button id="root-chat-offer-run" type="button">Run Goblintown</button>
+          </div>
+          <div class="chat-input-row">
+            <textarea id="root-chat-input" rows="3" placeholder="Message the single Goblin..." required></textarea>
+            <button id="root-chat-send" type="submit">Send</button>
+          </div>
+          <div class="chat-meta-row">
+            <label>Personality
+              <select id="root-chat-personality">
+                <option value="chipper">chipper</option>
+                <option value="nerdy">nerdy</option>
+                <option value="stoic">stoic</option>
+                <option value="cynical">cynical</option>
+                <option value="feral">feral</option>
+                <option value="goblin_mode">goblin_mode</option>
+              </select>
+            </label>
+            <label>Max tokens
+              <input id="root-chat-max" type="number" min="64" max="4000" value="900">
+            </label>
+            <span id="root-chat-status">ready</span>
+          </div>
+        </div>
+      </form>
+    </section>
     <img class="tank-logo-mark" src="/assets/gtowntextmark.png" alt="" aria-hidden="true" decoding="async">
 
     <span class="star" style="top: 5%; left: 18%;">✦</span>
@@ -6167,6 +6606,7 @@ function tankHtml(
               <option value="chipper">chipper</option>
               <option value="stoic">stoic</option>
               <option value="feral">feral</option>
+              <option value="goblin_mode">goblin_mode</option>
             </select>
           </div>
         </div>
@@ -6263,6 +6703,8 @@ const $ = (id) => document.getElementById(id);
 const tank = $("tank");
 const ticker = $("ticker");
 const tickerText = $("ticker-text");
+const rootChatMessages = [];
+let rootChatOfferedTask = "";
 const goblinPile = $("goblin-pile");
 const goblinExplosion = $("goblin-explosion");
 const goblinExplosionCtx = goblinExplosion ? goblinExplosion.getContext("2d") : null;
@@ -10801,6 +11243,136 @@ function setTicker(text, live) {
   ticker.classList.toggle("live", !!live);
 }
 
+function showChatMode() {
+  tank.classList.add("chat-mode");
+  $("clock").textContent = "chat";
+  setLaunchButtonsDisabled(false);
+}
+
+function showTankMode() {
+  tank.classList.remove("chat-mode");
+}
+
+function appendRootChatMessage(role, content, opts) {
+  const thread = $("chat-thread");
+  const node = document.createElement("div");
+  node.className = "chat-message " + role;
+  const label = document.createElement("span");
+  label.className = "chat-role";
+  label.textContent = role === "user" ? "you" : role === "system" ? "goblintown" : "single goblin";
+  node.appendChild(label);
+  node.appendChild(document.createTextNode(content));
+  if (opts && opts.href) {
+    const link = document.createElement("a");
+    link.href = opts.href;
+    link.textContent = " Open";
+    link.style.marginLeft = "0.35rem";
+    node.appendChild(link);
+  }
+  thread.appendChild(node);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function setRootChatOffer(nextOffer) {
+  const offer = $("root-chat-offer");
+  const text = $("root-chat-offer-text");
+  rootChatOfferedTask = nextOffer && nextOffer.task ? nextOffer.task : "";
+  if (!rootChatOfferedTask) {
+    offer.classList.remove("open");
+    return;
+  }
+  text.textContent = nextOffer.requested
+    ? "Goblintown requested. Start the full pack for this prompt?"
+    : "This looks complex enough for the full Goblintown pack.";
+  offer.classList.add("open");
+}
+
+async function startGoblintownFromChat(task) {
+  const cleanTask = (task || "").trim();
+  if (!cleanTask) return;
+  const runButton = $("root-chat-offer-run");
+  runButton.disabled = true;
+  $("root-chat-status").textContent = "starting Goblintown";
+  showTankMode();
+  hideResumePanel();
+  lastTask = cleanTask;
+  setLaunchButtonsDisabled(true);
+  $("clock").textContent = "rite running";
+  resetRunStage(false, 3);
+  setTicker("POSTing rite ...", true);
+  try {
+    const startRes = await fetch("/api/rite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task: cleanTask,
+        packSize: 3,
+        personality: $("root-chat-personality").value,
+        remember: true,
+      }),
+    });
+    const body = await startRes.json().catch(() => ({}));
+    if (!startRes.ok) throw new Error(body.error || startRes.statusText);
+    setRootChatOffer(null);
+    setTicker("rite " + body.runId + " started", true);
+    rememberActiveRun(body.runId, false);
+    history.replaceState(null, "", "/?run=" + encodeURIComponent(body.runId));
+    openStream(body.runId, false);
+  } catch (err) {
+    $("root-chat-status").textContent = err.message || String(err);
+    showChatMode();
+  } finally {
+    runButton.disabled = false;
+  }
+}
+
+$("btn-chat").onclick = () => {
+  history.replaceState(null, "", "/");
+  showChatMode();
+  setTicker("single goblin chat");
+  setTimeout(() => $("root-chat-input").focus(), 30);
+};
+
+$("root-chat-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("root-chat-input");
+  const send = $("root-chat-send");
+  const status = $("root-chat-status");
+  const content = input.value.trim();
+  if (!content) return;
+  const userMessage = { role: "user", content };
+  rootChatMessages.push(userMessage);
+  appendRootChatMessage("user", content);
+  input.value = "";
+  send.disabled = true;
+  status.textContent = "thinking";
+  setRootChatOffer(null);
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: rootChatMessages,
+        personality: $("root-chat-personality").value,
+        maxOutputTokens: Number($("root-chat-max").value || 900),
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || response.statusText);
+    rootChatMessages.push(body.message);
+    appendRootChatMessage("assistant", body.message.content);
+    setRootChatOffer(body.goblintownOffer);
+    status.textContent = body.lootId ? "saved " + body.lootId : "ready";
+  } catch (err) {
+    status.textContent = err.message || String(err);
+  } finally {
+    send.disabled = false;
+    input.focus();
+  }
+});
+
+$("root-chat-offer-run").onclick = () => startGoblintownFromChat(rootChatOfferedTask);
+
 /* Goblin pile w/ personality labels (set per goblin from pack:goblin event) */
 const goblinByIndex = {};
 const goblinByLootId = {};
@@ -11792,6 +12364,7 @@ $("resume-start").onclick = async () => {
     hideResumePanel();
     const packSize = resumeRecord && resumeRecord.packSize ? resumeRecord.packSize : 3;
     lastTask = resumeRecord ? resumeRecord.task : lastTask;
+    showTankMode();
     resetRunStage(isPlan, packSize);
     setLaunchButtonsDisabled(true);
     $("clock").textContent = isPlan ? "plan running" : "rite running";
@@ -11936,6 +12509,7 @@ $("rite-form").addEventListener("submit", async (e) => {
   closeRiteForm();
   hideResumePanel();
   lastTask = payload.task;
+  showTankMode();
   setLaunchButtonsDisabled(true);
   $("clock").textContent = isPlan ? "plan running" : "rite running";
   resetRunStage(isPlan, payload.packSize);
@@ -11977,6 +12551,7 @@ $("thesis-form").addEventListener("submit", async (e) => {
   closeThesisForm();
   hideResumePanel();
   lastTask = "Thesis: " + (payload.subject || "");
+  showTankMode();
   setLaunchButtonsDisabled(true);
   $("clock").textContent = "thesis running";
   resetRunStage(false, 3);
@@ -12007,6 +12582,7 @@ $("thesis-form").addEventListener("submit", async (e) => {
 let replaying = false;
 const replayLatestThinking = {};
 function openStream(runId, isPlan, opts) {
+  showTankMode();
   if (activeStream) { activeStream.close(); activeStream = null; }
   const isAttach = !!(opts && opts.attach);
   const terminalAttach = !!(opts && opts.terminal);
@@ -12107,7 +12683,13 @@ function openStream(runId, isPlan, opts) {
         } catch {}
       }
       showResultFromIds(d.riteId, lootId, d.outcome, lastTask);
+      appendRootChatMessage(
+        "system",
+        "Goblintown finished: " + d.outcome + (d.riteId ? " (" + d.riteId + ")" : ""),
+        d.riteId ? { href: "/rite/" + d.riteId } : null,
+      );
     }
+    setTimeout(showChatMode, 1200);
   });
   es.addEventListener("error", (ev) => {
     if (terminalAttach && replayEnded) {
@@ -12379,7 +12961,7 @@ async function attachToRunFromUrl() {
       runId = remembered.runId;
       history.replaceState(null, "", "/?run=" + encodeURIComponent(runId));
     } else {
-      loadLastResult();
+      showChatMode();
       return;
     }
   }
@@ -12388,7 +12970,7 @@ async function attachToRunFromUrl() {
     if (!r.ok) {
       setTicker("run " + runId + " not found");
       clearRememberedRun(runId);
-      loadLastResult();
+      showChatMode();
       return;
     }
     const record = await r.json();
@@ -12403,6 +12985,7 @@ async function attachToRunFromUrl() {
       if (ps && ps.data && typeof ps.data.size === "number") packSize = ps.data.size;
     }
     resetRunStage(isPlan, packSize);
+    showTankMode();
 
     const status = runStatus(record);
     const label = record.done ? status : "watching live";
@@ -12418,7 +13001,7 @@ async function attachToRunFromUrl() {
     openStream(runId, isPlan, { attach: true, terminal: !!record.done });
   } catch (e) {
     setTicker("attach failed: " + (e.message || e));
-    loadLastResult();
+    showChatMode();
   }
 }
 attachToRunFromUrl();

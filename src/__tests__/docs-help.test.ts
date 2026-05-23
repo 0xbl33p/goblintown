@@ -50,7 +50,7 @@ describe("docs and CLI help", () => {
     assert.match(readme, /Settings -> Reset -> Asteroid Mode/);
     assert.match(readme, /FIREBASE_API_KEY/);
     assert.match(readme, /optional Firebase overrides/);
-    assert.match(readme, /308 tests/);
+    assert.match(readme, /318 tests/);
     assert.match(readme, /goblintown context ingest \.\/notes/);
     assert.match(readme, /goblintown context scan chats/);
     assert.match(readme, /goblintown context import chats --source chatgpt/);
@@ -83,7 +83,7 @@ describe("docs and CLI help", () => {
     assert.match(siteIndex, /first-run Local Only \/ Goblintown Cloud choice/);
     assert.match(siteIndex, /Settings menu/);
     assert.match(siteIndex, /Asteroid Mode/);
-    assert.match(siteIndex, /308 tests/);
+    assert.match(siteIndex, /318 tests/);
     assert.match(siteIndex, /goblintown context ingest \.\/notes/);
     assert.match(siteIndex, /goblintown context scan chats/);
     assert.match(siteIndex, /goblintown context import chats --source chatgpt/);

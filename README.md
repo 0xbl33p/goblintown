@@ -831,7 +831,7 @@ Runtime behavior:
 npm test
 ```
 
-308 tests, no OpenAI calls. Pure-function coverage across drift, reward,
+318 tests, no OpenAI calls. Pure-function coverage across drift, reward,
 Hoard content-addressing, federation signatures (incl. HMAC), audit
 aggregation, reward plugin loader, graph rendering, concurrency semaphore,
 budget tracker, run persistence, markdown export, rite comparison, plus the
