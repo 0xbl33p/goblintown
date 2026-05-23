@@ -29,6 +29,12 @@ describe("docs and CLI help", () => {
       assert.match(source, /goblintown sentiment key set <source> --value <secret>/);
       assert.match(source, /COINGECKO_API_KEY/);
       assert.match(source, /NEYNAR_API_KEY/);
+      assert.match(source, /goblintown context ingest <path>/);
+      assert.match(source, /goblintown context search "<query>"/);
+      assert.match(source, /goblintown context scan chats/);
+      assert.match(source, /goblintown context import chats/);
+      assert.match(source, /goblintown context vectorize/);
+      assert.match(source, /file-backed Artifacts/);
     }
     assert.match(cliSource, /case "cloud":\s+return cmdCloud/);
     assert.match(cliSource, /async function cmdCloud/);
@@ -44,7 +50,14 @@ describe("docs and CLI help", () => {
     assert.match(readme, /Settings -> Reset -> Asteroid Mode/);
     assert.match(readme, /FIREBASE_API_KEY/);
     assert.match(readme, /optional Firebase overrides/);
-    assert.match(readme, /274 tests/);
+    assert.match(readme, /308 tests/);
+    assert.match(readme, /goblintown context ingest \.\/notes/);
+    assert.match(readme, /goblintown context scan chats/);
+    assert.match(readme, /goblintown context import chats --source chatgpt/);
+    assert.match(readme, /pre-vectorized/);
+    assert.match(readme, /AI summaries are opt-in/);
+    assert.match(readme, /\/context search "desktop app tank"/);
+    assert.match(readme, /local context ingestion/);
     assert.match(readme, /## Add-ons/);
     assert.match(readme, /## Thesis Engine/);
     assert.match(readme, /## Sentiment Sources/);
@@ -70,7 +83,13 @@ describe("docs and CLI help", () => {
     assert.match(siteIndex, /first-run Local Only \/ Goblintown Cloud choice/);
     assert.match(siteIndex, /Settings menu/);
     assert.match(siteIndex, /Asteroid Mode/);
-    assert.match(siteIndex, /274 tests/);
+    assert.match(siteIndex, /308 tests/);
+    assert.match(siteIndex, /goblintown context ingest \.\/notes/);
+    assert.match(siteIndex, /goblintown context scan chats/);
+    assert.match(siteIndex, /goblintown context import chats --source chatgpt/);
+    assert.match(siteIndex, /pre-vectorized/);
+    assert.match(siteIndex, /\/context search "desktop app tank"/);
+    assert.match(siteIndex, /local context ingestion/);
     assert.match(siteIndex, /Solana add-on/);
     assert.match(siteIndex, /Thesis engine/);
     assert.match(siteIndex, /Sentiment sources/);

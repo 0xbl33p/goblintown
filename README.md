@@ -1,9 +1,10 @@
 # Goblintown
 
-Goblintown is a local-first multi-agent orchestration protocol with a live
-browser Tank UI, resumable runs, typed memory, provider routing, and optional
-Goblintown Cloud sign-in. It turns "ask the model" into a planning agent with
-memory and self-correction: a small fleet of specialized creatures that
+Goblintown is a local-first AI app with a Goblin Mode GUI, a compact optional
+Tank, resumable runs, typed memory, provider routing, and optional Goblintown
+Cloud sign-in. Single Goblin mode keeps "ask the model" as one worker and one
+answer; Goblintown mode turns it into a planning agent with memory and
+self-correction: a small fleet of specialized creatures that
 decompose tasks into a DAG, scavenge context, race against each other, debate,
 attack each other's outputs, spawn focused specialists when the pack fails, and
 hand the surviving answer back as a signed, content-addressed artifact that
@@ -241,9 +242,11 @@ npx goblintown@beta --help
 npx goblintown@beta serve --port 7777
 ```
 
-`goblintown serve` opens the Tank UI at `http://localhost:7777/`. On first run
-the Tank asks whether this Warren should stay local-only or use Goblintown
-Cloud. Sprites, the Goblintown wordmark, Matter.js Asteroid Mode, and the CLI
+`goblintown serve` opens Goblin Mode at `http://localhost:7777/`: one prompt,
+a **Single Goblin / Goblintown** switch, and a Tank checkbox for multi-agent
+runs. The legacy full Tank UI remains available at `/tank`. On first run the
+app asks whether this Warren should stay local-only or use Goblintown Cloud.
+Sprites, the Goblintown wordmark, Matter.js Asteroid Mode, and the CLI
 entrypoint are included in the npm package.
 
 Set a provider API key for any command that calls a creature. You can set it in
@@ -265,6 +268,14 @@ npm run serve -- --port 7777
 ```bash
 goblintown init
 
+# Goblin Mode slash commands
+goblintown /ask "Write the shortest useful answer"    # Single Goblin
+goblintown /town "Plan and implement the feature"     # planner DAG
+goblintown /tank "Debug this with the visual Tank"    # DAG + compact Tank intent
+goblintown /context ingest "./old-conversations"      # import reference memory
+goblintown /context search "desktop app tank"         # search stored context
+goblintown /history
+
 # one-shots — output streams as it arrives
 goblintown summon raccoon --task "Summarize package.json" --personality stoic
 goblintown summon gremlin --task "Attack this regex: /^\d+$/"
@@ -283,6 +294,11 @@ goblintown rite "Refactor src/quest.ts to share the troll-review helper" \
   --budget 80000 --max-output 4096 --format markdown
 
 # memory: cite a prior rite or auto-load relevant artifacts
+goblintown context ingest ./notes --limit 40
+goblintown context search "rollback paths"
+goblintown context scan chats --source codex --limit 20
+goblintown context import chats --source chatgpt --path ./conversations.json --all
+goblintown context vectorize --missing-only
 goblintown rite "Extend the migration plan with rollback paths" \
   --cite 4f2a-abc12345 --remember
 goblintown ancestry <riteId>             # parents → this → children
@@ -309,7 +325,7 @@ goblintown drift
 goblintown hoard --kind goblin --since 2026-04-30 --limit 20
 goblintown audit <riteId>
 goblintown graph <riteId|lootId>     # now includes artifact lineage
-goblintown serve --port 7777        # Tank UI + first-run Local Only / Cloud choice
+goblintown serve --port 7777        # Goblin Mode GUI + first-run Local Only / Cloud choice
 goblintown cloud                    # bundled Cloud setup + optional Firebase overrides
 goblintown addon ls                 # local tool-pack add-ons
 goblintown addon enable solana      # read-only Solana verifier tools
@@ -349,10 +365,17 @@ goblintown country run --task "Audit this migration plan" --all --pack 2
 # (UI flow: Settings -> Country supports code-based join/discovery + approvals)
 ```
 
+Chat Hoard Import Mode scans previous Codex sessions and ChatGPT exports before
+importing them as root conversation Artifacts plus ordered child chunks. Imported
+chat memory is pre-vectorized when an embedding provider is configured, with
+keyword fallback when embeddings are unavailable. AI summaries are opt-in through
+`--summarize`; default import is local parsing, redaction, chunking, and optional
+embedding only.
+
 ## Goblintown Cloud
 
-Goblintown is download-and-run friendly. On first `goblintown serve`, the Tank
-asks whether this Warren should **Stay Local** or **Use Goblintown Cloud**.
+Goblintown is download-and-run friendly. On first `goblintown serve`, Goblin
+Mode asks whether this Warren should **Stay Local** or **Use Goblintown Cloud**.
 That choice can be changed later from **Settings -> Account**.
 
 - **Stay Local** keeps memory, runs, provider secrets, and reset state on the
@@ -687,18 +710,24 @@ unassigned roles can auto-fall back to the lead.
   no manual URL entry required).
 - Opening a thread auto-marks unread messages as read.
 
-## Tank UI and resumable runs
+## Goblin Mode, Tank UI, and resumable runs
 
-`goblintown serve` starts the Tank at `/`, a live diorama for rites, plans,
-Settings, Cloud mode, provider routing, country collaboration, mail, and reset.
-The Tank POSTs to `/api/rite` or `/api/plan`, subscribes to
-`/api/rite/<runId>/stream`, and renders each streamed event as creature state,
-thinking bubbles, DAG progress, and final output.
+`goblintown serve` starts Goblin Mode at `/`: one prompt, a **Single Goblin /
+Goblintown** mode switch, and a Tank checkbox. Single Goblin uses
+`/api/goblin/single` for one worker and one answer. Goblintown mode POSTs to
+`/api/plan`, subscribes to `/api/rite/<runId>/stream`, and can show a compact
+Tank box with DAG progress. The legacy full Tank diorama remains at `/tank` for
+rites, plans, Settings, Cloud mode, provider routing, country collaboration,
+mail, reset, creature state, thinking bubbles, DAG progress, and final output.
+Slash commands include `/context ingest <path>` and `/context search <query>`
+so older conversations and project folders can become local Artifacts before a
+new run starts.
 
 Run state is persisted to `.goblintown/runs/<runId>.json`, so SSE history
 replays after a server restart. In-flight rites are marked interrupted on boot
-and can be resumed from the Tank's run recovery prompt. `/?run=<runId>` attaches
-the Tank to any existing run. `/rite/new` still exists as a plain HTML fallback.
+and can be resumed from the Tank's run recovery prompt. `/tank?run=<runId>`
+attaches the full Tank to any existing run. `/rite/new` still exists as a plain
+HTML fallback.
 
 ### Tank sprite and background assets
 
@@ -751,7 +780,8 @@ Runtime behavior:
 
 | Method | Path                              | Purpose |
 | ---    | ---                               | --- |
-| GET    | `/`                               | The Tank — live diorama UI; takes `?run=<runId>` to attach to an existing run |
+| GET    | `/`                               | Goblin Mode — one prompt, Single Goblin/Goblintown switch, compact Tank checkbox |
+| GET    | `/tank`                           | Legacy full Tank live diorama UI; takes `?run=<runId>` to attach to an existing run |
 | GET    | `/rite/new`                       | Plain HTML rite form (legacy) |
 | GET    | `/rite/:id`                       | Rite detail page (now includes artifact lineage) |
 | GET    | `/quest/:id`                      | Quest detail |
@@ -760,7 +790,13 @@ Runtime behavior:
 | GET    | `/runs`                           | List of all SSE runs (each runId links back to the Tank) |
 | GET    | `/inbox`, `/outbox`               | Federation message lists |
 | POST   | `/api/rite`                       | Start a rite, returns `{ runId }` |
+| POST   | `/api/goblin/single`              | Run one Goblin and stash the answer as Loot |
 | POST   | `/api/plan`                       | Start a planner-driven multi-step run, returns `{ runId }` |
+| POST   | `/api/context/ingest`             | Import local text files as file-backed Artifacts |
+| POST   | `/api/context/search`             | Search Artifacts, including imported context |
+| POST   | `/api/context/chats/scan`         | Scan Codex sessions or ChatGPT exports without importing |
+| POST   | `/api/context/chats/import`       | Import previous chats as root/chunk Artifacts |
+| POST   | `/api/context/vectorize`          | Precompute embeddings for stored Artifacts |
 | GET    | `/api/rite/:runId/stream`         | SSE stream of `RiteStep` + plan events; emits `replay-end` after history |
 | GET    | `/api/runs`                       | JSON list of run records |
 | GET    | `/api/runs/:runId`                | JSON single run record |
@@ -795,7 +831,7 @@ Runtime behavior:
 npm test
 ```
 
-274 tests, no OpenAI calls. Pure-function coverage across drift, reward,
+308 tests, no OpenAI calls. Pure-function coverage across drift, reward,
 Hoard content-addressing, federation signatures (incl. HMAC), audit
 aggregation, reward plugin loader, graph rendering, concurrency semaphore,
 budget tracker, run persistence, markdown export, rite comparison, plus the
@@ -805,7 +841,7 @@ construction, verifier tool dispatch, add-on registry, Solana read-only lookup,
 profile/activity/transaction/token summaries, thesis prompt and evidence
 construction, Tank thesis workflow wiring, sentiment source/key handling,
 query-specific project sentiment, market context separation, source failure normalization,
-and Tank/Settings wiring,
+local context ingestion, previous chat import, pre-vectorized chat memory, and Tank/Settings wiring,
 embeddings ranking math (cosine, RRF fusion),
 context-folding clustering, provider routing, output formatting, cloud mode,
 Settings menu reset flows, sprite assets, and trace-export schema mapping.
@@ -817,8 +853,9 @@ ship together and are covered by the test suite:
 
 | Area | What ships now | Entry point |
 | --- | --- | --- |
-| **Tank UI** | Live creature diorama, default sprite sheets, centered wordmark, result panel, resumable runs, Settings, Onchain lookup, and Asteroid Mode. | `goblintown serve` |
-| **Memory** | Pigeon-Scribe distills every Rite into a structured JSON artifact with claims, evidence, open questions, next steps, and parent links. | `--cite <riteId>`, `--remember` |
+| **Goblin Mode GUI** | Single Goblin / Goblintown mode switch, slash-command prompt, compact Tank checkbox, result panel, and desktop-app entrypoint. | `goblintown serve`, `npm run desktop` |
+| **Tank UI** | Live creature diorama, default sprite sheets, centered wordmark, result panel, resumable runs, Settings, Onchain lookup, and Asteroid Mode. | `/tank` |
+| **Memory** | Pigeon-Scribe distills every Rite into a structured JSON artifact with claims, evidence, open questions, next steps, and parent links. Local context ingestion imports old conversations/projects as file-backed Artifacts; Chat Hoard Import Mode imports previous Codex and ChatGPT chats as pre-vectorized root/chunk DAG memory. | `--cite <riteId>`, `--remember`, `goblintown context ingest <path>`, `goblintown context scan chats` |
 | **Planning** | Planner emits a typed DAG; the executor runs each node as a sub-rite, feeds artifacts forward, and replans after node failures. | `goblintown plan "<task>"`, Tank `PLAN` |
 | **Specialist recovery** | Failed packs are clustered by dominant failure mode, then 1-3 focused Specialist Goblins repair the best seed before Ogre escalation. | on by default; `--no-specialist` disables |
 | **Debate** | Goblins can see peer proposals and revise once before Gremlin/Troll review. | `--debate` |
@@ -829,7 +866,7 @@ ship together and are covered by the test suite:
 | **Provider routing** | OpenAI, OpenRouter, Ollama, LM Studio, Groq, Together, Mistral, DeepSeek, Anthropic, Gemini, and custom OpenAI-compatible endpoints. | Settings -> API Provider, `goblintown route` |
 | **Goblintown Cloud** | Bundled Firebase-backed SSO, friend codes, discovery, mail, and country metadata for users who opt in. | first-run prompt, Settings -> Account |
 | **Federation and Country** | Filesystem/HTTP artifact delivery, friend requests, direct messages, country discovery, join approvals, and team role assignment. | Settings -> Country/Mail, `goblintown country` |
-| **Trace and audit** | Run export to LLM-MAS trace schema, artifact lineage graphing, audit, compare, reroll, and context folding. | `export-trace`, `graph`, `audit`, `fold` |
+| **Trace and audit** | Run export to LLM-MAS trace schema, artifact lineage graphing, audit, compare, reroll, context search, and context folding. | `export-trace`, `graph`, `audit`, `context search`, `fold` |
 
 The Tank renders the protocol as a tamagotchi-style live village: each creature
 has a home, tokens stream into per-creature thinking bubbles, the DAG panel

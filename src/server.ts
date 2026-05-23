@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import type { Server } from "node:http";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,8 +33,19 @@ import {
   signCountryPayload,
   verifyCountryPayload,
 } from "./country-identity.js";
+import {
+  chatRecordPreview,
+  importChatRecords,
+  scanChatImports,
+  type ChatImportSource,
+  vectorizeStoredArtifacts,
+} from "./chat-import.js";
+import { ingestContextPath } from "./context-ingest.js";
+import { findRelevantArtifactsEmbedded } from "./embeddings.js";
 import { verifyHmac, verifyInbox } from "./federation.js";
+import { makeGoblin } from "./creatures.js";
 import { performRite, type RiteStep } from "./rite.js";
+import { callCreature } from "./openai-client.js";
 import { loadRewardPlugin } from "./reward-plugin.js";
 import {
   appendRunEvent,
@@ -56,14 +68,16 @@ import {
   type FriendRecord,
   type FriendRequest,
   type InboxMessage,
+  type Loot,
   type OutputFormat,
   type Personality,
   type ProviderConfig,
 } from "./types.js";
 import { executePlan, type PlanExecutionEvent } from "./plan-executor.js";
 import { planTask } from "./planner.js";
-import { findRelevantArtifacts } from "./artifact.js";
+import { renderArtifactContext } from "./artifact.js";
 import { exportRunAsMasTrace } from "./trace-export.js";
+import { measureDrift } from "./drift.js";
 import {
   normalizeSolanaAddress,
   normalizeSolanaSignature,
@@ -118,6 +132,11 @@ export interface ServeOptions {
   port: number;
 }
 
+export interface ServeHandle {
+  url: string;
+  close: () => Promise<void>;
+}
+
 interface RunState {
   record: RunRecord;
   subscribers: Set<Response>;
@@ -161,6 +180,49 @@ function runSummary(record: RunRecord): Omit<RunRecord, "events"> & { eventCount
     ...rest,
     eventCount: record.nextSeq ?? events.length,
   };
+}
+
+function contextArtifactPayload(artifact: Artifact): Record<string, unknown> {
+  return {
+    id: artifact.id,
+    riteId: artifact.riteId,
+    task: artifact.task,
+    ref: artifact.evidence.find((e) => e.kind === "file")?.ref ?? artifact.riteId,
+    claim: artifact.claims[0]?.text ?? artifact.task,
+    keywords: artifact.keywords,
+    timestamp: artifact.timestamp,
+  };
+}
+
+function apiLimit(
+  raw: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+function apiChatSource(raw: unknown): ChatImportSource | undefined {
+  if (typeof raw !== "string" || raw.trim().length === 0) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === "codex" || value === "chatgpt" || value === "folder") return value;
+  throw new Error("source must be codex, chatgpt, or folder");
+}
+
+function apiStringArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+  if (typeof raw === "string") {
+    return raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return [];
 }
 
 function sanitizeRunPayload(body: Record<string, unknown>): Record<string, unknown> {
@@ -287,7 +349,7 @@ function cspHeaderForRequest(): string {
   ].join("; ");
 }
 
-export async function serve(opts: ServeOptions): Promise<void> {
+export async function serve(opts: ServeOptions): Promise<ServeHandle> {
   let warren = await loadWarren(opts.cwd);
   await ensureCountryIdentity(warren.root);
   ensureCountryDefaults(warren);
@@ -330,7 +392,8 @@ export async function serve(opts: ServeOptions): Promise<void> {
     res.type("application/javascript").send(MATTER_JS_BROWSER_SOURCE);
   });
 
-  app.get("/", async (_req, res) => renderHome(warren, runs, res));
+  app.get("/", async (_req, res) => renderGoblinMode(warren, runs, res));
+  app.get("/tank", async (_req, res) => renderHome(warren, runs, res));
   app.get("/rite/new", (_req, res) =>
     res.send(layout("New Rite", newRiteForm())),
   );
@@ -344,6 +407,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
 
   app.post("/api/rite", async (req, res) =>
     startRiteRun(warren, runs, runDir, req, res),
+  );
+  app.post("/api/goblin/single", async (req, res) =>
+    startSingleGoblinRun(warren, req, res),
   );
   app.post("/api/thesis", async (req, res) =>
     startThesisRun(warren, runs, runDir, req, res),
@@ -448,6 +514,114 @@ export async function serve(opts: ServeOptions): Promise<void> {
     const limit = Number(req.query.limit ?? 50);
     const all = (await warren.hoard.allArtifacts()).sort((a, b) => b.timestamp - a.timestamp);
     res.json(all.slice(0, Math.max(1, Math.min(500, limit))));
+  });
+  app.post("/api/context/ingest", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const inputPath = typeof body.path === "string" ? body.path.trim() : "";
+    if (!inputPath) {
+      res.status(400).json({ error: "path is required" });
+      return;
+    }
+    try {
+      const result = await ingestContextPath({
+        root: warren.root,
+        hoard: warren.hoard,
+        inputPath,
+        limit: apiLimit(body.limit, 80, 1, 500),
+      });
+      res.json({
+        artifacts: result.artifacts.map(contextArtifactPayload),
+        skipped: result.skipped,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/context/search", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const query = typeof body.query === "string" ? body.query.trim() : "";
+    if (!query) {
+      res.status(400).json({ error: "query is required" });
+      return;
+    }
+    try {
+      const all = await warren.hoard.allArtifacts();
+      const matches = await findRelevantArtifactsEmbedded({
+        artifacts: all,
+        queryText: query,
+        limit: apiLimit(body.limit, 10, 1, 100),
+        hoard: warren.hoard,
+      });
+      res.json({
+        artifacts: matches.map(contextArtifactPayload),
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/context/chats/scan", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      const result = await scanChatImports({
+        source: apiChatSource(body.source),
+        path: typeof body.path === "string" && body.path.trim() ? body.path.trim() : undefined,
+        query: typeof body.query === "string" && body.query.trim() ? body.query.trim() : undefined,
+        since: typeof body.since === "string" && body.since.trim() ? body.since.trim() : undefined,
+        limit: apiLimit(body.limit, 50, 1, 500),
+      });
+      res.json({
+        records: result.records.map(chatRecordPreview),
+        skipped: result.skipped,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/context/chats/import", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const ids = apiStringArray(body.ids);
+    const importAll = body.all === true || body.all === "true";
+    if (!importAll && ids.length === 0) {
+      res.status(400).json({ error: "all=true or ids is required" });
+      return;
+    }
+    try {
+      const scan = await scanChatImports({
+        source: apiChatSource(body.source),
+        path: typeof body.path === "string" && body.path.trim() ? body.path.trim() : undefined,
+        query: typeof body.query === "string" && body.query.trim() ? body.query.trim() : undefined,
+        since: typeof body.since === "string" && body.since.trim() ? body.since.trim() : undefined,
+        limit: apiLimit(body.limit, 50, 1, 500),
+      });
+      const result = await importChatRecords({
+        hoard: warren.hoard,
+        records: scan.records,
+        ids: importAll ? undefined : ids,
+        vectorize: body.noVectorize !== true && body.noVectorize !== "true",
+        summarize: body.summarize === true || body.summarize === "true",
+      });
+      res.json({
+        records: result.records.map(chatRecordPreview),
+        artifacts: result.artifacts.map(contextArtifactPayload),
+        vectorized: result.vectorized,
+        skipped: [...scan.skipped, ...result.skipped.map((item) => ({ path: item.id, reason: item.reason }))],
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/context/vectorize", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      const result = await vectorizeStoredArtifacts({
+        hoard: warren.hoard,
+        missingOnly: body.missingOnly === true || body.missingOnly === "true",
+        limit: body.limit === undefined ? undefined : apiLimit(body.limit, 100, 1, 500),
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
   app.get("/api/warren/stats", async (_req, res) => {
     const [loot, rites] = await Promise.all([
@@ -1265,15 +1439,94 @@ export async function serve(opts: ServeOptions): Promise<void> {
       .send(layout("Not Found", "<h1>404</h1><p>The Hoard does not contain that.</p>")),
   );
 
-  await new Promise<void>((resolve) => {
-    app.listen(opts.port, () => {
+  const server = await new Promise<Server>((resolve) => {
+    const listening = app.listen(opts.port, () => {
+      const address = listening.address();
+      const actualPort =
+        typeof address === "object" && address ? address.port : opts.port;
       process.stdout.write(
-        `Hoard UI listening on http://localhost:${opts.port}/\n` +
+        `Hoard UI listening on http://localhost:${actualPort}/\n` +
           `Warren: ${warren.manifest.name}  (${warren.root})\n`,
       );
-      resolve();
+      resolve(listening);
     });
   });
+  const address = server.address();
+  const actualPort =
+    typeof address === "object" && address ? address.port : opts.port;
+  return {
+    url: `http://localhost:${actualPort}/`,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      }),
+  };
+}
+
+async function startSingleGoblinRun(
+  warren: Warren,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const body = (req.body ?? {}) as {
+    task?: unknown;
+    remember?: unknown;
+    outputFormat?: unknown;
+    maxOutputTokens?: unknown;
+  };
+  if (typeof body.task !== "string" || body.task.trim().length === 0) {
+    res.status(400).json({ error: "task is required" });
+    return;
+  }
+  const task = body.task.trim();
+  const remember = body.remember !== false;
+  const outputFormat = normalizeOutputFormat(
+    body.outputFormat ?? warren.manifest.provider?.outputFormat,
+  );
+  const maxOutputTokens =
+    typeof body.maxOutputTokens === "number" && body.maxOutputTokens > 0
+      ? body.maxOutputTokens
+      : undefined;
+  const parentArtifacts = remember
+    ? await findRelevantArtifactsEmbedded({
+        artifacts: await warren.hoard.allArtifacts(),
+        queryText: task,
+        limit: 3,
+        hoard: warren.hoard,
+      })
+    : [];
+  const prompt = parentArtifacts.length
+    ? `${parentArtifacts.map(renderArtifactContext).join("\n\n")}\n\nTask:\n${task}`
+    : task;
+  try {
+    const creature = makeGoblin();
+    const { text, usage } = await callCreature(creature, prompt, {
+      outputFormat,
+      maxOutputTokens,
+    });
+    const drift = measureDrift(text);
+    const loot: Loot = {
+      id: "",
+      creatureKind: "goblin",
+      personality: creature.personality,
+      model: creature.model,
+      prompt,
+      output: text,
+      timestamp: Date.now(),
+      drift,
+      usage,
+    };
+    const lootId = await warren.hoard.stash(loot);
+    res.json({
+      mode: "single",
+      output: text,
+      lootId,
+      usage,
+      parentArtifactIds: parentArtifacts.map((a) => a.id),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 async function startRiteRun(
@@ -1418,7 +1671,12 @@ async function startRiteRun(
   }
   if (remember) {
     const all = await warren.hoard.allArtifacts();
-    const auto = findRelevantArtifacts(all, body.task, 3).filter(
+    const auto = (await findRelevantArtifactsEmbedded({
+      artifacts: all,
+      queryText: body.task,
+      limit: 3,
+      hoard: warren.hoard,
+    })).filter(
       (a) => !parentArtifacts.some((p) => p.id === a.id),
     );
     parentArtifacts.push(...auto);
@@ -1602,7 +1860,12 @@ async function startPlanRun(
   }
   if (remember) {
     const all = await warren.hoard.allArtifacts();
-    const auto = findRelevantArtifacts(all, body.task, 3).filter(
+    const auto = (await findRelevantArtifactsEmbedded({
+      artifacts: all,
+      queryText: body.task,
+      limit: 3,
+      hoard: warren.hoard,
+    })).filter(
       (a) => !parents.some((p) => p.id === a.id),
     );
     parents.push(...auto);
@@ -2401,6 +2664,30 @@ async function renderHome(
   res.send(tankHtml(warren.manifest.name, loot.length, rites.length, drift));
 }
 
+async function renderGoblinMode(
+  warren: Warren,
+  runs: Map<string, RunState>,
+  res: Response,
+): Promise<void> {
+  const [rites, loot, artifacts] = await Promise.all([
+    warren.hoard.allRites(),
+    warren.hoard.allLoot(),
+    warren.hoard.allArtifacts(),
+  ]);
+  const driftSum = loot.reduce((s, l) => s + l.drift.driftRate, 0);
+  const drift = loot.length ? driftSum / loot.length : 0;
+  res.send(
+    goblinModeHtml({
+      warrenName: warren.manifest.name,
+      lootCount: loot.length,
+      riteCount: rites.length,
+      artifactCount: artifacts.length,
+      runCount: runs.size,
+      drift,
+    }),
+  );
+}
+
 async function renderRite(
   warren: Warren,
   req: Request,
@@ -2775,6 +3062,758 @@ function newRiteForm(): string {
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
+}
+
+function goblinModeHtml(stats: {
+  warrenName: string;
+  lootCount: number;
+  riteCount: number;
+  artifactCount: number;
+  runCount: number;
+  drift: number;
+}): string {
+  const initial = JSON.stringify(stats);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goblin Mode · ${esc(stats.warrenName)}</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --mud: #120f08;
+    --peat: #1b160b;
+    --rot: #261d0c;
+    --moss: #8ba34a;
+    --moss-hot: #c4e86a;
+    --bog: #4e5f2a;
+    --bone: #e7dfbd;
+    --ash: #9b8f62;
+    --line: #4b3a16;
+    --bad: #d96f42;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background:
+      radial-gradient(circle at 50% 42%, rgba(139, 163, 74, 0.09), transparent 34%),
+      linear-gradient(180deg, #15130d 0%, var(--mud) 100%);
+    color: var(--bone);
+    font: 14px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  }
+  .goblin-mode-shell {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 32px 18px;
+  }
+  .goblin-mode-core {
+    width: min(880px, 94vw);
+  }
+  h1 {
+    margin: 0 0 28px;
+    text-align: center;
+    font-size: clamp(24px, 4vw, 36px);
+    line-height: 1.1;
+    font-weight: 500;
+    color: var(--bone);
+    letter-spacing: 0;
+    text-transform: lowercase;
+  }
+  .composer {
+    background: rgba(31, 26, 14, 0.92);
+    border: 1px solid rgba(139, 163, 74, 0.22);
+    border-radius: 10px;
+    box-shadow: 0 22px 80px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(231, 223, 189, 0.05);
+    overflow: hidden;
+  }
+  .modebar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    border-bottom: 1px solid rgba(139, 163, 74, 0.18);
+    background: rgba(18, 15, 8, 0.52);
+  }
+  .modebar .grow { flex: 1; }
+  .segment {
+    display: inline-grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid rgba(139, 163, 74, 0.32);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .segment button,
+  .send {
+    border: 0;
+    background: transparent;
+    color: var(--ash);
+    font: inherit;
+    padding: 8px 11px;
+    cursor: pointer;
+  }
+  .segment button[aria-pressed="true"] {
+    background: rgba(139, 163, 74, 0.18);
+    color: var(--moss-hot);
+  }
+  .tank-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--ash);
+    user-select: none;
+  }
+  .tank-toggle input { accent-color: var(--moss); }
+  .send {
+    border: 1px solid rgba(196, 232, 106, 0.34);
+    border-radius: 8px;
+    color: var(--moss-hot);
+    background: rgba(139, 163, 74, 0.12);
+  }
+  textarea {
+    width: 100%;
+    min-height: 142px;
+    resize: vertical;
+    border: 0;
+    outline: 0;
+    padding: 18px;
+    background: transparent;
+    color: var(--bone);
+    font: 16px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  }
+  textarea::placeholder { color: rgba(155, 143, 98, 0.72); }
+  .status-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    border-top: 1px solid rgba(139, 163, 74, 0.16);
+    color: var(--ash);
+    font-size: 12px;
+  }
+  .status-row b { color: var(--moss-hot); font-weight: 500; }
+  .output, .tank-box {
+    margin-top: 14px;
+    background: rgba(18, 15, 8, 0.82);
+    border: 1px solid rgba(139, 163, 74, 0.22);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .output[hidden], .tank-box[hidden] { display: none; }
+  .panel-title {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 11px;
+    color: var(--moss-hot);
+    border-bottom: 1px solid rgba(139, 163, 74, 0.18);
+    background: rgba(38, 29, 12, 0.7);
+    font-size: 12px;
+    text-transform: lowercase;
+  }
+  .import-controls {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr) minmax(0, 0.9fr) auto auto auto;
+    gap: 8px;
+    padding: 10px;
+    border-bottom: 1px solid rgba(139, 163, 74, 0.18);
+  }
+  .import-controls select,
+  .import-controls input[type="text"],
+  .import-controls button {
+    min-width: 0;
+    border: 1px solid rgba(139, 163, 74, 0.28);
+    border-radius: 7px;
+    background: rgba(31, 26, 14, 0.88);
+    color: var(--bone);
+    font: inherit;
+    padding: 7px 9px;
+  }
+  .import-controls button {
+    cursor: pointer;
+    color: var(--moss-hot);
+    background: rgba(139, 163, 74, 0.12);
+  }
+  .import-controls label {
+    grid-column: 1 / -1;
+    color: var(--ash);
+    font-size: 12px;
+  }
+  .chat-import-results {
+    max-height: 190px;
+    overflow: auto;
+    padding: 8px 10px;
+  }
+  .chat-import-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 5px 0;
+    color: var(--bone);
+  }
+  .chat-import-row input { margin-top: 3px; accent-color: var(--moss); }
+  .chat-import-empty {
+    margin: 0;
+    color: var(--ash);
+    white-space: pre-wrap;
+  }
+  pre {
+    margin: 0;
+    padding: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--bone);
+    max-height: 46vh;
+    overflow: auto;
+  }
+  .tank-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    min-height: 210px;
+  }
+  .town-field {
+    position: relative;
+    min-height: 210px;
+    border-right: 1px solid rgba(139, 163, 74, 0.18);
+    background:
+      linear-gradient(180deg, rgba(78, 95, 42, 0.14), transparent 56%),
+      radial-gradient(circle at 50% 72%, rgba(139, 163, 74, 0.16), transparent 42%);
+  }
+  .town-title {
+    position: absolute;
+    left: 16px;
+    top: 14px;
+    color: rgba(231, 223, 189, 0.42);
+    font-size: 12px;
+  }
+  .node-dot {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--bog);
+    border: 1px solid var(--moss-hot);
+    box-shadow: 0 0 22px rgba(196, 232, 106, 0.12);
+  }
+  .node-dot:nth-child(2) { left: 35%; top: 34%; }
+  .node-dot:nth-child(3) { left: 52%; top: 52%; }
+  .node-dot:nth-child(4) { left: 66%; top: 38%; }
+  .node-dot.running { background: var(--moss-hot); }
+  .node-dot.done { background: #58752e; }
+  .node-dot.failed { background: var(--bad); }
+  .tank-log { max-height: 210px; }
+  .footer-links {
+    margin-top: 12px;
+    text-align: center;
+    color: var(--ash);
+    font-size: 12px;
+  }
+  .footer-links a { color: var(--moss-hot); }
+  @media (max-width: 720px) {
+    .import-controls { grid-template-columns: 1fr; }
+    .tank-grid { grid-template-columns: 1fr; }
+    .town-field { border-right: 0; border-bottom: 1px solid rgba(139, 163, 74, 0.18); }
+  }
+</style>
+</head>
+<body>
+<main class="goblin-mode-shell">
+  <section class="goblin-mode-core">
+    <h1>one chat goblin mode</h1>
+    <form class="composer" id="goblin-form">
+      <div class="modebar">
+        <div class="segment" role="group" aria-label="Run mode">
+          <button id="mode-single" type="button" aria-pressed="true">Single Goblin</button>
+          <button id="mode-town" type="button" aria-pressed="false">Goblintown</button>
+        </div>
+        <label class="tank-toggle" title="Show the compact live Tank for Goblintown runs">
+          <input id="tank-enabled" type="checkbox" disabled>
+          Tank
+        </label>
+        <span class="grow"></span>
+        <button class="send" type="submit">run</button>
+      </div>
+      <textarea id="goblin-input" autocomplete="off" spellcheck="true" placeholder="Do anything"></textarea>
+      <div class="status-row">
+        <span>${esc(stats.warrenName)}</span>
+        <span>loot <b>${stats.lootCount}</b></span>
+        <span>rites <b>${stats.riteCount}</b></span>
+        <span>artifacts <b>${stats.artifactCount}</b></span>
+        <span>runs <b>${stats.runCount}</b></span>
+        <span>drift <b>${stats.drift.toFixed(4)}</b></span>
+      </div>
+    </form>
+
+    <section class="tank-box" id="tank-box" hidden>
+      <div class="panel-title"><span>tank</span><span id="tank-state">idle</span></div>
+      <div class="tank-grid">
+        <div class="town-field" aria-hidden="true">
+          <div class="town-title">goblintown</div>
+          <span class="node-dot" id="dot-planner"></span>
+          <span class="node-dot" id="dot-worker"></span>
+          <span class="node-dot" id="dot-scribe"></span>
+        </div>
+        <pre class="tank-log" id="tank-log">(waiting)</pre>
+      </div>
+    </section>
+
+    <section class="output" id="output-panel" hidden>
+      <div class="panel-title"><span id="output-title">output</span><span id="output-meta"></span></div>
+      <pre id="output-text"></pre>
+    </section>
+
+    <section class="output chat-import-panel" id="chat-import-panel">
+      <div class="panel-title"><span>chat hoard import</span><span id="chat-import-count">0 selected</span></div>
+      <div class="import-controls">
+        <select id="chat-source" aria-label="Chat source">
+          <option value="codex">Codex</option>
+          <option value="chatgpt">ChatGPT export</option>
+          <option value="folder">Folder</option>
+        </select>
+        <input id="chat-path" type="text" placeholder="optional path or export zip">
+        <input id="chat-query" type="text" placeholder="filter shiny words">
+        <button id="chat-scan" type="button">Scan</button>
+        <button id="chat-import-selected" type="button">Import Selected</button>
+        <button id="chat-import-all" type="button">Import All</button>
+        <label><input id="chat-summarize" type="checkbox"> AI summarize during import</label>
+      </div>
+      <div class="chat-import-results" id="chat-import-results">
+        <p class="chat-import-empty">Scan previous chats, then import selected or import the whole pile.</p>
+      </div>
+    </section>
+
+    <p class="footer-links">
+      slash commands: /ask, /run, /town, /tank, /plan, /context ingest, /context search, /context scan chats, /context import chats, /history, /help ·
+      <a href="/tank">legacy Tank</a> · <a href="/runs">runs</a>
+    </p>
+  </section>
+</main>
+<script>
+const INITIAL = ${initial};
+const $ = (id) => document.getElementById(id);
+let selectedMode = "single";
+let activeStream = null;
+let lastChatScan = [];
+
+function setMode(mode) {
+  selectedMode = mode === "town" ? "town" : "single";
+  $("mode-single").setAttribute("aria-pressed", selectedMode === "single" ? "true" : "false");
+  $("mode-town").setAttribute("aria-pressed", selectedMode === "town" ? "true" : "false");
+  $("tank-enabled").disabled = selectedMode !== "town";
+  if (selectedMode !== "town") $("tank-enabled").checked = false;
+}
+
+function showOutput(title, text, meta) {
+  $("output-panel").hidden = false;
+  $("output-title").textContent = title;
+  $("output-meta").textContent = meta || "";
+  $("output-text").textContent = text || "";
+}
+
+function appendTank(text) {
+  const log = $("tank-log");
+  log.textContent = log.textContent === "(waiting)" ? text : log.textContent + "\\n" + text;
+  log.scrollTop = log.scrollHeight;
+}
+
+function parseLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("/")) {
+    return { kind: "run", mode: selectedMode, tank: selectedMode === "town" && $("tank-enabled").checked, task: trimmed, args: trimmed ? [trimmed] : [] };
+  }
+  const parts = trimmed.match(/"[^"]*"|'[^']*'|\\S+/g) || [];
+  const command = (parts.shift() || "/run").slice(1).toLowerCase();
+  const tank = parts.includes("--tank") || command === "tank";
+  const args = parts.filter((p) => p !== "--tank").map((p) => p.replace(/^["']|["']$/g, ""));
+  const task = args.join(" ").trim();
+  if (command === "ask" || command === "single" || command === "goblin") return { kind: "ask", mode: "single", tank: false, task, args };
+  if (command === "town" || command === "goblintown" || command === "tank" || command === "plan") return { kind: command, mode: "town", tank, task, args };
+  return { kind: command, mode: selectedMode, tank: selectedMode === "town" && ($("tank-enabled").checked || tank), task, args };
+}
+
+async function showHistory() {
+  const res = await fetch("/api/runs");
+  if (!res.ok) throw new Error(await res.text());
+  const runs = await res.json();
+  const lines = runs.slice(0, 10).map((r) => r.runId + " · " + (r.mode || "rite") + " · " + (r.status || (r.done ? "done" : "running")) + " · " + r.task);
+  showOutput("history", lines.length ? lines.join("\\n") : "(no runs yet)", "");
+}
+
+function showHelp() {
+  showOutput("help", [
+    "/ask <task>        Single Goblin",
+    "/run <task>        current selected mode",
+    "/town <task>       Goblintown planner DAG",
+    "/tank <task>       Goblintown with live Tank box",
+    "/context ingest <path>    import old conversations/projects",
+    "/context search <query>   search imported context",
+    "/context scan chats       scan Codex or ChatGPT chat hoard",
+    "/context import chats --all    import scanned chats as DAG memory",
+    "/context vectorize --missing-only    precompute missing embeddings",
+    "/history           recent runs",
+    "/help              this list",
+  ].join("\\n"), "");
+}
+
+function commandPositionals(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg.startsWith("--")) {
+      if (args[i + 1] && !args[i + 1].startsWith("--")) i++;
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
+}
+
+function commandLimit(args, fallback) {
+  const idx = args.indexOf("--limit");
+  if (idx < 0 || !args[idx + 1]) return fallback;
+  const n = Number(args[idx + 1]);
+  return Number.isFinite(n) ? Math.max(1, Math.min(500, Math.floor(n))) : fallback;
+}
+
+function commandFlag(args, name) {
+  const idx = args.indexOf("--" + name);
+  return idx >= 0 && args[idx + 1] && !args[idx + 1].startsWith("--") ? args[idx + 1] : "";
+}
+
+function commandHasFlag(args, name) {
+  return args.includes("--" + name);
+}
+
+function contextChatPayloadFromArgs(args) {
+  return {
+    source: commandFlag(args, "source") || "codex",
+    path: commandFlag(args, "path") || undefined,
+    query: commandFlag(args, "query") || undefined,
+    since: commandFlag(args, "since") || undefined,
+    limit: commandLimit(args, 50),
+  };
+}
+
+function chatImportPayload() {
+  const path = $("chat-path").value.trim();
+  const query = $("chat-query").value.trim();
+  return {
+    source: $("chat-source").value,
+    path: path || undefined,
+    query: query || undefined,
+    limit: 50,
+  };
+}
+
+function selectedChatIds() {
+  return Array.from(document.querySelectorAll(".chat-import-choice:checked")).map((input) => input.value);
+}
+
+function updateChatSelectedCount() {
+  $("chat-import-count").textContent = selectedChatIds().length + " selected";
+}
+
+function setChatImportText(text) {
+  const box = $("chat-import-results");
+  box.innerHTML = "";
+  const p = document.createElement("p");
+  p.className = "chat-import-empty";
+  p.textContent = text;
+  box.appendChild(p);
+  updateChatSelectedCount();
+}
+
+function renderChatScan(records, skipped) {
+  lastChatScan = records || [];
+  const box = $("chat-import-results");
+  box.innerHTML = "";
+  if (!lastChatScan.length) {
+    setChatImportText(skipped && skipped.length ? "No visible chats found. Skipped " + skipped.length + " path(s)." : "No visible chats found.");
+    return;
+  }
+  for (const record of lastChatScan) {
+    const row = document.createElement("label");
+    row.className = "chat-import-row";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "chat-import-choice";
+    checkbox.value = record.id;
+    checkbox.checked = true;
+    checkbox.onchange = updateChatSelectedCount;
+    const text = document.createElement("span");
+    text.textContent = record.source + " · " + (record.updatedAt || record.createdAt || "unknown") + " · " + record.title + " · " + record.messageCount + " messages";
+    row.appendChild(checkbox);
+    row.appendChild(text);
+    box.appendChild(row);
+  }
+  if (skipped && skipped.length) {
+    const note = document.createElement("p");
+    note.className = "chat-import-empty";
+    note.textContent = "Skipped " + skipped.length + " path(s).";
+    box.appendChild(note);
+  }
+  updateChatSelectedCount();
+}
+
+async function scanChats() {
+  setChatImportText("sniffing previous chats...");
+  const res = await fetch("/api/context/chats/scan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(chatImportPayload()),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const body = await res.json();
+  renderChatScan(body.records || [], body.skipped || []);
+}
+
+async function importChats(all) {
+  const ids = all ? [] : selectedChatIds();
+  if (!all && ids.length === 0) {
+    setChatImportText("Pick at least one chat, or use Import All.");
+    return;
+  }
+  setChatImportText(all ? "importing the whole pile..." : "importing selected chats...");
+  const res = await fetch("/api/context/chats/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...chatImportPayload(),
+      all,
+      ids,
+      summarize: $("chat-summarize").checked,
+    }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const body = await res.json();
+  const lines = [
+    "Imported " + (body.records || []).length + " chat(s).",
+    "Created " + (body.artifacts || []).length + " artifact(s).",
+    "Vectorized " + (body.vectorized || 0) + " artifact(s).",
+  ];
+  if (body.warning) lines.push(body.warning);
+  if (body.skipped && body.skipped.length) lines.push("Skipped " + body.skipped.length + " item(s).");
+  setChatImportText(lines.join("\\n"));
+}
+
+async function handleContextCommand(command) {
+  const positionals = commandPositionals(command.args || []);
+  const action = positionals[0];
+  if (action === "scan" && positionals[1] === "chats") {
+    const res = await fetch("/api/context/chats/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(contextChatPayloadFromArgs(command.args || [])),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    const lines = (body.records || []).map((record) => record.id + " · " + record.source + " · " + record.title);
+    showOutput("context scan chats", lines.length ? lines.join("\\n") : "No visible chats found.", "");
+    renderChatScan(body.records || [], body.skipped || []);
+    return;
+  }
+  if (action === "import" && positionals[1] === "chats") {
+    const args = command.args || [];
+    const ids = (commandFlag(args, "ids") || "").split(",").map((part) => part.trim()).filter(Boolean);
+    const all = commandHasFlag(args, "all");
+    if (!all && ids.length === 0) {
+      showOutput("context import chats", "usage: /context import chats --all or --ids <id,...>", "");
+      return;
+    }
+    const res = await fetch("/api/context/chats/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...contextChatPayloadFromArgs(args),
+        all,
+        ids,
+        noVectorize: commandHasFlag(args, "no-vectorize"),
+        summarize: commandHasFlag(args, "summarize"),
+      }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    showOutput(
+      "context import chats",
+      "Imported " + (body.records || []).length + " chat(s), " +
+        (body.artifacts || []).length + " artifact(s), vectorized " +
+        (body.vectorized || 0) + ".",
+      "",
+    );
+    return;
+  }
+  if (action === "vectorize") {
+    const args = command.args || [];
+    const res = await fetch("/api/context/vectorize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        missingOnly: commandHasFlag(args, "missing-only"),
+        limit: commandLimit(args, 100),
+      }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    showOutput("context vectorize", "Scanned " + body.scanned + ", vectorized " + body.vectorized + ".", "");
+    return;
+  }
+  if (action === "ingest") {
+    const path = positionals[1];
+    if (!path) {
+      showOutput("context", "usage: /context ingest <path> [--limit N]", "");
+      return;
+    }
+    showOutput("context ingest", "importing...", path);
+    const res = await fetch("/api/context/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, limit: commandLimit(command.args || [], 80) }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    const lines = (body.artifacts || []).map((artifact) => artifact.id + " · " + artifact.ref);
+    const skipped = body.skipped && body.skipped.length ? "\\nskipped " + body.skipped.length + " file(s)" : "";
+    showOutput("context ingest", (lines.length ? lines.join("\\n") : "No files imported.") + skipped, path);
+    return;
+  }
+  if (action === "search") {
+    const query = positionals.slice(1).join(" ").trim();
+    if (!query) {
+      showOutput("context", "usage: /context search <query> [--limit N]", "");
+      return;
+    }
+    const res = await fetch("/api/context/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, limit: commandLimit(command.args || [], 10) }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    const lines = (body.artifacts || []).map((artifact) => artifact.id + " · " + artifact.ref + "\\n  " + artifact.claim);
+    showOutput("context search", lines.length ? lines.join("\\n") : "No matching context artifacts found.", query);
+    return;
+  }
+  showOutput("context", "usage: /context ingest <path> or /context search <query>", "");
+}
+
+function resetDots() {
+  ["dot-planner", "dot-worker", "dot-scribe"].forEach((id) => {
+    $(id).className = "node-dot";
+  });
+}
+
+function openTownStream(runId, showTank) {
+  if (activeStream) activeStream.close();
+  if (showTank) {
+    $("tank-box").hidden = false;
+    $("tank-log").textContent = "(waiting)";
+    $("tank-state").textContent = "running";
+    resetDots();
+  }
+  const es = new EventSource("/api/rite/" + runId + "/stream");
+  activeStream = es;
+  es.addEventListener("plan:planning", () => {
+    if (!showTank) return;
+    $("dot-planner").classList.add("running");
+    appendTank("planner thinking");
+  });
+  es.addEventListener("plan:built", (ev) => {
+    if (!showTank) return;
+    const data = JSON.parse(ev.data);
+    $("dot-planner").className = "node-dot done";
+    appendTank("DAG built: " + data.plan.nodes.length + " node(s)");
+  });
+  es.addEventListener("plan:node:start", (ev) => {
+    if (!showTank) return;
+    const data = JSON.parse(ev.data);
+    $("dot-worker").className = "node-dot running";
+    appendTank("node " + data.nodeId + " start");
+  });
+  es.addEventListener("plan:node:done", (ev) => {
+    if (!showTank) return;
+    const data = JSON.parse(ev.data);
+    $("dot-worker").className = "node-dot done";
+    appendTank("node " + data.nodeId + " done");
+  });
+  es.addEventListener("done", async (ev) => {
+    const data = JSON.parse(ev.data);
+    if (showTank) {
+      $("dot-scribe").className = "node-dot done";
+      $("tank-state").textContent = "done";
+      appendTank("done: " + data.outcome);
+    }
+    es.close();
+    activeStream = null;
+    if (data.finalArtifactId) {
+      const art = await fetch("/api/artifact/" + data.finalArtifactId).then((r) => r.ok ? r.json() : null);
+      const claims = art && Array.isArray(art.claims) ? art.claims.map((c) => "- " + c.text).join("\\n") : "";
+      showOutput("goblintown result", claims || "Run finished. Open /runs for full details.", data.riteId || runId);
+    } else {
+      showOutput("goblintown result", "Run finished. Open /runs for full details.", data.riteId || runId);
+    }
+  });
+  es.addEventListener("error", () => {
+    if (showTank) $("tank-state").textContent = "stream ended";
+  });
+}
+
+$("mode-single").onclick = () => setMode("single");
+$("mode-town").onclick = () => setMode("town");
+$("chat-scan").onclick = () => scanChats().catch((err) => setChatImportText(err.message || String(err)));
+$("chat-import-selected").onclick = () => importChats(false).catch((err) => setChatImportText(err.message || String(err)));
+$("chat-import-all").onclick = () => importChats(true).catch((err) => setChatImportText(err.message || String(err)));
+
+$("goblin-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const command = parseLine($("goblin-input").value);
+  if (!command.task && !["history", "help"].includes(command.kind)) {
+    showOutput("error", "Give the goblin a task.", "");
+    return;
+  }
+  if (command.kind === "help") return showHelp();
+  if (command.kind === "history") return showHistory().catch((err) => showOutput("error", err.message || String(err), ""));
+  if (command.kind === "context") return handleContextCommand(command).catch((err) => showOutput("error", err.message || String(err), ""));
+
+  setMode(command.mode);
+  $("tank-enabled").checked = command.mode === "town" && command.tank;
+  showOutput(command.mode === "town" ? "goblintown" : "single goblin", "running...", "");
+
+  try {
+    if (command.mode === "town") {
+      const res = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: command.task,
+          maxNodes: 6,
+          maxReplan: 2,
+          remember: true,
+          outputFormat: "markdown",
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const body = await res.json();
+      showOutput("goblintown", "run " + body.runId + " started", body.runId);
+      openTownStream(body.runId, command.tank);
+      return;
+    }
+    const res = await fetch("/api/goblin/single", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: command.task, remember: true, outputFormat: "markdown" }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    showOutput("single goblin", body.output, body.lootId ? "loot " + body.lootId : "");
+  } catch (err) {
+    showOutput("error", err.message || String(err), "");
+  }
+});
+</script>
+</body>
+</html>`;
 }
 
 function tankHtml(

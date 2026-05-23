@@ -17,7 +17,7 @@
     "goblintown": "dist/cli.js"
   },
   "types": "./dist/index.d.ts",
-  "main": "./dist/index.js",
+  "main": "./dist/desktop.js",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -35,12 +35,14 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
+    "desktop": "npm run build && electron dist/desktop.js",
     "start": "node dist/cli.js",
     "serve": "node dist/cli.js serve",
+    "package:mac": "npm run build && electron-packager . Goblintown --platform=darwin --out=release --overwrite --ignore='^/src($|/)' --ignore='^/dist/__tests__($|/)' --ignore='^/.goblintown($|/)'",
     "pack:check": "npm pack --dry-run",
     "release:check": "npm run clean && npm run test && npm run pack:check",
     "clean": "rimraf dist",
-    "test": "npm run build && node --test dist/__tests__/drift.test.js dist/__tests__/reward.test.js dist/__tests__/hoard.test.js dist/__tests__/federation.test.js dist/__tests__/audit.test.js dist/__tests__/reward-plugin.test.js dist/__tests__/graph.test.js dist/__tests__/ban-list.test.js dist/__tests__/concurrency.test.js dist/__tests__/budget.test.js dist/__tests__/run-store.test.js dist/__tests__/export-compare.test.js dist/__tests__/pack-prompt.test.js dist/__tests__/banners.test.js dist/__tests__/openai-client.test.js dist/__tests__/providers.test.js dist/__tests__/provider-ui.test.js dist/__tests__/settings-menu.test.js dist/__tests__/cloud-mode.test.js dist/__tests__/tank-sprites.test.js dist/__tests__/asteroid.test.js dist/__tests__/docs-help.test.js dist/__tests__/formatting.test.js dist/__tests__/artifact.test.js dist/__tests__/specialist.test.js dist/__tests__/specialist-observability.test.js dist/__tests__/trace-export.test.js dist/__tests__/planner.test.js dist/__tests__/debate.test.js dist/__tests__/tools.test.js dist/__tests__/addons.test.js dist/__tests__/onchain-ui.test.js dist/__tests__/solana.test.js dist/__tests__/solana-tools.test.js dist/__tests__/thesis.test.js dist/__tests__/thesis-ui.test.js dist/__tests__/sentiment.test.js dist/__tests__/sentiment-ui.test.js dist/__tests__/embeddings.test.js dist/__tests__/fold.test.js dist/__tests__/country.test.js",
+    "test": "npm run build && node --test dist/__tests__/drift.test.js dist/__tests__/reward.test.js dist/__tests__/hoard.test.js dist/__tests__/federation.test.js dist/__tests__/audit.test.js dist/__tests__/reward-plugin.test.js dist/__tests__/graph.test.js dist/__tests__/ban-list.test.js dist/__tests__/concurrency.test.js dist/__tests__/budget.test.js dist/__tests__/run-store.test.js dist/__tests__/export-compare.test.js dist/__tests__/pack-prompt.test.js dist/__tests__/banners.test.js dist/__tests__/openai-client.test.js dist/__tests__/providers.test.js dist/__tests__/provider-ui.test.js dist/__tests__/settings-menu.test.js dist/__tests__/cloud-mode.test.js dist/__tests__/tank-sprites.test.js dist/__tests__/asteroid.test.js dist/__tests__/docs-help.test.js dist/__tests__/formatting.test.js dist/__tests__/artifact.test.js dist/__tests__/context-ingest.test.js dist/__tests__/chat-import.test.js dist/__tests__/specialist.test.js dist/__tests__/specialist-observability.test.js dist/__tests__/trace-export.test.js dist/__tests__/planner.test.js dist/__tests__/debate.test.js dist/__tests__/tools.test.js dist/__tests__/addons.test.js dist/__tests__/onchain-ui.test.js dist/__tests__/solana.test.js dist/__tests__/solana-tools.test.js dist/__tests__/thesis.test.js dist/__tests__/thesis-ui.test.js dist/__tests__/sentiment.test.js dist/__tests__/sentiment-ui.test.js dist/__tests__/embeddings.test.js dist/__tests__/fold.test.js dist/__tests__/country.test.js dist/__tests__/slash-commands.test.js dist/__tests__/goblin-mode-ui.test.js",
     "prepublishOnly": "npm run clean && npm run build && npm test"
   },
   "publishConfig": {
@@ -66,8 +68,10 @@
     "openai": "^4.80.0"
   },
   "devDependencies": {
+    "@electron/packager": "^20.0.0",
     "@types/express": "^4.17.21",
     "@types/node": "^22.7.0",
+    "electron": "^42.2.0",
     "rimraf": "^6.0.1",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"

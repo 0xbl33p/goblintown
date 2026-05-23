@@ -465,7 +465,14 @@ goblintown init</pre>
 
 <section id="usage">
   <h2><span class="hash">#</span> usage</h2>
-<pre><span class="comment"># one-shot — output streams as it arrives</span>
+<pre><span class="comment"># Goblin Mode slash commands</span>
+goblintown /ask "Write the shortest useful answer"
+goblintown /town "Plan and implement the feature"
+goblintown /tank "Debug this with the visual Tank"
+goblintown /context ingest "./old-conversations"
+goblintown /context search "desktop app tank"
+
+<span class="comment"># one-shot — output streams as it arrives</span>
 goblintown summon raccoon --task "Summarize package.json" --personality stoic
 
 <span class="comment"># scavenge a corpus</span>
@@ -482,6 +489,11 @@ goblintown rite "Refactor src/quest.ts to share the troll-review helper" \
   --budget 80000 --max-output 4096 --format markdown
 
 <span class="comment"># memory: cite a prior rite or auto-load relevant artifacts</span>
+goblintown context ingest ./notes --limit 40
+goblintown context search "rollback paths"
+goblintown context scan chats --source codex --limit 20
+goblintown context import chats --source chatgpt --path ./conversations.json --all
+goblintown context vectorize --missing-only
 goblintown rite "Extend the migration plan with rollback paths" \
   --cite 4f2a-abc12345 --remember
 goblintown ancestry &lt;riteId&gt;             <span class="comment"># parents → this → children</span>
@@ -496,7 +508,7 @@ goblintown drift
 goblintown audit &lt;riteId&gt;                <span class="comment"># now includes artifact lineage</span>
 goblintown graph &lt;riteId|lootId&gt;
 goblintown export-trace &lt;runId&gt; --out trace.json   <span class="comment"># academic LLM-MAS schema</span>
-goblintown serve --port 7777             <span class="comment"># tank UI + first-run Local Only / Goblintown Cloud choice</span>
+goblintown serve --port 7777             <span class="comment"># Goblin Mode GUI + first-run Local Only / Goblintown Cloud choice</span>
 goblintown cloud                         <span class="comment"># bundled cloud setup + Firebase override notes</span>
 goblintown addon enable solana           <span class="comment"># read-only onchain verifier tools</span>
 goblintown addon solana &lt;address&gt;        <span class="comment"># direct read-only Solana address profile</span>
@@ -517,10 +529,11 @@ goblintown sentiment project "Jito"       <span class="comment"># project/team/p
     <div class="card"><h3>Verifier-as-reward tools</h3><p>Optional troll tool-use round: json.parse, regex.match, http.head, and enabled add-on tools. Real ground-truth signals beyond LLM-as-judge.</p></div>
     <div class="card"><h3>Specialist recovery</h3><p>When the pack all-fails, cluster failure modes (1 LLM call) and spawn focused Specialist Goblins that surgically fix one mode each. Wins on pass OR improvement over seed; only escalates to Ogre if specialists also fail.</p></div>
     <div class="card"><h3>Ogre fallback</h3><p>Heavyweight last-resort. Synthesizes from the best parts of the failed pack. Only summoned when nothing else holds.</p></div>
-    <div class="card"><h3>Typed Artifact memory</h3><p>Pigeon-Scribe distills every rite into a typed JSON Artifact (claims, evidence, open questions, next steps). Future rites cite or auto-load relevant artifacts. Embedding-based retrieval with keyword fallback.</p></div>
+    <div class="card"><h3>Typed Artifact memory</h3><p>Pigeon-Scribe distills every rite into a typed JSON Artifact (claims, evidence, open questions, next steps). Future rites cite or auto-load relevant artifacts. Local context ingestion imports old conversations and project folders as file-backed Artifacts. Chat Hoard Import Mode scans Codex sessions and ChatGPT exports, stores root/chunk DAG artifacts, and keeps chat memory pre-vectorized when embeddings are configured. AI summaries are opt-in.</p></div>
     <div class="card"><h3>Context-folding</h3><p>As the Hoard accumulates, <code>goblintown fold</code> merges related older artifacts into higher-level summaries. Recursive abstraction.</p></div>
     <div class="card"><h3>Token streaming</h3><p>Ogre, every goblin, and every specialist stream tokens. Live "thinking" bubbles in the tank UI show what each creature is producing as it produces it.</p></div>
-    <div class="card"><h3>Tank UI</h3><p>A tamagotchi-style live diorama at <code>/</code>: default creature sprites, a centered wordmark, village tiers, DAG progress, resumable <code>?run=&lt;id&gt;</code> views, Onchain lookup, the Tank Sentiment tool, and the first-run Local Only / Goblintown Cloud choice.</p></div>
+    <div class="card"><h3>Goblin Mode GUI</h3><p>A one-prompt surface at <code>/</code> with Single Goblin and Goblintown modes, slash commands, and a Tank checkbox for planner runs. The desktop app opens here by default.</p></div>
+    <div class="card"><h3>Tank UI</h3><p>A tamagotchi-style live diorama at <code>/tank</code>: default creature sprites, a centered wordmark, village tiers, DAG progress, resumable run views, Onchain lookup, the Tank Sentiment tool, and the first-run Local Only / Goblintown Cloud choice.</p></div>
     <div class="card"><h3>Settings menu</h3><p>Country, Mail, Add-ons, Onchain, Settings Sentiment Sources, API Provider, Account cloud mode, and Reset are gathered into one scrollable menu. Reset buries Asteroid Mode behind an extra step before local or cloud data can be destroyed.</p></div>
     <div class="card"><h3>Solana add-on</h3><p>Enable read-only onchain investigator tools for address profiles, activity, parsed transactions, token mint/account data, SOL balances, account metadata, SPL token accounts, recent signatures, and RPC health. The Tank Onchain panel and <code>goblintown addon solana &lt;address&gt;</code> can turn a lookup into a Goblintown analysis rite. No keys, signing, swaps, or transaction submission.</p></div>
     <div class="card"><h3>Thesis engine</h3><p>Build project-quality memos about a team, product, protocol, repository, or decision. It weighs quality and advantages, evidence gaps, risks, and invalidation triggers, can scan repo files, and labels missing evidence Unknown / Unverified. It is not buyability or a buy/sell recommendation.</p></div>
@@ -535,7 +548,7 @@ goblintown sentiment project "Jito"       <span class="comment"># project/team/p
     <div class="card"><h3>Federation</h3><p>Pigeons deliver compressed artifacts between Warrens, over filesystem or HTTP. Signed bodies, optional HMAC.</p></div>
     <div class="card"><h3>Pluggable rewards</h3><p>Drop a .goblintown/reward.mjs to override the default scoring.</p></div>
     <div class="card"><h3>Reroll, export, compare, ancestry</h3><p>Re-run a rite with same params; export to markdown; diff two rites; print artifact lineage.</p></div>
-    <div class="card"><h3>274 tests</h3><p>Pure-function coverage on every protocol invariant: drift, reward, hoard hashing, federation HMAC, audit, graph, planner DAG validation, debate prompt construction, tool dispatch, add-on registry, Solana read-only RPC shaping, address profiles, activity, transactions, token summaries, thesis prompt/evidence construction, Tank thesis wiring, sentiment sources, query-specific project sentiment, market context separation, source failure normalization, and Tank/Settings wiring, embeddings ranking math, provider routing, cloud mode, Settings reset flows, sprite assets, output formatting, fold clustering, trace-export schema mapping. No OpenAI calls during testing.</p></div>
+    <div class="card"><h3>308 tests</h3><p>Pure-function coverage on every protocol invariant: drift, reward, hoard hashing, federation HMAC, audit, graph, planner DAG validation, debate prompt construction, tool dispatch, add-on registry, Solana read-only RPC shaping, address profiles, activity, transactions, token summaries, thesis prompt/evidence construction, Goblin Mode shell wiring, Tank thesis wiring, sentiment sources, query-specific project sentiment, market context separation, source failure normalization, local context ingestion, previous chat import, pre-vectorized chat memory, and Tank/Settings wiring, embeddings ranking math, provider routing, cloud mode, Settings reset flows, sprite assets, output formatting, fold clustering, trace-export schema mapping. No OpenAI calls during testing.</p></div>
   </div>
 </section>
 

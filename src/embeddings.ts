@@ -186,6 +186,7 @@ export async function findRelevantArtifactsEmbedded(opts: {
 export function artifactRetrievalText(a: Artifact): string {
   const parts: string[] = [a.task];
   for (const c of a.claims) parts.push(c.text);
+  for (const e of a.evidence) if (e.snippet) parts.push(e.snippet);
   for (const q of a.openQuestions) parts.push(q);
   return parts.join("\n");
 }
