@@ -21,7 +21,7 @@ import type {
   PlanNode,
 } from "./types.js";
 
-const ALLOWED_PERSONALITIES: Personality[] = ["nerdy", "cynical", "chipper", "stoic", "feral"];
+const ALLOWED_PERSONALITIES: Personality[] = ["nerdy", "cynical", "chipper", "stoic", "feral", "goblin_mode"];
 
 export function buildPlannerPrompt(opts: {
   task: string;
@@ -61,7 +61,7 @@ export function buildPlannerPrompt(opts: {
       `Each node is a sub-rite with a clear, narrow task. Final node must be of kind "synthesize". ` +
       `If the task is genuinely simple, emit a single node with kind="sub_rite" and no synthesize node.`,
   );
-  lines.push(`For each node, also suggest a packSize (1-5) and lead personality from: nerdy|cynical|chipper|stoic|feral.`);
+  lines.push(`For each node, also suggest a packSize (1-5) and lead personality from: nerdy|cynical|chipper|stoic|feral|goblin_mode.`);
   lines.push("");
   lines.push(`Output strict JSON only (no fences, no prose):`);
   lines.push(`{`);

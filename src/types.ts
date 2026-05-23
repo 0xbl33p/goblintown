@@ -20,7 +20,8 @@ export type Personality =
   | "cynical"
   | "chipper"
   | "stoic"
-  | "feral";
+  | "feral"
+  | "goblin_mode";
 
 export interface Creature {
   kind: CreatureKind;
