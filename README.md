@@ -853,8 +853,8 @@ ship together and are covered by the test suite:
 
 | Area | What ships now | Entry point |
 | --- | --- | --- |
-| **Goblin Mode GUI** | Single Goblin / Goblintown mode switch, slash-command prompt, compact Tank checkbox, result panel, and desktop-app entrypoint. | `goblintown serve`, `npm run desktop` |
-| **Tank UI** | Live creature diorama, default sprite sheets, centered wordmark, result panel, resumable runs, Settings, Onchain lookup, and Asteroid Mode. | `/tank` |
+| **AI-first Tank UI** | Chat-first full Tank shell with sidebar navigation, single-Goblin chat, guided Rite entry, model controls, provider settings, and desktop-app entrypoint. | `goblintown serve`, `npm run desktop` |
+| **Tank runtime** | Live creature diorama, default sprite sheets, centered wordmark, result panel, resumable runs, Settings, Onchain lookup, and Asteroid Mode. | `/` or `/tank` |
 | **Memory** | Pigeon-Scribe distills every Rite into a structured JSON artifact with claims, evidence, open questions, next steps, and parent links. Local context ingestion imports old conversations/projects as file-backed Artifacts; Chat Hoard Import Mode imports previous Codex and ChatGPT chats as pre-vectorized root/chunk DAG memory. | `--cite <riteId>`, `--remember`, `goblintown context ingest <path>`, `goblintown context scan chats` |
 | **Planning** | Planner emits a typed DAG; the executor runs each node as a sub-rite, feeds artifacts forward, and replans after node failures. | `goblintown plan "<task>"`, Tank `PLAN` |
 | **Specialist recovery** | Failed packs are clustered by dominant failure mode, then 1-3 focused Specialist Goblins repair the best seed before Ogre escalation. | on by default; `--no-specialist` disables |
@@ -867,6 +867,22 @@ ship together and are covered by the test suite:
 | **Goblintown Cloud** | Bundled Firebase-backed SSO, friend codes, discovery, mail, and country metadata for users who opt in. | first-run prompt, Settings -> Account |
 | **Federation and Country** | Filesystem/HTTP artifact delivery, friend requests, direct messages, country discovery, join approvals, and team role assignment. | Settings -> Country/Mail, `goblintown country` |
 | **Trace and audit** | Run export to LLM-MAS trace schema, artifact lineage graphing, audit, compare, reroll, context search, and context folding. | `export-trace`, `graph`, `audit`, `context search`, `fold` |
+
+### Desktop installers
+
+The Electron desktop shell packages the same local-first Tank app and starts its
+own embedded Goblintown server. Installer artifacts are written to `release/`,
+which is intentionally gitignored:
+
+```bash
+npm run dist:mac      # macOS arm64 DMG
+npm run dist:win      # Windows x64 NSIS installer
+npm run dist:linux    # Linux x64 AppImage
+npm run dist:desktop  # all three targets from one command
+```
+
+macOS builds are ad-hoc signed by default and are not notarized unless Apple
+signing credentials are supplied to `electron-builder`.
 
 The Tank renders the protocol as a tamagotchi-style live village: each creature
 has a home, tokens stream into per-creature thinking bubbles, the DAG panel

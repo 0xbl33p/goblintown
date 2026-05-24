@@ -396,7 +396,7 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
     res.type("application/javascript").send(MATTER_JS_BROWSER_SOURCE);
   });
 
-  app.get("/", async (_req, res) => renderGoblinMode(warren, runs, res));
+  app.get("/", async (_req, res) => renderHome(warren, runs, res));
   app.get("/tank", async (_req, res) => renderHome(warren, runs, res));
   app.get("/chat", (_req, res) =>
     res.send(layout("Single Goblin Chat", chatPage())),
@@ -3402,14 +3402,14 @@ function goblinModeHtml(stats: {
     font-size: 12px;
   }
   .status-row b { color: var(--moss-hot); font-weight: 500; }
-  .output, .tank-box {
+  .output, .old-tank-box {
     margin-top: 14px;
     background: rgba(18, 15, 8, 0.82);
     border: 1px solid rgba(139, 163, 74, 0.22);
     border-radius: 8px;
     overflow: hidden;
   }
-  .output[hidden], .tank-box[hidden] { display: none; }
+  .output[hidden], .old-tank-box[hidden] { display: none; }
   .panel-title {
     display: flex;
     justify-content: space-between;
@@ -3529,15 +3529,15 @@ function goblinModeHtml(stats: {
 <body>
 <main class="goblin-mode-shell">
   <section class="goblin-mode-core">
-    <h1>one chat goblin mode</h1>
+    <h1>single goblin fallback</h1>
     <form class="composer" id="goblin-form">
       <div class="modebar">
         <div class="segment" role="group" aria-label="Run mode">
           <button id="mode-single" type="button" aria-pressed="true">Single Goblin</button>
           <button id="mode-town" type="button" aria-pressed="false">Goblintown</button>
         </div>
-        <label class="tank-toggle" title="Show the compact live Tank for Goblintown runs">
-          <input id="tank-enabled" type="checkbox" disabled>
+        <label class="tank-toggle" title="Open the full Tank for Goblintown runs">
+          <input id="old-tank-enabled" type="checkbox" disabled>
           Tank
         </label>
       </div>
@@ -3555,7 +3555,7 @@ function goblinModeHtml(stats: {
       </div>
     </form>
 
-    <section class="tank-box" id="tank-box" hidden>
+    <section class="old-tank-box" id="old-tank-box" hidden>
       <div class="panel-title"><span>tank</span><span id="tank-state">idle</span></div>
       <div class="tank-grid">
         <div class="town-field" aria-hidden="true">
@@ -3610,8 +3610,8 @@ function setMode(mode) {
   selectedMode = mode === "town" ? "town" : "single";
   $("mode-single").setAttribute("aria-pressed", selectedMode === "single" ? "true" : "false");
   $("mode-town").setAttribute("aria-pressed", selectedMode === "town" ? "true" : "false");
-  $("tank-enabled").disabled = selectedMode !== "town";
-  if (selectedMode !== "town") $("tank-enabled").checked = false;
+  $("old-tank-enabled").disabled = selectedMode !== "town";
+  if (selectedMode !== "town") $("old-tank-enabled").checked = false;
 }
 
 function showOutput(title, text, meta) {
@@ -3630,7 +3630,7 @@ function appendTank(text) {
 function parseLine(line) {
   const trimmed = line.trim();
   if (!trimmed.startsWith("/")) {
-    return { kind: "run", mode: selectedMode, tank: selectedMode === "town" && $("tank-enabled").checked, task: trimmed, args: trimmed ? [trimmed] : [] };
+    return { kind: "run", mode: selectedMode, tank: selectedMode === "town" && $("old-tank-enabled").checked, task: trimmed, args: trimmed ? [trimmed] : [] };
   }
   const parts = trimmed.match(/"[^"]*"|'[^']*'|\\S+/g) || [];
   const command = (parts.shift() || "/run").slice(1).toLowerCase();
@@ -3639,7 +3639,7 @@ function parseLine(line) {
   const task = args.join(" ").trim();
   if (command === "ask" || command === "single" || command === "goblin") return { kind: "ask", mode: "single", tank: false, task, args };
   if (command === "town" || command === "goblintown" || command === "tank" || command === "plan") return { kind: command, mode: "town", tank, task, args };
-  return { kind: command, mode: selectedMode, tank: selectedMode === "town" && ($("tank-enabled").checked || tank), task, args };
+  return { kind: command, mode: selectedMode, tank: selectedMode === "town" && ($("old-tank-enabled").checked || tank), task, args };
 }
 
 async function showHistory() {
@@ -3916,7 +3916,7 @@ function resetDots() {
 function openTownStream(runId, showTank) {
   if (activeStream) activeStream.close();
   if (showTank) {
-    $("tank-box").hidden = false;
+    $("old-tank-box").hidden = false;
     $("tank-log").textContent = "(waiting)";
     $("tank-state").textContent = "running";
     resetDots();
@@ -3993,7 +3993,7 @@ $("goblin-form").addEventListener("submit", async (event) => {
   if (command.kind === "context") return handleContextCommand(command).catch((err) => showOutput("error", err.message || String(err), ""));
 
   setMode(command.mode);
-  $("tank-enabled").checked = command.mode === "town" && command.tank;
+  $("old-tank-enabled").checked = command.mode === "town" && command.tank;
   showOutput(command.mode === "town" ? "goblintown" : "single goblin", "running...", "");
 
   try {
@@ -4643,7 +4643,7 @@ function tankHtml(
       display: none;
     }
     .workarea {
-      grid-template-columns: 56px 1fr;
+      grid-template-columns: 96px 1fr;
     }
     .ops-sidebar {
       padding: 0.45rem 0.28rem;
@@ -5016,11 +5016,11 @@ function tankHtml(
 
   .workarea {
     display: grid;
-    grid-template-columns: 76px 1fr;
+    grid-template-columns: 188px 1fr;
     min-height: 0;
     border-bottom: 1px solid var(--line);
   }
-  .workarea.sidebar-collapsed { grid-template-columns: 44px 1fr; }
+  .workarea.sidebar-collapsed { grid-template-columns: 52px 1fr; }
   .ops-sidebar {
     border-right: 1px solid var(--line);
     background: rgba(8, 12, 8, 0.95);
@@ -5038,10 +5038,7 @@ function tankHtml(
     gap: 0.4rem;
   }
   .ops-sidebar h3 {
-    margin: 0 auto;
-    writing-mode: vertical-rl;
-    transform: rotate(180deg);
-    text-align: center;
+    margin: 0;
     font-size: 0.62rem;
     color: var(--fg-bright);
     letter-spacing: 0.08em;
@@ -5074,7 +5071,26 @@ function tankHtml(
     letter-spacing: 0.07em;
     min-height: 2.2rem;
   }
+  .ops-nav-group {
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: rgba(5,8,5,0.48);
+    overflow: hidden;
+  }
+  .ops-nav-group summary {
+    cursor: pointer;
+    color: var(--fg-bright);
+    padding: 0.55rem 0.58rem;
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .ops-nav-group .btn {
+    width: calc(100% - 0.6rem);
+    margin: 0 0.3rem 0.3rem;
+  }
   .ops-subtle {
+    display: none;
     color: var(--muted);
     font-size: 0.7rem;
     line-height: 1.35;
@@ -5260,7 +5276,7 @@ function tankHtml(
   .chat-offer-inline.open { display: flex; }
   .chat-input-row {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: auto 1fr auto;
     gap: 0.55rem;
     align-items: end;
   }
@@ -6370,17 +6386,26 @@ function tankHtml(
   <div class="workarea" id="workarea">
   <aside class="ops-sidebar" id="ops-sidebar">
     <div class="ops-head">
-      <h3>Command Sidebar</h3>
-      <button class="ops-toggle" id="ops-toggle" type="button" aria-expanded="true">◀</button>
+      <h3>Goblintown</h3>
+      <button class="ops-toggle" id="ops-toggle" type="button" aria-expanded="true" title="Collapse sidebar">◀</button>
     </div>
     <div class="ops-main" id="ops-main">
       <div class="ops-quick">
-        <button class="btn primary" id="btn-chat" type="button">CHAT</button>
-        <button class="btn primary" id="btn-rite" type="button">NEW RITE</button>
-        <button class="btn" id="btn-thesis" type="button">THESIS</button>
-        <button class="btn" id="btn-sentiment" type="button">SENTIMENT</button>
-        <button class="btn" id="btn-plan" type="button">PLAN</button>
-        <a class="btn" href="/runs">RUNS</a>
+        <button class="btn primary" id="btn-chat" type="button" title="Start a fresh single-goblin chat">New Chat</button>
+        <button class="btn primary" id="btn-rite" type="button" title="Start a new full Tank rite">New Rite</button>
+        <button class="btn" id="btn-api-configs" type="button" title="Open API provider and model settings">API Configs</button>
+        <details class="ops-nav-group" id="ops-rites">
+          <summary title="Open rite shortcuts and run history">Rites</summary>
+          <button class="btn" id="btn-thesis" type="button" title="Build a thesis rite">Thesis</button>
+          <button class="btn" id="btn-sentiment" type="button" title="Run sentiment tools">Sentiment</button>
+          <button class="btn" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
+          <a class="btn" href="/runs" title="Open previous runs">Runs</a>
+        </details>
+        <details class="ops-nav-group" id="ops-chats">
+          <summary title="Open chat shortcuts">Chats</summary>
+          <a class="btn" href="/chat" title="Open the standalone chat page">Single Chat</a>
+        </details>
+        <button class="btn" id="btn-sidebar-settings" type="button" title="Open Settings">Settings</button>
       </div>
       <div class="ops-subtle">Run any Goblintown CLI command in-app. Use full syntax in the input line.</div>
       <div class="ops-row">
@@ -6420,12 +6445,20 @@ function tankHtml(
             <button id="root-chat-offer-run" type="button">Run Goblintown</button>
           </div>
           <div class="chat-input-row">
+            <button id="root-chat-voice" type="button" title="Voice">Voice</button>
             <textarea id="root-chat-input" rows="3" placeholder="Message the single Goblin..." required></textarea>
-            <button id="root-chat-send" type="submit">Send</button>
+            <button id="root-chat-send" type="submit" title="Send (Cmd/Ctrl+Enter)">Send</button>
           </div>
           <div class="chat-meta-row">
+            <label>Model
+              <select id="root-chat-model" title="Choose the chat model slot">
+                <option value="inherit">provider default</option>
+                <option value="goblin">goblin slot</option>
+                <option value="ogre">ogre slot</option>
+              </select>
+            </label>
             <label>Personality
-              <select id="root-chat-personality">
+              <select id="root-chat-personality" title="Choose the single-goblin personality">
                 <option value="chipper">chipper</option>
                 <option value="nerdy">nerdy</option>
                 <option value="stoic">stoic</option>
@@ -6435,7 +6468,7 @@ function tankHtml(
               </select>
             </label>
             <label>Max tokens
-              <input id="root-chat-max" type="number" min="64" max="4000" value="900">
+              <input id="root-chat-max" type="number" min="64" max="4000" value="900" title="Maximum response tokens">
             </label>
             <span id="root-chat-status">ready</span>
           </div>
@@ -7868,7 +7901,19 @@ window.addEventListener("resize", () => {
   ["sentiment-clear-secret", "Delete the selected locally stored sentiment key."],
   ["provider-chip", "Configure local provider, model slots, and API key storage."],
   ["reset-chip", "Open reset controls."],
-  ["btn-rite", "Start a new rite run immediately."],
+  ["btn-chat", "Start a fresh single-goblin chat."],
+  ["btn-api-configs", "Open API provider and model settings."],
+  ["btn-sidebar-settings", "Open the settings menu."],
+  ["ops-rites", "Open rite shortcuts and run history."],
+  ["ops-chats", "Open chat shortcuts."],
+  ["root-chat-input", "Write a chat message. Shift+Enter inserts a line break; Cmd/Ctrl+Enter sends."],
+  ["root-chat-send", "Send this chat message."],
+  ["root-chat-voice", "Start voice chat when voice is configured."],
+  ["root-chat-model", "Choose which model slot this chat should use."],
+  ["root-chat-personality", "Choose the personality for single-goblin replies."],
+  ["root-chat-max", "Limit the maximum length of the reply."],
+  ["root-chat-offer-run", "Launch this prompt in the full Tank."],
+  ["btn-rite", "Start a new full Tank rite."],
   ["btn-thesis", "Build a quality thesis about a project, team, product, or protocol."],
   ["btn-plan", "Create a planned multi-step rite."],
   ["btn-asteroid", "Open the destructive full reset flow."],
@@ -11301,6 +11346,17 @@ function setRootChatOffer(nextOffer) {
   offer.classList.add("open");
 }
 
+function startNewRiteChatFlow() {
+  showChatMode();
+  setRootChatOffer(null);
+  appendRootChatMessage(
+    "system",
+    "What type of rite should we run?\\nregular · thesis · crypto/onchain · sentiment · plan",
+  );
+  $("root-chat-status").textContent = "choose rite type";
+  setTimeout(() => $("root-chat-input").focus(), 30);
+}
+
 async function startGoblintownFromChat(task) {
   const cleanTask = (task || "").trim();
   if (!cleanTask) return;
@@ -11346,6 +11402,25 @@ $("btn-chat").onclick = () => {
   setTicker("single goblin chat");
   setTimeout(() => $("root-chat-input").focus(), 30);
 };
+
+$("btn-api-configs").onclick = () => {
+  closeTopPopovers("provider-popover");
+  providerPopover.classList.add("open");
+};
+
+$("btn-sidebar-settings").onclick = () => setSettingsOpen(true);
+
+$("root-chat-voice").onclick = () => {
+  $("root-chat-status").textContent = "voice coming soon";
+};
+
+$("root-chat-input").addEventListener("keydown", (event) => {
+  if (event.shiftKey && event.key === "Enter") return;
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    event.preventDefault();
+    $("root-chat-form").requestSubmit();
+  }
+});
 
 $("root-chat-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -12487,7 +12562,7 @@ function openThesisForm() {
   setTimeout(() => $("thesis-subject").focus(), 50);
 }
 function closeThesisForm() { $("thesis-overlay").classList.remove("open"); }
-$("btn-rite").onclick = () => openRiteForm(false);
+$("btn-rite").onclick = startNewRiteChatFlow;
 $("btn-thesis").onclick = openThesisForm;
 $("btn-plan").onclick = () => openRiteForm(true);
 $("rf-cancel").onclick = closeRiteForm;

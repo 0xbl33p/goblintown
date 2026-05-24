@@ -99,4 +99,35 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /function showChatMode\(\)/);
     assert.match(serverSource, /startGoblintownFromChat/);
   });
+
+  it("exposes AI-first Tank navigation in the left sidebar", () => {
+    assert.match(serverSource, /<aside class="ops-sidebar" id="ops-sidebar">/);
+    assert.match(
+      serverSource,
+      /<aside class="ops-sidebar" id="ops-sidebar">[\s\S]*New Chat[\s\S]*New Rite[\s\S]*API Configs[\s\S]*Rites[\s\S]*Chats[\s\S]*Settings[\s\S]*<\/aside>/,
+    );
+  });
+
+  it("exposes the AI-first Tank chat composer controls and keyboard affordances", () => {
+    assert.match(
+      serverSource,
+      /<div class="chat-thread" id="chat-thread"[\s\S]*<\/div>[\s\S]*<form class="chat-composer" id="root-chat-form">/,
+    );
+    assert.match(serverSource, /<button id="root-chat-send" type="submit" title="Send \(Cmd\/Ctrl\+Enter\)">Send<\/button>/);
+    assert.match(serverSource, /<button id="root-chat-voice" type="button" title="Voice">Voice<\/button>/);
+    assert.match(serverSource, /<select id="root-chat-model"/);
+    assert.match(serverSource, /<select id="root-chat-personality"/);
+    assert.match(serverSource, /const tooltipEl = document\.createElement\("div"\)/);
+    assert.match(serverSource, /\$\("root-chat-input"\)\.addEventListener\("keydown", \(event\) =>/);
+    assert.match(serverSource, /event\.shiftKey && event\.key === "Enter"/);
+    assert.match(serverSource, /\(event\.metaKey \|\| event\.ctrlKey\) && event\.key === "Enter"/);
+    assert.match(serverSource, /\$\("root-chat-form"\)\.requestSubmit\(\)/);
+  });
+
+  it("starts New Rite as a chat-guided rite type question", () => {
+    assert.match(serverSource, /function startNewRiteChatFlow\(\)/);
+    assert.match(serverSource, /What type of rite should we run\?/);
+    assert.match(serverSource, /regular · thesis · crypto\/onchain · sentiment · plan/);
+    assert.match(serverSource, /\$\("btn-rite"\)\.onclick = startNewRiteChatFlow/);
+  });
 });

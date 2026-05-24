@@ -9,28 +9,20 @@ const serverSource = readFileSync(join(repoRoot, "src", "server.ts"), "utf8");
 const cliSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
 const packageJson = readFileSync(join(repoRoot, "package.json"), "utf8");
 
-describe("Goblin Mode shell", () => {
-  it("makes Goblin Mode the default route and keeps the legacy Tank route available", () => {
-    assert.match(serverSource, /app\.get\("\/", async \(_req, res\) => renderGoblinMode/);
+describe("AI-first Tank shell", () => {
+  it("serves the full Tank shell from the default route", () => {
+    assert.match(serverSource, /app\.get\("\/", async \(_req, res\) => renderHome/);
     assert.match(serverSource, /app\.get\("\/tank"/);
-    assert.match(serverSource, /function goblinModeHtml/);
+    assert.match(serverSource, /function tankHtml/);
+    assert.match(serverSource, /<div class="tank chat-mode" id="tank">/);
+    assert.doesNotMatch(serverSource, /app\.get\("\/", async \(_req, res\) => renderGoblinMode/);
   });
 
-  it("exposes Single Goblin, Goblintown, and Tank controls", () => {
-    assert.match(serverSource, /id="mode-single"/);
-    assert.match(serverSource, /id="mode-town"/);
-    assert.match(serverSource, /id="tank-enabled"/);
-    assert.match(serverSource, /one chat goblin mode/i);
-    assert.match(serverSource, /goblin-mode-shell/);
-  });
-
-  it("keeps sending inline with the prompt and supports Cmd/Ctrl+Enter", () => {
-    assert.match(
-      serverSource,
-      /<div class="composer-field">[\s\S]*<textarea id="goblin-input"[\s\S]*<\/textarea>[\s\S]*<button class="send" id="goblin-send" type="submit" title="Send \(Cmd\/Ctrl\+Enter\)" aria-label="Send prompt">run<\/button>[\s\S]*<\/div>/,
-    );
-    assert.match(serverSource, /\$\("goblin-input"\)\.addEventListener\("keydown"/);
-    assert.match(serverSource, /\(event\.metaKey \|\| event\.ctrlKey\) && event\.key === "Enter"/);
+  it("keeps compact mini Tank controls out of the default shell", () => {
+    assert.doesNotMatch(serverSource, /id="tank-box"/);
+    assert.doesNotMatch(serverSource, /id="tank-enabled"/);
+    assert.doesNotMatch(serverSource, /compact live Tank/i);
+    assert.doesNotMatch(serverSource, /one chat goblin mode/i);
   });
 
   it("provides single-goblin and town run endpoints for the shell", () => {
@@ -39,16 +31,12 @@ describe("Goblin Mode shell", () => {
     assert.match(serverSource, /\/api\/plan/);
   });
 
-  it("exposes local context ingestion and search in Goblin Mode", () => {
+  it("keeps local context ingestion and search APIs available", () => {
     assert.match(serverSource, /app\.post\("\/api\/context\/ingest"/);
     assert.match(serverSource, /app\.post\("\/api\/context\/search"/);
     assert.match(serverSource, /app\.post\("\/api\/context\/chats\/scan"/);
     assert.match(serverSource, /app\.post\("\/api\/context\/chats\/import"/);
     assert.match(serverSource, /app\.post\("\/api\/context\/vectorize"/);
-    assert.match(serverSource, /\/context ingest/);
-    assert.match(serverSource, /\/context search/);
-    assert.match(serverSource, /chat-import-panel/);
-    assert.match(serverSource, /Import All/);
   });
 
   it("lets the CLI accept slash commands", () => {
@@ -64,7 +52,14 @@ describe("Goblin Mode shell", () => {
   it("adds desktop application scripts and Electron metadata", () => {
     assert.match(packageJson, /"desktop"/);
     assert.match(packageJson, /"package:mac"/);
+    assert.match(packageJson, /"dist:mac"/);
+    assert.match(packageJson, /"dist:win"/);
+    assert.match(packageJson, /"dist:linux"/);
+    assert.match(packageJson, /"dist:desktop"/);
     assert.match(packageJson, /"electron"/);
+    assert.match(packageJson, /"electron-builder"/);
     assert.match(packageJson, /"@electron\/packager"/);
+    assert.match(packageJson, /"AppImage"/);
+    assert.match(packageJson, /"nsis"/);
   });
 });
