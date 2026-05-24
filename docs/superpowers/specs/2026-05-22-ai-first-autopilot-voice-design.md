@@ -9,6 +9,7 @@ Add a voice control plane to the Tank UI so a user can talk to the autopilot, he
 - #14 Add Realtime voice session layer for AI-first autopilot.
 - #15 Add Tank microphone controls and voice activity UI.
 - #16 Expose safe autopilot tools for voice-driven workflows.
+- #18 Define autopilot policy and control boundaries for the voice harness.
 
 ## Current State
 
@@ -77,11 +78,22 @@ The controls should degrade gracefully. If the browser denies microphone permiss
 - Add a short confirmation behavior for high-impact actions, such as starting multiple long-running workflows.
 - Keep voice unavailable rather than silently falling back to unsafe behavior when credentials or microphone access are missing.
 
+## Autopilot Policy Boundaries
+
+Voice-driven autopilot needs explicit autonomy levels before tools can perform work:
+
+- Read-only actions may run without confirmation: harness status, recent runs, and run summaries.
+- Single workflow starts should require clear user intent in the current voice turn.
+- Multi-workflow starts, destructive resets, provider changes, branch cleanup, or command execution should require explicit confirmation or remain forbidden.
+- A global stop/interrupt action should silence voice playback immediately and expose a route for cancelling or detaching from active runs.
+- Each voice tool call should leave an audit record with tool name, normalized arguments, result, and run id when applicable. The audit record should not store long-lived secrets or raw microphone audio.
+
 ## Testing Plan
 
 - Unit test voice status payloads for configured and missing credential states.
 - Unit test voice tool allowlist validation and argument normalization.
 - Unit test that unsafe tool names are rejected.
+- Unit test autopilot policy classification for read-only, confirm-required, and forbidden actions.
 - Unit test Realtime session payload construction without real network calls.
 - UI source test for voice controls, transcript area, and voice status states.
 - Run the full existing `npm test` suite after the changes.
@@ -89,10 +101,11 @@ The controls should degrade gracefully. If the browser denies microphone permiss
 ## Implementation Slices
 
 1. Add `src/voice.ts` for voice status, tool schema definitions, session payload creation, and tool argument validation.
-2. Add voice server routes in `src/server.ts`.
-3. Add Tank UI controls and browser Realtime client logic in the existing Tank script.
-4. Add focused tests for `src/voice.ts` and the Tank voice UI surface.
-5. Update README usage and security notes.
+2. Add `src/voice-policy.ts` for autonomy levels, confirmation requirements, forbidden actions, and audit event shape.
+3. Add voice server routes in `src/server.ts`.
+4. Add Tank UI controls and browser Realtime client logic in the existing Tank script.
+5. Add focused tests for `src/voice.ts`, `src/voice-policy.ts`, and the Tank voice UI surface.
+6. Update README usage and security notes.
 
 ## Risks
 
