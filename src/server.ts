@@ -3339,7 +3339,6 @@ function goblinModeHtml(stats: {
     border-bottom: 1px solid rgba(139, 163, 74, 0.18);
     background: rgba(18, 15, 8, 0.52);
   }
-  .modebar .grow { flex: 1; }
   .segment {
     display: inline-grid;
     grid-template-columns: 1fr 1fr;
@@ -3360,6 +3359,9 @@ function goblinModeHtml(stats: {
     background: rgba(139, 163, 74, 0.18);
     color: var(--moss-hot);
   }
+  .composer-field {
+    position: relative;
+  }
   .tank-toggle {
     display: inline-flex;
     align-items: center;
@@ -3369,10 +3371,14 @@ function goblinModeHtml(stats: {
   }
   .tank-toggle input { accent-color: var(--moss); }
   .send {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
     border: 1px solid rgba(196, 232, 106, 0.34);
     border-radius: 8px;
     color: var(--moss-hot);
     background: rgba(139, 163, 74, 0.12);
+    min-width: 48px;
   }
   textarea {
     width: 100%;
@@ -3380,7 +3386,7 @@ function goblinModeHtml(stats: {
     resize: vertical;
     border: 0;
     outline: 0;
-    padding: 18px;
+    padding: 18px 78px 50px 18px;
     background: transparent;
     color: var(--bone);
     font: 16px/1.45 ui-monospace, Menlo, Consolas, monospace;
@@ -3534,10 +3540,11 @@ function goblinModeHtml(stats: {
           <input id="tank-enabled" type="checkbox" disabled>
           Tank
         </label>
-        <span class="grow"></span>
-        <button class="send" type="submit">run</button>
       </div>
-      <textarea id="goblin-input" autocomplete="off" spellcheck="true" placeholder="Do anything"></textarea>
+      <div class="composer-field">
+        <textarea id="goblin-input" autocomplete="off" spellcheck="true" placeholder="Do anything"></textarea>
+        <button class="send" id="goblin-send" type="submit" title="Send (Cmd/Ctrl+Enter)" aria-label="Send prompt">run</button>
+      </div>
       <div class="status-row">
         <span>${esc(stats.warrenName)}</span>
         <span>loot <b>${stats.lootCount}</b></span>
@@ -3966,6 +3973,13 @@ $("mode-town").onclick = () => setMode("town");
 $("chat-scan").onclick = () => scanChats().catch((err) => setChatImportText(err.message || String(err)));
 $("chat-import-selected").onclick = () => importChats(false).catch((err) => setChatImportText(err.message || String(err)));
 $("chat-import-all").onclick = () => importChats(true).catch((err) => setChatImportText(err.message || String(err)));
+
+$("goblin-input").addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    event.preventDefault();
+    $("goblin-form").requestSubmit($("goblin-send"));
+  }
+});
 
 $("goblin-form").addEventListener("submit", async (event) => {
   event.preventDefault();

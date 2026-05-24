@@ -24,6 +24,15 @@ describe("Goblin Mode shell", () => {
     assert.match(serverSource, /goblin-mode-shell/);
   });
 
+  it("keeps sending inline with the prompt and supports Cmd/Ctrl+Enter", () => {
+    assert.match(
+      serverSource,
+      /<div class="composer-field">[\s\S]*<textarea id="goblin-input"[\s\S]*<\/textarea>[\s\S]*<button class="send" id="goblin-send" type="submit" title="Send \(Cmd\/Ctrl\+Enter\)" aria-label="Send prompt">run<\/button>[\s\S]*<\/div>/,
+    );
+    assert.match(serverSource, /\$\("goblin-input"\)\.addEventListener\("keydown"/);
+    assert.match(serverSource, /\(event\.metaKey \|\| event\.ctrlKey\) && event\.key === "Enter"/);
+  });
+
   it("provides single-goblin and town run endpoints for the shell", () => {
     assert.match(serverSource, /app\.post\("\/api\/goblin\/single"/);
     assert.match(serverSource, /\/api\/goblin\/single/);
