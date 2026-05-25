@@ -51,6 +51,10 @@ describe("Tank app smoke", () => {
     assert.match(html, /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">/);
     assert.match(html, /<section class="sidebar-list" aria-label="Chats">[\s\S]*Bounty issue #72 chat[\s\S]*Solana wallet question[\s\S]*README cleanup chat[\s\S]*<\/section>/);
     assert.match(html, /<section class="sidebar-list" aria-label="Rites">[\s\S]*Bounty issue #72[\s\S]*Provider setup audit[\s\S]*Tank UI simplification[\s\S]*<\/section>/);
+    assert.match(html, /data-surface-kind="chat" data-chat-id="bounty-72-chat"/);
+    assert.match(html, /data-surface-kind="rite" data-run-id="sample-bounty-72"/);
+    assert.match(html, /id="root-rite-surface"/);
+    assert.match(html, /id="root-rite-discussion"/);
     assert.match(html, /id="sidebar-settings-card"[\s\S]*Goblin Country[\s\S]*Moss Ledger[\s\S]*Code: MOSS7 · Signed in[\s\S]*Never trust a clean cache/);
     assert.match(html, /id="settings-icon-closed"[^>]*src="\/assets\/settingsclosed\.svg"/);
     assert.match(html, /id="settings-icon-open"[^>]*src="\/assets\/settingsopen\.svg"/);

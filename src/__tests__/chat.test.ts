@@ -217,6 +217,18 @@ describe("single goblin chat", () => {
     assert.doesNotMatch(serverSource, /Live Tank/);
   });
 
+  it("loads chats and rites from the sidebar into the main surface", () => {
+    assert.match(serverSource, /data-surface-kind="chat" data-chat-id="bounty-72-chat"/);
+    assert.match(serverSource, /data-surface-kind="rite" data-run-id="sample-bounty-72"/);
+    assert.match(serverSource, /id="root-rite-surface"/);
+    assert.match(serverSource, /id="root-rite-discussion"/);
+    assert.match(serverSource, /function selectSidebarSurface\(kind, id\)/);
+    assert.match(serverSource, /function renderInlineRite\(record\)/);
+    assert.match(serverSource, /fetch\("\/api\/runs\/" \+ encodeURIComponent\(runId\) \+ "\?full=1"\)/);
+    assert.match(serverSource, /const events = Array\.isArray\(record\.events\) \? record\.events : \[\]/);
+    assert.doesNotMatch(serverSource, /record\.events\.slice/);
+  });
+
   it("exposes the simplified chat composer controls and keyboard affordances", () => {
     assert.match(serverSource, /CHAT_PERSONA_UI\.intro/);
     assert.match(serverSource, /const CHAT_PERSONA = /);

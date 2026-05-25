@@ -5369,6 +5369,142 @@ function tankHtml(
     flex-direction: column;
     gap: 0.85rem;
   }
+  .chat-thread.surface-hidden,
+  .rite-surface[hidden] {
+    display: none;
+  }
+  .rite-surface {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: clamp(1rem, 3vw, 2.2rem);
+  }
+  .rite-inline-inner {
+    width: min(980px, 100%);
+    margin: 0 auto;
+    display: grid;
+    gap: 1rem;
+  }
+  .rite-inline-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid rgba(124,255,91,0.18);
+    padding-bottom: 0.85rem;
+  }
+  .rite-inline-kicker {
+    display: block;
+    color: #7cff5b;
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .rite-inline-head h2 {
+    margin: 0.18rem 0 0;
+    color: #e6e2d3;
+    font-size: clamp(1.25rem, 2vw, 1.85rem);
+    letter-spacing: 0;
+  }
+  .rite-inline-meta {
+    margin-top: 0.2rem;
+    color: #a8b09a;
+  }
+  .rite-inline-actions {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .rite-inline-actions a,
+  .rite-inline-actions button {
+    border: 1px solid rgba(124,255,91,0.3);
+    border-radius: 8px;
+    background: rgba(124,255,91,0.08);
+    color: #e6e2d3;
+    font: inherit;
+    font-weight: 650;
+    text-decoration: none;
+    padding: 0.48rem 0.68rem;
+    cursor: pointer;
+  }
+  .rite-inline-actions a:hover,
+  .rite-inline-actions button:hover {
+    border-color: rgba(124,255,91,0.58);
+    color: #7cff5b;
+  }
+  .rite-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+  .rite-stat {
+    border: 1px solid rgba(124,255,91,0.16);
+    border-radius: 8px;
+    background: rgba(29,36,27,0.72);
+    padding: 0.75rem;
+  }
+  .rite-stat span {
+    display: block;
+    color: #7cff5b;
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .rite-stat strong {
+    display: block;
+    margin-top: 0.22rem;
+    color: #e6e2d3;
+    font-size: 0.95rem;
+    font-weight: 650;
+    word-break: break-word;
+  }
+  .inline-run-display,
+  .rite-event {
+    border: 1px solid rgba(124,255,91,0.16);
+    border-radius: 8px;
+    background: rgba(21,26,20,0.72);
+  }
+  .inline-run-display {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.9rem;
+  }
+  .inline-run-display strong,
+  .rite-discussion h3 {
+    color: #e6e2d3;
+  }
+  .inline-run-display p {
+    margin: 0;
+    color: #a8b09a;
+  }
+  .rite-discussion {
+    display: grid;
+    gap: 0.72rem;
+  }
+  .rite-discussion h3 {
+    margin: 0.2rem 0 0;
+    font-size: 1.25rem;
+  }
+  .rite-event {
+    border-left: 3px solid rgba(124,255,91,0.5);
+    padding: 0.75rem 0.9rem;
+  }
+  .rite-event-title {
+    display: block;
+    color: #e6e2d3;
+    font-weight: 750;
+    margin-bottom: 0.22rem;
+  }
+  .rite-event-body {
+    color: #a8b09a;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .rite-empty {
+    color: #a8b09a;
+    border-left-color: rgba(168,176,154,0.45);
+  }
   .chat-message {
     width: min(840px, 100%);
     white-space: pre-wrap;
@@ -6711,15 +6847,15 @@ function tankHtml(
         <button class="sr-only" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
         <section class="sidebar-list" aria-label="Chats">
           <div class="sidebar-label">CHATS</div>
-          <button class="sidebar-item active" type="button">Bounty issue #72 chat</button>
-          <button class="sidebar-item" type="button">Solana wallet question</button>
-          <button class="sidebar-item" type="button">README cleanup chat</button>
+          <button class="sidebar-item active" type="button" data-surface-kind="chat" data-chat-id="bounty-72-chat">Bounty issue #72 chat</button>
+          <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="solana-wallet-question">Solana wallet question</button>
+          <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="readme-cleanup-chat">README cleanup chat</button>
         </section>
         <section class="sidebar-list" aria-label="Rites">
           <div class="sidebar-label">RITES</div>
-          <button class="sidebar-item active" type="button"><strong>Bounty issue #72</strong><span>running</span></button>
-          <button class="sidebar-item" type="button">Provider setup audit</button>
-          <button class="sidebar-item" type="button">Tank UI simplification</button>
+          <button class="sidebar-item active" type="button" data-surface-kind="rite" data-run-id="sample-bounty-72"><strong>Bounty issue #72</strong><span>running</span></button>
+          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-provider-setup-audit">Provider setup audit</button>
+          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-tank-ui-simplification">Tank UI simplification</button>
         </section>
         <div class="sidebar-settings" id="sidebar-settings">
           <div class="sidebar-settings-card" id="sidebar-settings-card">
@@ -6752,6 +6888,29 @@ function tankHtml(
         <div class="chat-message assistant">
           <span class="chat-role">single goblin</span>
           ${CHAT_PERSONA_UI.intro}
+        </div>
+      </div>
+      <div class="rite-surface" id="root-rite-surface" hidden aria-live="polite">
+        <div class="rite-inline-inner">
+          <header class="rite-inline-head">
+            <div>
+              <span class="rite-inline-kicker" id="root-rite-kicker">Rite</span>
+              <h2 id="root-rite-title">Bounty issue #72</h2>
+              <div class="rite-inline-meta" id="root-rite-meta">Selected from Rites</div>
+            </div>
+            <div class="rite-inline-actions">
+              <a id="root-rite-export" href="/runs">Export</a>
+              <button id="root-rite-resume" type="button">Resume</button>
+            </div>
+          </header>
+          <div class="rite-stats" id="root-rite-stats"></div>
+          <section class="inline-run-display" id="root-rite-live">
+            <strong>Inline run display</strong>
+            <p>Tool calls, tank activity, and run output appear here as the rite produces them.</p>
+          </section>
+          <section class="rite-discussion" id="root-rite-discussion">
+            <h3>Discussion</h3>
+          </section>
         </div>
       </div>
       <form class="chat-composer" id="root-chat-form">
@@ -11713,6 +11872,158 @@ function setTicker(text, live) {
   ticker.classList.toggle("live", !!live);
 }
 
+const sampleInlineRites = {
+  "sample-bounty-72": {
+    runId: "sample-bounty-72",
+    task: "GitHub issue #72",
+    status: "running",
+    verdict: "pending",
+    lootCount: 4,
+    events: [
+      { type: "context", agent: "Context", content: "Fetched GitHub issue #72 and extracted README mismatch, manifest values, failing validation path, and open questions." },
+      { type: "proposal", agent: "Goblin proposal 1", content: "Patch manifest defaults or README contract, then add a validation error that names the exact stale slot conflict." },
+      { type: "critique", agent: "Review", content: "Do not only update docs. The CLI should explain why all markets fail and preserve compatibility for existing configs." },
+      { type: "transcript", agent: "Full transcript continues", content: "Every event, model answer, critique, verdict, and final artifact remains readable here. No snippet-only run view." },
+    ],
+  },
+  "sample-provider-setup-audit": {
+    runId: "sample-provider-setup-audit",
+    task: "Provider setup audit",
+    status: "ready",
+    verdict: "queued",
+    lootCount: 0,
+    events: [
+      { type: "setup", agent: "Setup", content: "Audit OpenAI, DeepSeek, LM Studio, Ollama, Anthropic, and Add New provider routes from the walkthrough." },
+    ],
+  },
+  "sample-tank-ui-simplification": {
+    runId: "sample-tank-ui-simplification",
+    task: "Tank UI simplification",
+    status: "ready",
+    verdict: "queued",
+    lootCount: 0,
+    events: [
+      { type: "design", agent: "UI", content: "Keep the Tank inline inside the selected rite. No separate right utility panel." },
+    ],
+  },
+};
+
+function eventText(event) {
+  if (!event) return "";
+  if (typeof event === "string") return event;
+  return event.content || event.text || event.message || event.output || event.error || JSON.stringify(event, null, 2);
+}
+
+function eventTitle(event, index) {
+  if (!event || typeof event === "string") return "Event " + (index + 1);
+  return event.agent || event.creature || event.role || event.type || event.kind || ("Event " + (index + 1));
+}
+
+function setSidebarSelection(kind, id) {
+  document.querySelectorAll("[data-surface-kind]").forEach((button) => {
+    const matchesKind = button.getAttribute("data-surface-kind") === kind;
+    const matchesId = kind === "chat"
+      ? button.getAttribute("data-chat-id") === id
+      : button.getAttribute("data-run-id") === id;
+    button.classList.toggle("active", matchesKind && matchesId);
+  });
+}
+
+function showChatThreadSurface() {
+  $("chat-thread").classList.remove("surface-hidden");
+  $("root-rite-surface").hidden = true;
+}
+
+function showRiteSurface() {
+  $("chat-thread").classList.add("surface-hidden");
+  $("root-rite-surface").hidden = false;
+}
+
+function renderInlineRite(record) {
+  const events = Array.isArray(record.events) ? record.events : [];
+  $("root-rite-title").textContent = record.task || record.runId || "Selected rite";
+  $("root-rite-kicker").textContent = record.done ? "Completed rite" : "Rite";
+  $("root-rite-meta").textContent = record.runId ? "Run " + record.runId : "Selected from Rites";
+  $("root-rite-export").href = record.runId ? "/runs#" + encodeURIComponent(record.runId) : "/runs";
+  $("root-rite-resume").dataset.runId = record.runId || "";
+
+  const stats = $("root-rite-stats");
+  stats.innerHTML = "";
+  [
+    ["Status", record.status || (record.done ? "done" : "running")],
+    ["Task", record.task || "selected rite"],
+    ["Loot", String(record.lootCount || (Array.isArray(record.lootIds) ? record.lootIds.length : 0)) + " drops"],
+    ["Verdict", record.verdict || (record.done ? "complete" : "pending")],
+  ].forEach(([label, value]) => {
+    const stat = document.createElement("div");
+    stat.className = "rite-stat";
+    const labelNode = document.createElement("span");
+    labelNode.textContent = label;
+    const valueNode = document.createElement("strong");
+    valueNode.textContent = value;
+    stat.append(labelNode, valueNode);
+    stats.appendChild(stat);
+  });
+
+  const live = $("root-rite-live");
+  live.querySelector("p").textContent = record.done
+    ? "This rite is complete. Its full discussion is preserved below."
+    : "This rite is selected. Live tool output and Tank progress stay inline here while it runs.";
+
+  const discussion = $("root-rite-discussion");
+  discussion.innerHTML = "<h3>Discussion</h3>";
+  if (!events.length) {
+    const empty = document.createElement("div");
+    empty.className = "rite-event rite-empty";
+    empty.textContent = "No transcript events are stored for this rite yet.";
+    discussion.appendChild(empty);
+    return;
+  }
+  events.forEach((event, index) => {
+    const item = document.createElement("article");
+    item.className = "rite-event";
+    const title = document.createElement("strong");
+    title.className = "rite-event-title";
+    title.textContent = eventTitle(event, index);
+    const body = document.createElement("div");
+    body.className = "rite-event-body";
+    body.textContent = eventText(event);
+    item.append(title, body);
+    discussion.appendChild(item);
+  });
+}
+
+async function loadInlineRite(runId) {
+  if (sampleInlineRites[runId]) {
+    renderInlineRite(sampleInlineRites[runId]);
+    return;
+  }
+  const response = await fetch("/api/runs/" + encodeURIComponent(runId) + "?full=1");
+  const record = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(record.error || "failed to load rite");
+  renderInlineRite(record);
+}
+
+function selectSidebarSurface(kind, id) {
+  showChatMode();
+  setSidebarSelection(kind, id);
+  if (kind === "rite") {
+    showRiteSurface();
+    setRootChatStatus("ready", "rite selected");
+    loadInlineRite(id).catch((err) => {
+      $("root-rite-discussion").innerHTML = "<h3>Discussion</h3>";
+      const node = document.createElement("div");
+      node.className = "rite-event rite-empty";
+      node.textContent = chatErrorMessage(err);
+      $("root-rite-discussion").appendChild(node);
+    });
+    return;
+  }
+  showChatThreadSurface();
+  setRootChatStatus("ready");
+  setTimeout(() => $("root-chat-input").focus(), 30);
+}
+
 function showChatMode() {
   tank.classList.add("chat-mode");
   $("clock").textContent = "chat";
@@ -11918,6 +12229,7 @@ async function toggleServerVoice() {
 function resetRootChat() {
   const thread = $("chat-thread");
   if (window.speechSynthesis) window.speechSynthesis.cancel();
+  showChatThreadSurface();
   rootChatMessages.splice(0, rootChatMessages.length);
   thread.innerHTML = "";
   appendRootChatMessage(
@@ -11945,6 +12257,7 @@ function setRootChatOffer(nextOffer) {
 
 function startNewRiteChatFlow() {
   showChatMode();
+  showChatThreadSurface();
   setRootChatOffer(null);
   appendRootChatMessage(
     "system",
@@ -11995,6 +12308,7 @@ async function startGoblintownFromChat(task) {
 
 $("btn-chat").onclick = () => {
   history.replaceState(null, "", "/");
+  setSidebarSelection("chat", "bounty-72-chat");
   showChatMode();
   resetRootChat();
   setTicker("single goblin chat");
@@ -12002,6 +12316,26 @@ $("btn-chat").onclick = () => {
 };
 
 $("btn-regular-rite").onclick = startNewRiteChatFlow;
+
+document.querySelectorAll("[data-surface-kind]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const kind = button.getAttribute("data-surface-kind") || "chat";
+    const id = kind === "chat" ? button.getAttribute("data-chat-id") : button.getAttribute("data-run-id");
+    if (!id) return;
+    history.replaceState(null, "", kind === "rite" ? "/?run=" + encodeURIComponent(id) : "/");
+    selectSidebarSurface(kind, id);
+  });
+});
+
+$("root-rite-resume").onclick = () => {
+  const runId = $("root-rite-resume").dataset.runId || "";
+  if (!runId || sampleInlineRites[runId]) {
+    startNewRiteChatFlow();
+    return;
+  }
+  showTankMode();
+  openStream(runId, false, { attach: true });
+};
 
 function beginSpeechInput() {
   if (voiceConfig.provider && voiceConfig.provider !== "browser") {
