@@ -154,6 +154,7 @@ describe("single goblin chat", () => {
     );
     assert.match(serverSource, /<button id="root-chat-send" type="submit" title="Send \(Enter\)">Send<\/button>/);
     assert.match(serverSource, /<button id="root-chat-voice" type="button" title="Voice">Voice<\/button>/);
+    assert.match(serverSource, /<button id="root-chat-speak" type="button" title="Speak replies" aria-pressed="false">Speak<\/button>/);
     assert.match(serverSource, /<select id="root-chat-model"/);
     assert.match(serverSource, /<select id="root-chat-personality"/);
     assert.match(serverSource, /const tooltipEl = document\.createElement\("div"\)/);
@@ -168,6 +169,19 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /body\.goblintownOffer && body\.goblintownOffer\.requested/);
     assert.match(serverSource, /chatPersonaPick\("handoff"\)/);
     assert.match(serverSource, /await startGoblintownFromChat\(body\.goblintownOffer\.task\)/);
+  });
+
+  it("wires browser text-to-speech for single-goblin replies", () => {
+    assert.match(serverSource, /let rootChatSpeakEnabled = false/);
+    assert.match(serverSource, /function browserTtsSupported\(\)/);
+    assert.match(serverSource, /"speechSynthesis" in window && "SpeechSynthesisUtterance" in window/);
+    assert.match(serverSource, /function goblinTtsText\(value\)/);
+    assert.match(serverSource, /function speakRootChatMessage\(content\)/);
+    assert.match(serverSource, /new SpeechSynthesisUtterance\(text\)/);
+    assert.match(serverSource, /window\.speechSynthesis\.speak\(utterance\)/);
+    assert.match(serverSource, /\$\("root-chat-speak"\)\.onclick = \(\) =>/);
+    assert.match(serverSource, /speakRootChatMessage\(body\.message\.content\)/);
+    assert.match(serverSource, /\["root-chat-speak", "Read single-goblin replies aloud with browser text-to-speech\."\]/);
   });
 
   it("starts New Rite as a chat-guided rite type question", () => {

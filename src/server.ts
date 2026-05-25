@@ -5281,7 +5281,7 @@ function tankHtml(
   .chat-offer-inline.open { display: flex; }
   .chat-input-row {
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto auto 1fr auto;
     gap: 0.55rem;
     align-items: end;
   }
@@ -5311,6 +5311,11 @@ function tankHtml(
     padding: 0.52rem 0.85rem;
     font: inherit;
     cursor: pointer;
+  }
+  .chat-input-row button[aria-pressed="true"] {
+    border-color: var(--accent-hot);
+    background: #4d5b1f;
+    color: #fff7c2;
   }
   .chat-input-row button:disabled,
   .chat-offer-inline button:disabled {
@@ -6477,6 +6482,7 @@ function tankHtml(
           </div>
           <div class="chat-input-row">
             <button id="root-chat-voice" type="button" title="Voice">Voice</button>
+            <button id="root-chat-speak" type="button" title="Speak replies" aria-pressed="false">Speak</button>
             <textarea id="root-chat-input" rows="3" placeholder="Message the single Goblin..." required></textarea>
             <button id="root-chat-send" type="submit" title="Send (Enter)">Send</button>
           </div>
@@ -6783,6 +6789,7 @@ const ticker = $("ticker");
 const tickerText = $("ticker-text");
 const rootChatMessages = [];
 let rootChatOfferedTask = "";
+let rootChatSpeakEnabled = false;
 const CHAT_PERSONA = ${JSON.stringify(CHAT_PERSONA_UI)};
 const goblinPile = $("goblin-pile");
 const goblinExplosion = $("goblin-explosion");
@@ -7937,6 +7944,7 @@ window.addEventListener("resize", () => {
   ["root-chat-input", "Write a chat message. Shift+Enter inserts a line break; Enter sends."],
   ["root-chat-send", "Send this chat message."],
   ["root-chat-voice", "Speak into the chat box. Browser voice stays local; configured APIs use the voice connector."],
+  ["root-chat-speak", "Read single-goblin replies aloud with browser text-to-speech."],
   ["root-chat-model", "Choose which model slot this chat should use."],
   ["root-chat-personality", "Choose the personality for single-goblin replies."],
   ["root-chat-max", "Limit the maximum length of the reply."],
@@ -11426,6 +11434,61 @@ function appendRootChatMessage(role, content, opts) {
   thread.scrollTop = thread.scrollHeight;
 }
 
+function browserTtsSupported() {
+  return "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+}
+
+function setRootChatSpeakEnabled(enabled) {
+  rootChatSpeakEnabled = !!enabled && browserTtsSupported();
+  const button = $("root-chat-speak");
+  button.setAttribute("aria-pressed", rootChatSpeakEnabled ? "true" : "false");
+  button.textContent = rootChatSpeakEnabled ? "Speaking" : "Speak";
+  if (!rootChatSpeakEnabled && window.speechSynthesis) window.speechSynthesis.cancel();
+  if (enabled && !rootChatSpeakEnabled) setRootChatStatus("voicePending", "browser text-to-speech unavailable");
+}
+
+function goblinTtsText(value) {
+  return (value || "")
+    .replace(new RegExp(String.fromCharCode(96).repeat(3) + "[\\\\s\\\\S]*?" + String.fromCharCode(96).repeat(3), "g"), "code block omitted")
+    .replace(new RegExp(String.fromCharCode(96) + "([^" + String.fromCharCode(96) + "]+)" + String.fromCharCode(96), "g"), "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[#*_>~|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1800);
+}
+
+function pickGoblinVoice() {
+  if (!window.speechSynthesis || !window.speechSynthesis.getVoices) return null;
+  const voices = window.speechSynthesis.getVoices();
+  return (
+    voices.find((voice) => /daniel|fred|ralph|alex|english/i.test(voice.name)) ||
+    voices.find((voice) => /^en[-_]/i.test(voice.lang)) ||
+    voices[0] ||
+    null
+  );
+}
+
+function speakRootChatMessage(content) {
+  if (!rootChatSpeakEnabled || !browserTtsSupported()) return;
+  const text = goblinTtsText(content);
+  if (!text) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  const personality = $("root-chat-personality").value;
+  utterance.voice = pickGoblinVoice();
+  utterance.lang = utterance.voice && utterance.voice.lang ? utterance.voice.lang : "en-US";
+  utterance.pitch = personality === "feral" || personality === "goblin_mode" ? 1.25 : 1.05;
+  utterance.rate = personality === "stoic" ? 0.92 : personality === "feral" ? 1.12 : 1.0;
+  utterance.volume = 1;
+  utterance.onstart = () => setRootChatStatus("voicePending", "goblin speaking");
+  utterance.onend = () => {
+    if (rootChatSpeakEnabled) setRootChatStatus("ready");
+  };
+  utterance.onerror = () => setRootChatStatus("voicePending", "speech output failed");
+  window.speechSynthesis.speak(utterance);
+}
+
 function chatPersonaPick(kind) {
   const options = CHAT_PERSONA[kind] || [];
   if (!options.length) return "";
@@ -11545,6 +11608,7 @@ async function toggleServerVoice() {
 
 function resetRootChat() {
   const thread = $("chat-thread");
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
   rootChatMessages.splice(0, rootChatMessages.length);
   thread.innerHTML = "";
   appendRootChatMessage(
@@ -11641,6 +11705,10 @@ $("root-chat-voice").onclick = () => {
   }
 };
 
+$("root-chat-speak").onclick = () => {
+  setRootChatSpeakEnabled($("root-chat-speak").getAttribute("aria-pressed") !== "true");
+};
+
 $("root-chat-input").addEventListener("keydown", (event) => {
   if (event.shiftKey && event.key === "Enter") return;
   if (event.key === "Enter") {
@@ -11681,6 +11749,7 @@ $("root-chat-form").addEventListener("submit", async (event) => {
     }
     rootChatMessages.push(body.message);
     appendRootChatMessage("assistant", body.message.content);
+    speakRootChatMessage(body.message.content);
     if (body.goblintownOffer && body.goblintownOffer.requested) {
       appendRootChatMessage("system", chatPersonaPick("handoff") + ". " + chatPersonaPick("riteStarting") + "...");
       await startGoblintownFromChat(body.goblintownOffer.task);

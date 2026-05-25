@@ -34,6 +34,7 @@ describe("Tank app smoke", () => {
     assert.match(html, /<form class="chat-composer" id="root-chat-form">/);
     assert.match(html, /Ask anything\. One goblin answers fast\./);
     assert.match(html, /id="root-chat-send"[^>]*title="Send \(Enter\)"/);
+    assert.match(html, /id="root-chat-speak"[^>]*aria-pressed="false">Speak<\/button>/);
     assert.match(html, /id="btn-sidebar-settings"[^>]*>Settings<\/button>/);
     assert.match(html, /id="btn-regular-rite"[^>]*>Regular<\/button>/);
     assert.doesNotMatch(html, /id="ops-line"/);

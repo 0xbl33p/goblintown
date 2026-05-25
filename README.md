@@ -1,9 +1,9 @@
 # Goblintown
 
 Goblintown is a local-first AI app with a Goblin Mode GUI, a compact optional
-Tank, resumable runs, typed memory, provider routing, and optional Goblintown
-Cloud sign-in. Single Goblin mode keeps "ask the model" as one worker and one
-answer; Goblintown mode turns it into a planning agent with memory and
+Tank, resumable runs, typed memory, provider routing, browser speech input and
+output, and optional Goblintown Cloud sign-in. Single Goblin mode keeps "ask the
+model" as one worker and one answer; Goblintown mode turns it into a planning agent with memory and
 self-correction: a small fleet of specialized creatures that
 decompose tasks into a DAG, scavenge context, race against each other, debate,
 attack each other's outputs, spawn focused specialists when the pack fails, and
@@ -853,7 +853,7 @@ ship together and are covered by the test suite:
 
 | Area | What ships now | Entry point |
 | --- | --- | --- |
-| **AI-first Tank UI** | Chat-first full Tank shell with sidebar navigation, single-Goblin chat, guided Rite entry, model controls, provider settings, and desktop-app entrypoint. | `goblintown serve`, `npm run desktop` |
+| **AI-first Tank UI** | Chat-first full Tank shell with sidebar navigation, single-Goblin chat, browser text-to-speech replies, guided Rite entry, model controls, provider settings, and desktop-app entrypoint. | `goblintown serve`, `npm run desktop` |
 | **Tank runtime** | Live creature diorama, default sprite sheets, centered wordmark, result panel, resumable runs, Settings, Onchain lookup, and Asteroid Mode. | `/` or `/tank` |
 | **Memory** | Pigeon-Scribe distills every Rite into a structured JSON artifact with claims, evidence, open questions, next steps, and parent links. Local context ingestion imports old conversations/projects as file-backed Artifacts; Chat Hoard Import Mode imports previous Codex and ChatGPT chats as pre-vectorized root/chunk DAG memory. | `--cite <riteId>`, `--remember`, `goblintown context ingest <path>`, `goblintown context scan chats` |
 | **Planning** | Planner emits a typed DAG; the executor runs each node as a sub-rite, feeds artifacts forward, and replans after node failures. | `goblintown plan "<task>"`, Tank `PLAN` |
