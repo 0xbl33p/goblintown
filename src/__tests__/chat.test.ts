@@ -229,6 +229,7 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /id="root-chat-send"[^>]*type="submit"[^>]*title="Send \(Enter\)"[\s\S]*↑/);
     assert.match(serverSource, /id="root-chat-voice" type="button" class="voice-trigger" title="Voice mode"/);
     assert.match(serverSource, /class="voice-menu"[\s\S]*fullgoblinchat\.svg[\s\S]*Chat Live[\s\S]*sttgoblinchat\.svg[\s\S]*Speak Only[\s\S]*ttsonlygoblinchat\.svg[\s\S]*Listen Only/);
+    assert.match(serverSource, /\.voice-menu \.voice-choice \{[\s\S]*background: transparent !important;[\s\S]*border: 0 !important;/);
     assert.doesNotMatch(serverSource, /\.voice-choice:hover,\n  \.voice-choice\.active,[^}]*background:/);
     assert.match(serverSource, /id="root-chat-personality-label"[\s\S]*goblin_mode/);
     assert.match(serverSource, /class="personality-menu"[\s\S]*chipper[\s\S]*nerdy[\s\S]*stoic[\s\S]*cynical[\s\S]*feral[\s\S]*goblin_mode/);

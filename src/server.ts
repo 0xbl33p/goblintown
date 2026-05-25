@@ -5543,6 +5543,13 @@ function tankHtml(
   .personality-choice {
     grid-template-columns: 1fr;
   }
+  .voice-menu .voice-choice {
+    min-height: 0;
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
   .voice-choice:hover,
   .voice-choice.active,
   .personality-choice:hover,
