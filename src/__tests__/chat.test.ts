@@ -176,11 +176,19 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /app\.post\("\/api\/chat"/);
     assert.match(serverSource, /id="btn-chat"/);
     assert.match(serverSource, /id="chat-form"/);
+    assert.match(serverSource, /id="chat-send" type="submit" title="Send \(Enter or Cmd\/Ctrl\+Enter\)"/);
     assert.match(serverSource, /id="chat-offer-run"/);
     assert.match(serverSource, /fetch\("\/api\/rite"/);
     assert.match(serverSource, /async function startOfferedRite\(taskValue\)/);
     assert.match(serverSource, /body\.goblintownOffer && body\.goblintownOffer\.requested/);
     assert.match(serverSource, /await startOfferedRite\(body\.goblintownOffer\.task\)/);
+    assert.match(serverSource, /input\.addEventListener\("keydown", \(event\) =>/);
+    assert.match(serverSource, /event\.key !== "Enter" \|\| event\.shiftKey/);
+    assert.match(serverSource, /event\.metaKey \|\| event\.ctrlKey \|\| !event\.altKey/);
+    assert.match(serverSource, /function submitChatForm\(\)/);
+    assert.match(serverSource, /typeof form\.requestSubmit === "function"/);
+    assert.match(serverSource, /send\.click\(\)/);
+    assert.match(serverSource, /submitChatForm\(\)/);
   });
 
   it("makes the Tank root chat-first and swaps to Tank mode for runs", () => {

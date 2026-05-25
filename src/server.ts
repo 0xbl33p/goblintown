@@ -3232,7 +3232,7 @@ function chatPage(): string {
       <form class="chat-compose" id="chat-form">
         <textarea id="chat-input" rows="4" placeholder="Ask the single Goblin anything..." required></textarea>
         <div class="chat-actions">
-          <button id="chat-send" type="submit">Send</button>
+          <button id="chat-send" type="submit" title="Send (Enter or Cmd/Ctrl+Enter)">Send</button>
           <button class="secondary" id="chat-clear" type="button">Clear</button>
         </div>
       </form>
@@ -3276,6 +3276,14 @@ function chatPage(): string {
           ? "Goblintown requested. Start a full pack rite for this prompt?"
           : "This looks complex enough for the full Goblintown pack.";
         offer.classList.add("open");
+      }
+
+      function submitChatForm() {
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+          return;
+        }
+        send.click();
       }
 
       form.addEventListener("submit", async (event) => {
@@ -3322,6 +3330,14 @@ function chatPage(): string {
         status.textContent = "ready";
         renderGoblintownOffer(null);
         input.focus();
+      });
+
+      input.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.shiftKey) return;
+        if (event.metaKey || event.ctrlKey || !event.altKey) {
+          event.preventDefault();
+          submitChatForm();
+        }
       });
 
       async function startOfferedRite(taskValue) {
