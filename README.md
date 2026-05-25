@@ -563,6 +563,22 @@ The menu is intentionally an OpenAI-compatible routing layer, not a new
 orchestration engine. Changing providers changes model behavior and quality, but
 the Rite pipeline itself remains the same.
 
+### Adding provider packages
+
+For a plain OpenAI-compatible endpoint, use **Settings -> API Provider -> Custom**
+and fill in the base URL, key env var, and model slots. For a provider that
+needs a real SDK adapter/package, this repo includes the Vercel AI SDK provider
+workflow skill:
+
+```bash
+npx skills add https://github.com/vercel/ai --skill add-provider-package
+```
+
+The installed guide lives at `.agents/skills/add-provider-package/SKILL.md`.
+Use it when adding a custom text, embedding, image, or voice provider surface so
+the implementation includes package structure, response schemas, examples,
+documentation, changeset, and provider tests instead of ad hoc glue.
+
 ### Per-creature provider routes
 
 Provider routes let you run different creatures against different backends:

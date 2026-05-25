@@ -26,4 +26,14 @@ describe("provider manager UI", () => {
     assert.match(serverSource, /\.provider-route-list \{[\s\S]*linear-gradient\(to left/);
     assert.match(serverSource, /\.provider-route-list \{[\s\S]*box-shadow: inset -14px 0 0/);
   });
+
+  it("surfaces the add-provider-package workflow for custom AI providers", () => {
+    assert.match(serverSource, /id="provider-custom-workflow"/);
+    assert.match(serverSource, /id="voice-custom-workflow"/);
+    assert.match(serverSource, /\.provider-workflow \{/);
+    assert.match(serverSource, /\.provider-workflow code/);
+    assert.match(serverSource, /add-provider-package/);
+    assert.match(serverSource, /\.agents\/skills\/add-provider-package\/SKILL\.md/);
+    assert.match(serverSource, /npx skills add https:\/\/github\.com\/vercel\/ai --skill add-provider-package/);
+  });
 });

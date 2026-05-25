@@ -4625,6 +4625,27 @@ function tankHtml(
     line-height: 1.25;
     margin: 0.25rem 0 0.22rem;
   }
+  .provider-workflow {
+    margin: 0.5rem 0 0.6rem;
+    border: 1px solid rgba(143,207,82,0.22);
+    border-radius: 6px;
+    background: rgba(3, 6, 3, 0.48);
+    color: var(--muted);
+    font-size: 0.68rem;
+    line-height: 1.35;
+    padding: 0.5rem 0.58rem;
+  }
+  .provider-workflow strong {
+    display: block;
+    color: var(--fg-bright);
+    font-size: 0.72rem;
+    margin-bottom: 0.16rem;
+  }
+  .provider-workflow code {
+    color: var(--accent-hot);
+    font-family: var(--mono);
+    font-size: 0.66rem;
+  }
   .provider-status {
     flex: 0 0 auto;
     margin: 0.48rem 0 0;
@@ -6689,6 +6710,13 @@ function tankHtml(
     <div class="provider-scroll">
     <label for="provider-preset">Preset</label>
     <select id="provider-preset"></select>
+    <div class="provider-workflow" id="provider-custom-workflow">
+      <strong>Adding a non-standard AI provider?</strong>
+      Use the installed repo skill <code>add-provider-package</code> at
+      <code>.agents/skills/add-provider-package/SKILL.md</code>. Reinstall/update with
+      <code>npx skills add https://github.com/vercel/ai --skill add-provider-package</code>;
+      simple OpenAI-compatible APIs only need the Custom preset, base URL, key env, and model slots below.
+    </div>
     <label for="provider-baseurl">Base URL</label>
     <input id="provider-baseurl" placeholder="https://api.example.com/v1">
     <div class="provider-grid">
@@ -6744,6 +6772,12 @@ function tankHtml(
         <option value="local">Local OpenAI-compatible STT</option>
         <option value="custom">Custom Endpoint</option>
       </select>
+      <div class="provider-workflow" id="voice-custom-workflow">
+        <strong>Adding a new voice/text provider surface?</strong>
+        Use the installed <code>add-provider-package</code> skill at
+        <code>.agents/skills/add-provider-package/SKILL.md</code> for provider-package structure,
+        schema validation, examples, docs, and tests. Existing STT-compatible endpoints can stay in this panel.
+      </div>
       <label for="voice-baseurl">Base URL</label>
       <input id="voice-baseurl" placeholder="http://localhost:8000/v1/audio/transcriptions">
       <div class="provider-grid">
