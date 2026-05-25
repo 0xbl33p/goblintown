@@ -4146,18 +4146,36 @@ function sidebarRiteButtons(runs: Map<string, RunState>): string {
     .slice(0, 6);
   if (!recentRuns.length) {
     return `
-          <button class="sidebar-item active" type="button" data-surface-kind="rite" data-run-id="sample-bounty-72" title="Bounty issue #72"><strong>Bounty issue #72</strong><span>running</span></button>
-          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-provider-setup-audit" title="Provider setup audit">Provider setup audit</button>
-          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-tank-ui-simplification" title="Tank UI simplification">Tank UI simplification</button>`;
+          <button class="sidebar-item active" type="button" data-surface-kind="rite" data-run-id="sample-bounty-72" title="Bounty issue #72"><strong>Bounty issue #72</strong>${sidebarStatusGlyph("running")}</button>
+          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-provider-setup-audit" title="Provider setup audit"><strong>Provider setup audit</strong>${sidebarStatusGlyph("ready")}</button>
+          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-tank-ui-simplification" title="Tank UI simplification"><strong>Tank UI simplification</strong>${sidebarStatusGlyph("ready")}</button>`;
   }
   return recentRuns
     .map((state, index) => {
       const record = state.record;
       const status = record.status || (record.done ? "done" : "running");
       const active = index === 0 ? " active" : "";
-      return `<button class="sidebar-item${active}" type="button" data-surface-kind="rite" data-run-id="${esc(record.runId)}" title="${esc(record.task || record.runId)}"><strong>${esc(record.task || record.runId)}</strong><span>${esc(status)}</span></button>`;
+      return `<button class="sidebar-item${active}" type="button" data-surface-kind="rite" data-run-id="${esc(record.runId)}" title="${esc(record.task || record.runId)}"><strong>${esc(record.task || record.runId)}</strong>${sidebarStatusGlyph(status)}</button>`;
     })
     .join("\n          ");
+}
+
+function sidebarStatusGlyph(status: string): string {
+  switch (status) {
+    case "done":
+      return `<span class="sidebar-status sidebar-status-done" title="done" aria-label="done">✔︎</span>`;
+    case "error":
+    case "failed":
+    case "all_failed":
+      return `<span class="sidebar-status sidebar-status-failed" title="failed" aria-label="failed">∅</span>`;
+    case "running":
+    case "pending":
+    case "ready":
+    case "queued":
+    case "interrupted":
+    default:
+      return `<span class="sidebar-status sidebar-status-running" title="${esc(status || "in progress")}" aria-label="${esc(status || "in progress")}">⏲</span>`;
+  }
 }
 
 function tankHtml(
@@ -5220,25 +5238,31 @@ function tankHtml(
   }
   .sidebar-item {
     width: 100%;
-    border: 1px solid transparent;
+    border: 0;
+    border-radius: 0;
     background: transparent;
     color: #e6e2d3;
-    border-radius: 8px;
-    padding: 0.72rem 0.8rem;
+    padding: 0.36rem 0.16rem;
     font: inherit;
     text-align: left;
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.45rem;
   }
   .sidebar-item:hover {
-    background: rgba(124,255,91,0.08);
-    border-color: rgba(124,255,91,0.22);
+    background: transparent;
+    border-color: transparent;
+    color: #7cff5b;
   }
   .sidebar-item.active {
-    background: rgba(124,255,91,0.12);
-    border-color: rgba(124,255,91,0.42);
+    background: transparent;
+    border-color: transparent;
+    color: #e6e2d3;
   }
   .sidebar-item strong,
   .sidebar-item span {
@@ -5247,10 +5271,23 @@ function tankHtml(
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .sidebar-item span {
-    margin-top: 0.16rem;
-    color: #a8b09a;
+  .sidebar-item strong {
+    min-width: 0;
+  }
+  .sidebar-status {
+    justify-self: end;
     font-size: 0.78rem;
+    font-weight: 750;
+    line-height: 1;
+  }
+  .sidebar-status-done {
+    color: #6dffb3;
+  }
+  .sidebar-status-failed {
+    color: #ff5d73;
+  }
+  .sidebar-status-running {
+    color: #ffb347;
   }
   .sidebar-settings {
     position: relative;

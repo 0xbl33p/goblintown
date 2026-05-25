@@ -311,4 +311,21 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /\.settings-icon \{[\s\S]*filter: brightness\(0\) saturate\(100%\) invert/);
     assert.match(serverSource, /\.settings-trigger:hover \.settings-icon/);
   });
+
+  it("renders sidebar rite status as tight colored glyphs without row boxes", () => {
+    assert.match(serverSource, /function sidebarStatusGlyph\(status: string\): string/);
+    assert.match(serverSource, /case "done":[\s\S]*✔︎/);
+    assert.match(serverSource, /case "error":[\s\S]*∅/);
+    assert.match(serverSource, /case "failed":[\s\S]*∅/);
+    assert.match(serverSource, /return `<span class="sidebar-status sidebar-status-running"/);
+    assert.match(serverSource, /⏲/);
+    assert.match(serverSource, /sidebarStatusGlyph\(status\)/);
+    assert.match(serverSource, /\.sidebar-item \{[\s\S]*border: 0;[\s\S]*border-radius: 0;[\s\S]*background: transparent;/);
+    assert.match(serverSource, /\.sidebar-item:hover \{[\s\S]*background: transparent;[\s\S]*border-color: transparent;/);
+    assert.match(serverSource, /\.sidebar-item\.active \{[\s\S]*background: transparent;[\s\S]*border-color: transparent;/);
+    assert.match(serverSource, /\.sidebar-status-done \{[\s\S]*color: #6dffb3;/);
+    assert.match(serverSource, /\.sidebar-status-failed \{[\s\S]*color: #ff5d73;/);
+    assert.match(serverSource, /\.sidebar-status-running \{[\s\S]*color: #ffb347;/);
+    assert.doesNotMatch(serverSource, /<span>done<\/span>/);
+  });
 });
