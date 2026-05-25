@@ -5256,8 +5256,9 @@ function tankHtml(
     font-weight: 750;
   }
   .settings-icon {
-    width: 2rem;
-    height: 2rem;
+    width: 1.9rem;
+    aspect-ratio: 210 / 246;
+    height: auto;
     object-fit: contain;
   }
   .settings-country {
