@@ -5,7 +5,9 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   buildSingleGoblinChatPrompt,
+  collectChatWebToolResults,
   detectGoblintownOffer,
+  extractChatWebUrls,
   normalizeChatMessages,
 } from "../chat.js";
 
@@ -46,6 +48,41 @@ describe("single goblin chat", () => {
     assert.match(prompt, /User: What changed\?/);
     assert.match(prompt, /Assistant: The route changed\./);
     assert.match(prompt, /User: Summarize it\./);
+  });
+
+  it("extracts public web URLs from the latest chat message", () => {
+    const urls = extractChatWebUrls([
+      { role: "user", content: "ignore https://old.example/a" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "Check https://github.com/0xbl33p/goblintown, then https://example.com/docs." },
+    ]);
+
+    assert.deepEqual(urls, [
+      "https://github.com/0xbl33p/goblintown",
+      "https://example.com/docs",
+    ]);
+  });
+
+  it("adds fetched website context to the single-goblin prompt", async () => {
+    const results = await collectChatWebToolResults(
+      [{ role: "user", content: "What is on https://github.com/example/repo?" }],
+      async () =>
+        new Response("<html><title>Repo Page</title><body><h1>Example Repo</h1><p>Important README text.</p></body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    const prompt = buildSingleGoblinChatPrompt(
+      [{ role: "user", content: "What is on https://github.com/example/repo?" }],
+      results,
+    );
+
+    assert.equal(results.length, 1);
+    assert.match(prompt, /Web tool results/);
+    assert.match(prompt, /https:\/\/github.com\/example\/repo/);
+    assert.match(prompt, /Repo Page/);
+    assert.match(prompt, /Important README text/);
+    assert.match(prompt, /cite the relevant URL/);
   });
 
   it("offers Goblintown for explicit requests", () => {

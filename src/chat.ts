@@ -2,6 +2,11 @@ import { makeGoblin } from "./creatures.js";
 import { GOBLINTOWN_CHAT_CONTEXT } from "./chat-persona.js";
 import { measureDrift } from "./drift.js";
 import { callCreature } from "./openai-client.js";
+import {
+  createWebFetchTool,
+  runToolCalls,
+  type ToolResult,
+} from "./tools.js";
 import type { Hoard } from "./hoard.js";
 import type { Loot, ModelSlot, Personality, TokenUsage } from "./types.js";
 
@@ -18,6 +23,7 @@ export interface SingleGoblinChatOptions {
   personality?: Personality;
   modelSlot?: ModelSlot;
   maxOutputTokens?: number;
+  fetchImpl?: typeof fetch;
 }
 
 export interface SingleGoblinChatResult {
@@ -25,10 +31,12 @@ export interface SingleGoblinChatResult {
   lootId: string;
   usage?: TokenUsage;
   goblintownOffer?: GoblintownOffer;
+  toolResults?: ToolResult[];
 }
 
 const MAX_CHAT_MESSAGES = 24;
 const MAX_CHAT_CONTENT_CHARS = 6000;
+const MAX_CHAT_WEB_URLS = 3;
 
 export interface GoblintownOffer {
   task: string;
@@ -53,7 +61,10 @@ export function normalizeChatMessages(input: unknown): ChatMessage[] {
   return out.slice(-MAX_CHAT_MESSAGES);
 }
 
-export function buildSingleGoblinChatPrompt(messages: ChatMessage[]): string {
+export function buildSingleGoblinChatPrompt(
+  messages: ChatMessage[],
+  toolResults: ToolResult[] = [],
+): string {
   const normalized = normalizeChatMessages(messages);
   if (normalized.length === 0 || normalized[normalized.length - 1].role !== "user") {
     throw new Error("chat requires a latest user message");
@@ -65,14 +76,74 @@ export function buildSingleGoblinChatPrompt(messages: ChatMessage[]): string {
     "You are the AI-first single Goblin chat mode: a regular single LLM model call.",
     "Do not run multi-agent Goblintown orchestration inside this chat response.",
     "Answer the latest user message directly. Use the prior transcript only for context.",
+    "When web tool results are provided, treat them as fresh page context and cite the relevant URL in your answer.",
     "Keep the response practical, concise, and complete. Ask a follow-up only if required.",
     "If the task is complex enough to benefit from the full Goblintown pack, briefly offer to run Goblintown as an optional next step, but still answer as the single Goblin now.",
     "If the user explicitly asks for Goblintown, acknowledge that the full pack can be started through the chat surface.",
     "",
     GOBLINTOWN_CHAT_CONTEXT,
     "",
+    toolResults.length > 0 ? `Web tool results:\n${renderChatWebToolResults(toolResults)}` : "",
+    toolResults.length > 0 ? "" : "",
     transcript,
   ].join("\n");
+}
+
+function renderChatWebToolResults(results: ToolResult[]): string {
+  return results
+    .map((result, index) => {
+      if (!result.ok) {
+        return `[${index + 1}] ${result.name}: ERROR ${result.error ?? "unknown error"}`;
+      }
+      const payload = result.result as Record<string, unknown> | undefined;
+      const url = typeof payload?.url === "string" ? payload.url : "";
+      const title = typeof payload?.title === "string" && payload.title ? `\nTitle: ${payload.title}` : "";
+      const status = typeof payload?.status === "number" ? `Status: ${payload.status}` : "Status: unknown";
+      const text = typeof payload?.text === "string" ? payload.text : JSON.stringify(payload);
+      return [
+        `[${index + 1}] ${url}`,
+        status + title,
+        "Text:",
+        text,
+      ].join("\n");
+    })
+    .join("\n\n");
+}
+
+export function extractChatWebUrls(messages: ChatMessage[]): string[] {
+  const normalized = normalizeChatMessages(messages);
+  const latest = [...normalized].reverse().find((m) => m.role === "user");
+  if (!latest) return [];
+  const matches = latest.content.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+  const urls: string[] = [];
+  for (const raw of matches) {
+    const cleaned = raw.replace(/[),.;:!?]+$/g, "");
+    try {
+      const url = new URL(cleaned);
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      const normalizedUrl = url.toString();
+      if (!urls.includes(normalizedUrl)) urls.push(normalizedUrl);
+      if (urls.length >= MAX_CHAT_WEB_URLS) break;
+    } catch {
+      // Ignore malformed URL-shaped text.
+    }
+  }
+  return urls;
+}
+
+export async function collectChatWebToolResults(
+  messages: ChatMessage[],
+  fetchImpl?: typeof fetch,
+): Promise<ToolResult[]> {
+  const urls = extractChatWebUrls(messages);
+  if (urls.length === 0) return [];
+  return runToolCalls(
+    urls.map((url) => ({
+      name: "web.fetch",
+      args: { url, maxChars: 9000 },
+    })),
+    [createWebFetchTool(fetchImpl)],
+  );
 }
 
 export function detectGoblintownOffer(messages: ChatMessage[]): GoblintownOffer | undefined {
@@ -120,7 +191,8 @@ export async function runSingleGoblinChat(
   opts: SingleGoblinChatOptions,
 ): Promise<SingleGoblinChatResult> {
   const personality = opts.personality ?? "chipper";
-  const prompt = buildSingleGoblinChatPrompt(opts.messages);
+  const toolResults = await collectChatWebToolResults(opts.messages, opts.fetchImpl);
+  const prompt = buildSingleGoblinChatPrompt(opts.messages, toolResults);
   const goblin = makeGoblin(personality);
   if (opts.modelSlot) {
     goblin.modelSlot = opts.modelSlot;
@@ -146,6 +218,7 @@ export async function runSingleGoblinChat(
     lootId,
     usage,
     ...(goblintownOffer ? { goblintownOffer } : {}),
+    ...(toolResults.length > 0 ? { toolResults } : {}),
   };
 }
 
