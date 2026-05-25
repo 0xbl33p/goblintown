@@ -1,8 +1,9 @@
 import { makeGoblin } from "./creatures.js";
+import { GOBLINTOWN_CHAT_CONTEXT } from "./chat-persona.js";
 import { measureDrift } from "./drift.js";
 import { callCreature } from "./openai-client.js";
 import type { Hoard } from "./hoard.js";
-import type { Loot, Personality, TokenUsage } from "./types.js";
+import type { Loot, ModelSlot, Personality, TokenUsage } from "./types.js";
 
 export type ChatRole = "user" | "assistant";
 
@@ -15,6 +16,7 @@ export interface SingleGoblinChatOptions {
   messages: ChatMessage[];
   hoard: Hoard;
   personality?: Personality;
+  modelSlot?: ModelSlot;
   maxOutputTokens?: number;
 }
 
@@ -67,16 +69,24 @@ export function buildSingleGoblinChatPrompt(messages: ChatMessage[]): string {
     "If the task is complex enough to benefit from the full Goblintown pack, briefly offer to run Goblintown as an optional next step, but still answer as the single Goblin now.",
     "If the user explicitly asks for Goblintown, acknowledge that the full pack can be started through the chat surface.",
     "",
+    GOBLINTOWN_CHAT_CONTEXT,
+    "",
     transcript,
   ].join("\n");
 }
 
 export function detectGoblintownOffer(messages: ChatMessage[]): GoblintownOffer | undefined {
   const normalized = normalizeChatMessages(messages);
-  const latest = [...normalized].reverse().find((m) => m.role === "user");
+  const userMessages = normalized.filter((m) => m.role === "user");
+  const latest = userMessages[userMessages.length - 1];
   if (!latest) return undefined;
-  const task = latest.content;
-  if (/\bgoblin\s*town\b|\bgoblintown\b|\bfull\s+pack\b|\bpack\s+of\s+goblins\b/i.test(task)) {
+  let task = latest.content;
+  if (
+    /\bgoblin\s*town\b|\bgoblintown\b|\bfull\s+pack\b|\bpack\s+of\s+goblins\b|\brite\b|\brites\b/i.test(
+      task,
+    )
+  ) {
+    task = resolveExplicitRunTask(userMessages);
     return { task, requested: true, reason: "explicit" };
   }
   if (looksComplexForGoblintown(task)) {
@@ -85,12 +95,36 @@ export function detectGoblintownOffer(messages: ChatMessage[]): GoblintownOffer 
   return undefined;
 }
 
+function resolveExplicitRunTask(userMessages: ChatMessage[]): string {
+  const latest = userMessages[userMessages.length - 1]?.content ?? "";
+  if (!isBareRunRequest(latest)) return latest;
+  const previous = [...userMessages]
+    .slice(0, -1)
+    .reverse()
+    .find((message) => !isBareRunRequest(message.content));
+  return previous?.content ?? latest;
+}
+
+function isBareRunRequest(value: string): boolean {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return /^(please )?(do|run|start|make|launch|kick off) (a |the )?(rite|goblintown|goblin town|full pack)$/.test(
+    normalized,
+  );
+}
+
 export async function runSingleGoblinChat(
   opts: SingleGoblinChatOptions,
 ): Promise<SingleGoblinChatResult> {
   const personality = opts.personality ?? "chipper";
   const prompt = buildSingleGoblinChatPrompt(opts.messages);
   const goblin = makeGoblin(personality);
+  if (opts.modelSlot) {
+    goblin.modelSlot = opts.modelSlot;
+  }
   const { text, usage } = await callCreature(goblin, prompt, {
     maxOutputTokens: opts.maxOutputTokens,
   });

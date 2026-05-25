@@ -38,6 +38,11 @@ describe("single goblin chat", () => {
     assert.match(prompt, /AI-first single Goblin chat mode/);
     assert.match(prompt, /regular single LLM model call/);
     assert.match(prompt, /Do not run multi-agent Goblintown orchestration/);
+    assert.match(prompt, /Goblintown vocabulary/);
+    assert.match(prompt, /A rite is a full Goblintown run/);
+    assert.match(prompt, /The Tank is the main app surface/);
+    assert.match(prompt, /Loot is a saved model output/);
+    assert.match(prompt, /Be useful first, with a little Goblintown-native bite/);
     assert.match(prompt, /User: What changed\?/);
     assert.match(prompt, /Assistant: The route changed\./);
     assert.match(prompt, /User: Summarize it\./);
@@ -50,6 +55,32 @@ describe("single goblin chat", () => {
 
     assert.deepEqual(offer, {
       task: "Run Goblintown on this migration plan.",
+      requested: true,
+      reason: "explicit",
+    });
+  });
+
+  it("treats explicit rite requests as run requests", () => {
+    const offer = detectGoblintownOffer([
+      { role: "user", content: "Run a rite about whether the Beatles are good." },
+    ]);
+
+    assert.deepEqual(offer, {
+      task: "Run a rite about whether the Beatles are good.",
+      requested: true,
+      reason: "explicit",
+    });
+  });
+
+  it("uses the previous user task for bare rite follow-ups", () => {
+    const offer = detectGoblintownOffer([
+      { role: "user", content: "Is Abbey Road better than Revolver?" },
+      { role: "assistant", content: "Short answer: close call." },
+      { role: "user", content: "do a rite" },
+    ]);
+
+    assert.deepEqual(offer, {
+      task: "Is Abbey Road better than Revolver?",
       requested: true,
       reason: "explicit",
     });
@@ -104,24 +135,39 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /<aside class="ops-sidebar" id="ops-sidebar">/);
     assert.match(
       serverSource,
-      /<aside class="ops-sidebar" id="ops-sidebar">[\s\S]*New Chat[\s\S]*New Rite[\s\S]*API Configs[\s\S]*Rites[\s\S]*Chats[\s\S]*Settings[\s\S]*<\/aside>/,
+      /<aside class="ops-sidebar" id="ops-sidebar">[\s\S]*New Chat[\s\S]*New Rite[\s\S]*Rites[\s\S]*Regular[\s\S]*Thesis[\s\S]*Sentiment[\s\S]*Plan[\s\S]*Runs[\s\S]*Chats[\s\S]*Settings[\s\S]*<\/aside>/,
     );
+    assert.doesNotMatch(serverSource, /id="btn-api-configs"/);
+    assert.doesNotMatch(serverSource, /id="ops-line"/);
+    assert.doesNotMatch(serverSource, /id="ops-run"/);
+    assert.doesNotMatch(serverSource, /id="ops-examples"/);
   });
 
   it("exposes the AI-first Tank chat composer controls and keyboard affordances", () => {
+    assert.match(serverSource, /CHAT_PERSONA_UI\.intro/);
+    assert.match(serverSource, /const CHAT_PERSONA = /);
+    assert.match(serverSource, /function chatPersonaPick\(kind\)/);
+    assert.match(serverSource, /function setRootChatStatus\(kind, detail\)/);
     assert.match(
       serverSource,
       /<div class="chat-thread" id="chat-thread"[\s\S]*<\/div>[\s\S]*<form class="chat-composer" id="root-chat-form">/,
     );
-    assert.match(serverSource, /<button id="root-chat-send" type="submit" title="Send \(Cmd\/Ctrl\+Enter\)">Send<\/button>/);
+    assert.match(serverSource, /<button id="root-chat-send" type="submit" title="Send \(Enter\)">Send<\/button>/);
     assert.match(serverSource, /<button id="root-chat-voice" type="button" title="Voice">Voice<\/button>/);
     assert.match(serverSource, /<select id="root-chat-model"/);
     assert.match(serverSource, /<select id="root-chat-personality"/);
     assert.match(serverSource, /const tooltipEl = document\.createElement\("div"\)/);
+    assert.match(serverSource, /function resetRootChat\(\)/);
+    assert.match(serverSource, /\$\("btn-chat"\)\.onclick = \(\) => \{[\s\S]*resetRootChat\(\);/);
     assert.match(serverSource, /\$\("root-chat-input"\)\.addEventListener\("keydown", \(event\) =>/);
     assert.match(serverSource, /event\.shiftKey && event\.key === "Enter"/);
-    assert.match(serverSource, /\(event\.metaKey \|\| event\.ctrlKey\) && event\.key === "Enter"/);
+    assert.match(serverSource, /if \(event\.key === "Enter"\) \{/);
     assert.match(serverSource, /\$\("root-chat-form"\)\.requestSubmit\(\)/);
+    assert.match(serverSource, /modelSlot: \$\("root-chat-model"\)\.value === "inherit" \? undefined : \$\("root-chat-model"\)\.value/);
+    assert.match(serverSource, /chatPersonaPick\("emptyResponse"\)/);
+    assert.match(serverSource, /body\.goblintownOffer && body\.goblintownOffer\.requested/);
+    assert.match(serverSource, /chatPersonaPick\("handoff"\)/);
+    assert.match(serverSource, /await startGoblintownFromChat\(body\.goblintownOffer\.task\)/);
   });
 
   it("starts New Rite as a chat-guided rite type question", () => {
@@ -129,5 +175,6 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /What type of rite should we run\?/);
     assert.match(serverSource, /regular · thesis · crypto\/onchain · sentiment · plan/);
     assert.match(serverSource, /\$\("btn-rite"\)\.onclick = startNewRiteChatFlow/);
+    assert.match(serverSource, /\$\("btn-regular-rite"\)\.onclick = startNewRiteChatFlow/);
   });
 });

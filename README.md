@@ -881,8 +881,11 @@ npm run dist:linux    # Linux x64 AppImage
 npm run dist:desktop  # all three targets from one command
 ```
 
-macOS builds are ad-hoc signed by default and are not notarized unless Apple
-signing credentials are supplied to `electron-builder`.
+macOS public release builds require a Developer ID Application certificate and
+notarization credentials. The `electron-builder` config is prepared for hardened
+runtime signing, the entitlements in `build/`, and DMG notarization when Apple
+credentials are present; local builds without those credentials may produce
+unsigned or ad-hoc signed artifacts for development testing only.
 
 The Tank renders the protocol as a tamagotchi-style live village: each creature
 has a home, tokens stream into per-creature thinking bubbles, the DAG panel

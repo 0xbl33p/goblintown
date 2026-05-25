@@ -11,6 +11,7 @@ import {
 import { normalizeAddonSettings } from "./addons.js";
 import { Hoard } from "./hoard.js";
 import { defaultProviderConfig, normalizeProviderConfig } from "./providers.js";
+import { normalizeVoiceConfig } from "./voice.js";
 import type { WarrenManifest } from "./types.js";
 
 const WARREN_DIRNAME = ".goblintown";
@@ -38,6 +39,7 @@ export async function initWarren(root: string): Promise<Warren> {
     defaultModelOgre: process.env.GOBLINTOWN_MODEL_OGRE ?? "gpt-5.5",
     defaultModelTroll: process.env.GOBLINTOWN_MODEL_TROLL ?? "gpt-5.4-mini",
     provider: defaultProviderConfig(),
+    voice: normalizeVoiceConfig(undefined),
     addons: {},
     peers: [],
     country: normalizeCountryConfig({
@@ -70,6 +72,7 @@ export async function loadWarren(cwd: string): Promise<Warren> {
     await readFile(manifestPath, "utf8"),
   ) as WarrenManifest;
   manifest.provider = normalizeProviderConfig(manifest.provider);
+  manifest.voice = normalizeVoiceConfig(manifest.voice);
   manifest.addons = normalizeAddonSettings(manifest.addons);
   manifest.peers = normalizeWarrenPeers(manifest.peers);
   manifest.country = normalizeCountryConfig(manifest.country);
@@ -83,6 +86,7 @@ export async function loadWarren(cwd: string): Promise<Warren> {
 
 export async function saveWarrenManifest(warren: Warren): Promise<void> {
   warren.manifest.provider = normalizeProviderConfig(warren.manifest.provider);
+  warren.manifest.voice = normalizeVoiceConfig(warren.manifest.voice);
   warren.manifest.addons = normalizeAddonSettings(warren.manifest.addons);
   warren.manifest.peers = normalizeWarrenPeers(warren.manifest.peers);
   warren.manifest.country = normalizeCountryConfig(warren.manifest.country);

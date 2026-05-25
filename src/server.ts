@@ -17,6 +17,7 @@ import {
   normalizeChatMessages,
   runSingleGoblinChat,
 } from "./chat.js";
+import { CHAT_PERSONA_UI } from "./chat-persona.js";
 import {
   MAX_PEERS,
   MAX_TEAM_MEMBERS,
@@ -76,6 +77,7 @@ import {
   type OutputFormat,
   type Personality,
   type ProviderConfig,
+  type VoiceConfig,
 } from "./types.js";
 import { executePlan, type PlanExecutionEvent } from "./plan-executor.js";
 import { planTask } from "./planner.js";
@@ -115,6 +117,17 @@ import {
   readProviderSecretsForRootSync,
   setProviderSecretForRoot,
 } from "./provider-secrets.js";
+import {
+  clearVoiceSecretForRoot,
+  readVoiceSecretsForRootSync,
+  setVoiceSecretForRoot,
+} from "./voice-secrets.js";
+import {
+  normalizeVoiceConfig,
+  transcribeVoiceAudio,
+  voiceApiKeyEnv,
+  voiceProviderNeedsServer,
+} from "./voice.js";
 import { loadWarren, resetWarren, saveWarrenManifest, type Warren } from "./warren.js";
 import {
   directMessagePayload,
@@ -439,10 +452,15 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
     const maxOutputTokens = Number.isFinite(rawMaxOutputTokens)
       ? Math.max(64, Math.min(4000, Math.floor(rawMaxOutputTokens)))
       : 900;
+    const modelSlot =
+      body.modelSlot === "goblin" || body.modelSlot === "ogre"
+        ? body.modelSlot
+        : undefined;
     try {
       const result = await runSingleGoblinChat({
         messages,
         personality,
+        modelSlot,
         maxOutputTokens,
         hoard: warren.hoard,
       });
@@ -687,6 +705,52 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
   });
   app.get("/api/provider", (_req, res) => {
     res.json(providerPayload(warren));
+  });
+  app.get("/api/voice", (_req, res) => {
+    res.json(voicePayload(warren));
+  });
+  app.post("/api/voice", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const config = normalizeVoiceConfig(body);
+    warren.manifest.voice = config;
+    const apiKeyEnv = voiceApiKeyEnv(config);
+    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : undefined;
+    if (apiKey !== undefined) {
+      if (apiKey.length > 0) await setVoiceSecretForRoot(warren.root, apiKeyEnv, apiKey);
+      else await clearVoiceSecretForRoot(warren.root, apiKeyEnv);
+    } else if (body.clearApiKey === true) {
+      await clearVoiceSecretForRoot(warren.root, apiKeyEnv);
+    }
+    await saveWarrenManifest(warren);
+    res.json(voicePayload(warren));
+  });
+  app.post("/api/voice/transcribe", async (req, res) => {
+    const config = normalizeVoiceConfig(warren.manifest.voice);
+    if (!voiceProviderNeedsServer(config)) {
+      res.status(400).json({ error: "browser voice runs locally in the browser" });
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const audioBase64 = typeof body.audioBase64 === "string" ? body.audioBase64 : "";
+    const mimeType = typeof body.mimeType === "string" ? body.mimeType : "audio/webm";
+    const apiKeyEnv = voiceApiKeyEnv(config);
+    const storedSecrets = readVoiceSecretsForRootSync(warren.root);
+    const apiKey = process.env[apiKeyEnv]?.trim() || storedSecrets[apiKeyEnv] || "";
+    if ((config.provider === "openai" || config.provider === "deepgram" || config.provider === "custom") && !apiKey) {
+      res.status(400).json({ error: `${apiKeyEnv} is not set for voice transcription` });
+      return;
+    }
+    try {
+      const transcript = await transcribeVoiceAudio({
+        config,
+        apiKey,
+        audioBase64,
+        mimeType,
+      });
+      res.json({ transcript });
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
   app.get("/api/addons", (_req, res) => {
     res.json(addonStatusPayload(warren.manifest));
@@ -2137,6 +2201,30 @@ function providerPayload(warren: Warren): {
       missingApiKey: runtime.missingApiKey,
       outputFormat: runtime.outputFormat,
       models: runtime.models,
+    },
+  };
+}
+
+function voicePayload(warren: Warren): {
+  config: VoiceConfig;
+  runtime: {
+    apiKeyEnv: string;
+    hasStoredApiKey: boolean;
+    hasApiKey: boolean;
+    needsServer: boolean;
+  };
+} {
+  const config = normalizeVoiceConfig(warren.manifest.voice);
+  const apiKeyEnv = voiceApiKeyEnv(config);
+  const storedSecrets = readVoiceSecretsForRootSync(warren.root);
+  const envKey = process.env[apiKeyEnv]?.trim() ?? "";
+  return {
+    config,
+    runtime: {
+      apiKeyEnv,
+      hasStoredApiKey: !!storedSecrets[apiKeyEnv],
+      hasApiKey: !voiceProviderNeedsServer(config) || !!envKey || !!storedSecrets[apiKeyEnv],
+      needsServer: voiceProviderNeedsServer(config),
     },
   };
 }
@@ -4104,23 +4192,6 @@ function tankHtml(
   .strip .grow { flex: 1; }
   .strip .clock { color: var(--muted); }
   .strip .tier { color: var(--warn); }
-  .settings-chip {
-    border: 1px solid var(--line);
-    background: var(--bg-deep);
-    color: var(--fg-bright);
-    border-radius: 999px;
-    padding: 0.3rem 0.65rem;
-    font: inherit;
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    cursor: pointer;
-  }
-  .settings-chip:hover,
-  .settings-chip[aria-expanded="true"] {
-    border-color: var(--accent);
-    color: var(--accent-hot);
-  }
   .settings-popover {
     position: absolute;
     right: 1rem;
@@ -4653,10 +4724,6 @@ function tankHtml(
       font-size: 0.5rem;
       padding: 0.32rem 0.14rem;
     }
-    .ops-examples,
-    .ops-output {
-      display: none;
-    }
     .chat-thread {
       padding: 0.85rem;
     }
@@ -5089,74 +5156,12 @@ function tankHtml(
     width: calc(100% - 0.6rem);
     margin: 0 0.3rem 0.3rem;
   }
-  .ops-subtle {
-    display: none;
-    color: var(--muted);
-    font-size: 0.7rem;
-    line-height: 1.35;
-  }
   .ops-danger {
     width: 100%;
     flex: 0 0 auto;
     padding: 0.52rem 0.65rem;
     font-size: 0.68rem;
   }
-  .ops-row { display: none; }
-  .ops-input, .ops-select {
-    width: 100%;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 0.42rem 0.5rem;
-    font-family: inherit;
-    font-size: 0.76rem;
-  }
-  .ops-input:focus, .ops-select:focus { outline: none; border-color: var(--accent); }
-  .ops-presets {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.3rem;
-  }
-  .ops-presets button {
-    font-size: 0.66rem;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    padding: 0.35rem 0.4rem;
-    border: 1px solid var(--line);
-    color: var(--fg);
-    background: var(--bg-deep);
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .ops-presets button:hover { border-color: var(--accent); color: var(--accent-hot); }
-  .ops-examples summary {
-    cursor: pointer;
-    color: var(--accent);
-    font-size: 0.58rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-bottom: 0.5rem;
-    text-align: center;
-  }
-  .ops-examples[open] summary { margin-bottom: 0.55rem; }
-  .ops-output {
-    min-height: 4.2rem;
-    flex: 0 0 auto;
-    border: 1px solid var(--line);
-    background: rgba(5,8,5,0.85);
-    padding: 0.5rem;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-size: 0.58rem;
-    line-height: 1.35;
-    color: var(--fg);
-  }
-  .ops-output .err { color: var(--fail); }
-  .ops-output .ok { color: var(--pass); }
   .workarea.sidebar-collapsed .ops-main { display: none; }
   .workarea.sidebar-collapsed .ops-sidebar { padding: 0.7rem 0.35rem; }
   .workarea.sidebar-collapsed .ops-head {
@@ -6135,7 +6140,6 @@ function tankHtml(
     <span class="grow"></span>
     <span class="tier" id="tier-display">tier 0 · empty plot</span>
     <span class="clock" id="clock">idle</span>
-    <button class="settings-chip" id="settings-chip" type="button" aria-expanded="false">Settings ▾</button>
   </div>
 
   <div class="settings-popover" id="settings-popover">
@@ -6164,6 +6168,9 @@ function tankHtml(
       </button>
       <button class="provider-chip" id="provider-chip" type="button" data-settings-label="API">
         <span>API</span><strong>API ▾</strong>
+      </button>
+      <button class="provider-chip" id="voice-chip" type="button" data-settings-label="Voice">
+        <span>Voice</span><strong>Browser ▾</strong>
       </button>
       <button class="reset-chip" id="reset-chip" type="button" aria-expanded="false" data-settings-label="Reset">
         <span>Reset</span><strong>Reset ▸</strong>
@@ -6271,6 +6278,50 @@ function tankHtml(
     <div class="provider-actions">
       <button class="btn primary" type="button" id="provider-save">Save</button>
       <button class="btn" type="button" id="provider-cancel">Close</button>
+    </div>
+  </div>
+
+  <div class="provider-popover voice-popover" id="voice-popover">
+    <h3>Voice API</h3>
+    <div class="provider-scroll">
+      <label for="voice-provider">Provider</label>
+      <select id="voice-provider">
+        <option value="browser">Browser Speech (no key)</option>
+        <option value="openai">OpenAI Transcription</option>
+        <option value="deepgram">Deepgram</option>
+        <option value="local">Local OpenAI-compatible STT</option>
+        <option value="custom">Custom Endpoint</option>
+      </select>
+      <label for="voice-baseurl">Base URL</label>
+      <input id="voice-baseurl" placeholder="http://localhost:8000/v1/audio/transcriptions">
+      <div class="provider-grid">
+        <div>
+          <label for="voice-keyenv">Key env var</label>
+          <input id="voice-keyenv" placeholder="VOICE_API_KEY">
+        </div>
+        <div>
+          <label for="voice-apikey">API key (saved locally)</label>
+          <input id="voice-apikey" type="password" autocomplete="off" placeholder="optional server-side key">
+        </div>
+      </div>
+      <div class="provider-grid">
+        <div>
+          <label for="voice-model">Model</label>
+          <input id="voice-model" placeholder="gpt-4o-mini-transcribe, nova-3, whisper-large-v3">
+        </div>
+        <div>
+          <label for="voice-language">Language</label>
+          <input id="voice-language" placeholder="en-US">
+        </div>
+      </div>
+      <label for="voice-prompt">Transcript prompt / vocabulary</label>
+      <input id="voice-prompt" placeholder="Goblintown terms: rite, Tank, Hoard, loot">
+    </div>
+    <p class="provider-status" id="voice-status">Loading voice settings...</p>
+    <div class="provider-actions">
+      <button class="btn primary" type="button" id="voice-save">Save</button>
+      <button class="btn" type="button" id="voice-clear-key">Clear Saved Key</button>
+      <button class="btn" type="button" id="voice-cancel">Close</button>
     </div>
   </div>
 
@@ -6393,9 +6444,9 @@ function tankHtml(
       <div class="ops-quick">
         <button class="btn primary" id="btn-chat" type="button" title="Start a fresh single-goblin chat">New Chat</button>
         <button class="btn primary" id="btn-rite" type="button" title="Start a new full Tank rite">New Rite</button>
-        <button class="btn" id="btn-api-configs" type="button" title="Open API provider and model settings">API Configs</button>
         <details class="ops-nav-group" id="ops-rites">
           <summary title="Open rite shortcuts and run history">Rites</summary>
+          <button class="btn" id="btn-regular-rite" type="button" title="Start a regular rite">Regular</button>
           <button class="btn" id="btn-thesis" type="button" title="Build a thesis rite">Thesis</button>
           <button class="btn" id="btn-sentiment" type="button" title="Run sentiment tools">Sentiment</button>
           <button class="btn" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
@@ -6407,26 +6458,6 @@ function tankHtml(
         </details>
         <button class="btn" id="btn-sidebar-settings" type="button" title="Open Settings">Settings</button>
       </div>
-      <div class="ops-subtle">Run any Goblintown CLI command in-app. Use full syntax in the input line.</div>
-      <div class="ops-row">
-        <input class="ops-input" id="ops-line" placeholder='e.g. rite "Refactor planner" --pack 3 --remember'>
-        <button class="btn primary" id="ops-run" type="button">Run</button>
-      </div>
-      <details class="ops-examples" id="ops-examples">
-        <summary>Command Examples</summary>
-        <div class="ops-presets" id="ops-presets">
-          <button type="button" data-line='summon goblin --task "Quick analysis"'>summon</button>
-          <button type="button" data-line='scavenge --task "What changed?" --scan "src/**/*.ts"'>scavenge</button>
-          <button type="button" data-line='quest "Investigate bug" --pack 3'>quest</button>
-          <button type="button" data-line='thesis "Jito" --solana ADDRESS --remember'>thesis</button>
-          <button type="button" data-line='hoard --limit 20'>hoard</button>
-          <button type="button" data-line='drift'>drift</button>
-          <button type="button" data-line='route'>route</button>
-          <button type="button" data-line='country run --task "Cross-check this plan" --all'>country run</button>
-          <button type="button" data-line='fold --threshold 30'>fold</button>
-        </div>
-      </details>
-      <div class="ops-output" id="ops-output">ready</div>
     </div>
   </aside>
 
@@ -6435,7 +6466,7 @@ function tankHtml(
       <div class="chat-thread" id="chat-thread" aria-live="polite">
         <div class="chat-message assistant">
           <span class="chat-role">single goblin</span>
-          Ask anything. This surface uses one regular model call. When a prompt needs the full town, I will offer Goblintown without starting it automatically.
+          ${CHAT_PERSONA_UI.intro}
         </div>
       </div>
       <form class="chat-composer" id="root-chat-form">
@@ -6447,7 +6478,7 @@ function tankHtml(
           <div class="chat-input-row">
             <button id="root-chat-voice" type="button" title="Voice">Voice</button>
             <textarea id="root-chat-input" rows="3" placeholder="Message the single Goblin..." required></textarea>
-            <button id="root-chat-send" type="submit" title="Send (Cmd/Ctrl+Enter)">Send</button>
+            <button id="root-chat-send" type="submit" title="Send (Enter)">Send</button>
           </div>
           <div class="chat-meta-row">
             <label>Model
@@ -6752,6 +6783,7 @@ const ticker = $("ticker");
 const tickerText = $("ticker-text");
 const rootChatMessages = [];
 let rootChatOfferedTask = "";
+const CHAT_PERSONA = ${JSON.stringify(CHAT_PERSONA_UI)};
 const goblinPile = $("goblin-pile");
 const goblinExplosion = $("goblin-explosion");
 const goblinExplosionCtx = goblinExplosion ? goblinExplosion.getContext("2d") : null;
@@ -6759,10 +6791,7 @@ const bubbleLayer = $("bubble-layer");
 const warren = $("warren");
 const workarea = $("workarea");
 const opsToggle = $("ops-toggle");
-const opsLine = $("ops-line");
-const opsRun = $("ops-run");
-const opsOutput = $("ops-output");
-const settingsChip = $("settings-chip");
+const settingsTrigger = $("btn-sidebar-settings");
 const settingsPopover = $("settings-popover");
 const resetChip = $("reset-chip");
 const settingsResetPanel = $("settings-reset-panel");
@@ -6801,7 +6830,7 @@ const pick  = (arr)    => arr[Math.floor(Math.random() * arr.length)];
 
 function setSettingsOpen(open) {
   settingsPopover.classList.toggle("open", !!open);
-  settingsChip.setAttribute("aria-expanded", open ? "true" : "false");
+  settingsTrigger.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function setResetMenuOpen(open) {
@@ -6820,7 +6849,7 @@ function closeSettingsPopover() {
 }
 
 function closeTopPopovers(exceptId) {
-  ["auth-popover", "country-popover", "mail-popover", "addon-popover", "onchain-popover", "sentiment-tool-popover", "sentiment-config-popover", "provider-popover"].forEach((id) => {
+  ["auth-popover", "country-popover", "mail-popover", "addon-popover", "onchain-popover", "sentiment-tool-popover", "sentiment-config-popover", "provider-popover", "voice-popover"].forEach((id) => {
     if (id === exceptId) return;
     const panel = $(id);
     if (panel) panel.classList.remove("open");
@@ -6844,7 +6873,7 @@ function settingsActionValue(button) {
   return (valueEl ? valueEl.textContent : button.textContent) || "";
 }
 
-settingsChip.onclick = () => {
+settingsTrigger.onclick = () => {
   const willOpen = !settingsPopover.classList.contains("open");
   closeTopPopovers("");
   setSettingsOpen(willOpen);
@@ -6857,7 +6886,7 @@ resetChip.onclick = () => {
 
 document.addEventListener("click", (ev) => {
   if (!(ev.target instanceof Element)) return;
-  if (ev.target === settingsChip || settingsChip.contains(ev.target)) return;
+  if (ev.target === settingsTrigger || settingsTrigger.contains(ev.target)) return;
   if (settingsPopover.contains(ev.target)) return;
   closeSettingsPopover();
 });
@@ -7880,7 +7909,6 @@ window.addEventListener("resize", () => {
 /* Static tooltip copy */
 [
   ["auth-chip", "Sign in with Firebase for cloud collaboration mode."],
-  ["settings-chip", "Open account, country, mail, add-on, onchain, sentiment, API, and reset controls."],
   ["country-chip", "Open Goblin-Country settings and collaboration panels."],
   ["mail-chip", "Open friends, requests, and direct-message threads."],
   ["addon-chip", "Enable local Goblintown add-ons and verifier tool packs."],
@@ -7900,26 +7928,25 @@ window.addEventListener("resize", () => {
   ["sentiment-save-secret", "Save the optional sentiment key in the local secret file."],
   ["sentiment-clear-secret", "Delete the selected locally stored sentiment key."],
   ["provider-chip", "Configure local provider, model slots, and API key storage."],
+  ["voice-chip", "Configure browser, OpenAI, Deepgram, local, or custom speech input."],
   ["reset-chip", "Open reset controls."],
   ["btn-chat", "Start a fresh single-goblin chat."],
-  ["btn-api-configs", "Open API provider and model settings."],
   ["btn-sidebar-settings", "Open the settings menu."],
   ["ops-rites", "Open rite shortcuts and run history."],
   ["ops-chats", "Open chat shortcuts."],
-  ["root-chat-input", "Write a chat message. Shift+Enter inserts a line break; Cmd/Ctrl+Enter sends."],
+  ["root-chat-input", "Write a chat message. Shift+Enter inserts a line break; Enter sends."],
   ["root-chat-send", "Send this chat message."],
-  ["root-chat-voice", "Start voice chat when voice is configured."],
+  ["root-chat-voice", "Speak into the chat box. Browser voice stays local; configured APIs use the voice connector."],
   ["root-chat-model", "Choose which model slot this chat should use."],
   ["root-chat-personality", "Choose the personality for single-goblin replies."],
   ["root-chat-max", "Limit the maximum length of the reply."],
   ["root-chat-offer-run", "Launch this prompt in the full Tank."],
   ["btn-rite", "Start a new full Tank rite."],
+  ["btn-regular-rite", "Start a regular full Tank rite."],
   ["btn-thesis", "Build a quality thesis about a project, team, product, or protocol."],
   ["btn-plan", "Create a planned multi-step rite."],
   ["btn-asteroid", "Open the destructive full reset flow."],
   ["ops-toggle", "Collapse or expand the command sidebar."],
-  ["ops-line", "Type a Goblintown CLI command here."],
-  ["ops-run", "Run the command currently entered in the sidebar."],
   ["thesis-subject", "Name the project, protocol, team, product, repository, market, or decision to evaluate."],
   ["thesis-horizon", "Set the evaluation horizon for the thesis memo."],
   ["thesis-solana", "Optional Solana wallet, token account, mint, or program address for read-only evidence."],
@@ -7950,6 +7977,15 @@ window.addEventListener("resize", () => {
   ["provider-save", "Save provider settings to local config."],
   ["provider-cancel", "Close provider settings without applying changes now."],
   ["provider-clear-key", "Delete the locally stored provider API key."],
+  ["voice-provider", "Choose the speech-to-text connector for chat voice input."],
+  ["voice-baseurl", "Optional voice API endpoint for local or custom connectors."],
+  ["voice-keyenv", "Environment variable name used for this voice API key."],
+  ["voice-apikey", "Optional voice key saved locally in the voice secret file."],
+  ["voice-model", "Optional speech-to-text model name."],
+  ["voice-language", "Speech recognition language hint."],
+  ["voice-prompt", "Vocabulary and cleanup hint for Goblintown-specific transcript terms."],
+  ["voice-save", "Save voice connector settings."],
+  ["voice-clear-key", "Delete the locally stored voice API key."],
   ["rf-task", "Describe the task for this rite."],
   ["rf-pack", "How many goblins should run in the pack."],
   ["rf-personality", "Lead goblin personality style for the run."],
@@ -7968,65 +8004,7 @@ window.addEventListener("resize", () => {
   ["onboard-next", "Advance to the next onboarding step."],
 ].forEach((entry) => setTip(entry[0], entry[1]));
 document.querySelectorAll("[data-country-tab]").forEach((btn) => setTipIfMissing(btn, "Switch country panel."));
-document.querySelectorAll("#ops-presets button[data-line]").forEach((btn) => setTipIfMissing(btn, "Run this example command."));
 applyFallbackTips();
-
-function renderOpsResult(result) {
-  const ok = result.ok ? "ok" : "error";
-  const header = "[" + ok + "] " + result.command + " (exit " + result.code + ")";
-  const stdout = (result.stdout || "").trim();
-  const stderr = (result.stderr || "").trim();
-  let text = header;
-  if (stdout) text += "\\n\\n" + stdout;
-  if (stderr) text += "\\n\\n[stderr]\\n" + stderr;
-  opsOutput.textContent = text;
-  opsOutput.classList.toggle("err", !result.ok);
-  opsOutput.classList.toggle("ok", !!result.ok);
-}
-
-async function runOpsLine() {
-  const line = (opsLine.value || "").trim();
-  if (!line) return;
-  opsOutput.textContent = "running: " + line;
-  opsRun.disabled = true;
-  try {
-    const r = await fetch("/api/cli", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ line }),
-    });
-    const payload = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      opsOutput.textContent = "error: " + (payload.error || "command failed");
-      opsOutput.classList.add("err");
-      opsOutput.classList.remove("ok");
-      return;
-    }
-    renderOpsResult(payload);
-    setTicker("command: " + line, true);
-    setTimeout(() => { refreshStats(); }, 350);
-  } catch (err) {
-    opsOutput.textContent = "error: " + (err.message || err);
-    opsOutput.classList.add("err");
-    opsOutput.classList.remove("ok");
-  } finally {
-    opsRun.disabled = false;
-  }
-}
-
-opsRun.onclick = runOpsLine;
-opsLine.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    runOpsLine();
-  }
-});
-$("ops-presets").querySelectorAll("button[data-line]").forEach((btn) => {
-  btn.onclick = () => {
-    opsLine.value = btn.getAttribute("data-line") || "";
-    runOpsLine();
-  };
-});
 
 /* Town tier from real warren stats */
 function tierOf(rites) {
@@ -8549,6 +8527,16 @@ const providerFormat = $("provider-format");
 const providerModels = $("provider-models");
 const providerRoutes = $("provider-routes");
 const providerStatus = $("provider-status");
+const voiceChip = $("voice-chip");
+const voicePopover = $("voice-popover");
+const voiceProvider = $("voice-provider");
+const voiceBaseUrl = $("voice-baseurl");
+const voiceKeyEnv = $("voice-keyenv");
+const voiceApiKey = $("voice-apikey");
+const voiceModel = $("voice-model");
+const voiceLanguage = $("voice-language");
+const voicePrompt = $("voice-prompt");
+const voiceStatus = $("voice-status");
 let countryPopover = null;
 
 function providerById(id) {
@@ -8816,6 +8804,112 @@ $("provider-clear-key").onclick = async () => {
   }
 };
 loadProviderMenu();
+
+/* Voice connector menu */
+let voiceConfig = { provider: "browser", language: "en-US", prompt: CHAT_PERSONA.intro };
+let voiceRecorder = null;
+let voiceChunks = [];
+function defaultVoiceKeyEnv(provider) {
+  if (provider === "openai") return "OPENAI_API_KEY";
+  if (provider === "deepgram") return "DEEPGRAM_API_KEY";
+  return "VOICE_API_KEY";
+}
+function applyVoicePayload(payload) {
+  const config = payload.config || {};
+  const runtime = payload.runtime || {};
+  voiceConfig = config;
+  voiceProvider.value = config.provider || "browser";
+  voiceBaseUrl.value = config.baseURL || "";
+  voiceKeyEnv.value = config.apiKeyEnv || runtime.apiKeyEnv || defaultVoiceKeyEnv(voiceProvider.value);
+  voiceModel.value = config.model || "";
+  voiceLanguage.value = config.language || "en-US";
+  voicePrompt.value = config.prompt || "";
+  voiceApiKey.value = "";
+  const label = voiceProvider.options[voiceProvider.selectedIndex]?.textContent || "Voice";
+  setSettingsActionText(voiceChip, "Voice", label.replace(/ \\(.+\\)/, "") + " ▾");
+  if (runtime.needsServer && !runtime.hasApiKey) {
+    voiceStatus.textContent = "Missing key: set " + runtime.apiKeyEnv + " in env or save locally.";
+  } else if (runtime.needsServer) {
+    voiceStatus.textContent = "Voice API ready. Transcripts still get Goblintown cleanup before sending.";
+  } else {
+    voiceStatus.textContent = "Browser voice ready when supported. Goblintown cleanup runs after recognition.";
+  }
+}
+async function loadVoiceMenu() {
+  try {
+    const r = await fetch("/api/voice");
+    if (!r.ok) throw new Error("voice unavailable");
+    applyVoicePayload(await r.json());
+  } catch (err) {
+    voiceStatus.textContent = "Voice menu unavailable: " + (err.message || err);
+  }
+}
+voiceProvider.onchange = () => {
+  if (!voiceKeyEnv.value || ["OPENAI_API_KEY", "DEEPGRAM_API_KEY", "VOICE_API_KEY"].includes(voiceKeyEnv.value)) {
+    voiceKeyEnv.value = defaultVoiceKeyEnv(voiceProvider.value);
+  }
+  if (voiceProvider.value === "local" && !voiceBaseUrl.value) {
+    voiceBaseUrl.value = "http://localhost:8000/v1/audio/transcriptions";
+  }
+};
+voiceChip.onclick = () => {
+  closeSettingsPopover();
+  closeTopPopovers("voice-popover");
+  voicePopover.classList.toggle("open");
+  if (voicePopover.classList.contains("open")) void loadVoiceMenu();
+};
+$("voice-cancel").onclick = () => voicePopover.classList.remove("open");
+$("voice-save").onclick = async () => {
+  const payload = {
+    provider: voiceProvider.value,
+    baseURL: voiceBaseUrl.value.trim(),
+    apiKeyEnv: voiceKeyEnv.value.trim(),
+    model: voiceModel.value.trim(),
+    language: voiceLanguage.value.trim(),
+    prompt: voicePrompt.value.trim(),
+  };
+  const key = voiceApiKey.value.trim();
+  if (key) payload.apiKey = key;
+  voiceStatus.textContent = "Saving voice connector...";
+  try {
+    const r = await fetch("/api/voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || "voice save failed");
+    applyVoicePayload(body);
+    voicePopover.classList.remove("open");
+    setTicker("voice connector saved", true);
+  } catch (err) {
+    voiceStatus.textContent = "Voice save failed: " + (err.message || err);
+  }
+};
+$("voice-clear-key").onclick = async () => {
+  voiceStatus.textContent = "Clearing voice key...";
+  try {
+    const r = await fetch("/api/voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: voiceProvider.value,
+        baseURL: voiceBaseUrl.value.trim(),
+        apiKeyEnv: voiceKeyEnv.value.trim(),
+        model: voiceModel.value.trim(),
+        language: voiceLanguage.value.trim(),
+        prompt: voicePrompt.value.trim(),
+        clearApiKey: true,
+      }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || "voice key clear failed");
+    applyVoicePayload(body);
+  } catch (err) {
+    voiceStatus.textContent = "Voice key clear failed: " + (err.message || err);
+  }
+};
+loadVoiceMenu();
 
 /* Auth + Firebase collab */
 const authChip = $("auth-chip");
@@ -10969,8 +11063,8 @@ const onboardingSteps = [
     cloudChoice: true,
   },
   {
-    title: "Command Sidebar",
-    body: "This sidebar runs Goblintown CLI commands directly in-app, including examples and quick rite controls.",
+    title: "Navigation Sidebar",
+    body: "This sidebar keeps the main paths close: new chats, new rites, rite shortcuts, chat history, and settings.",
     targetId: "ops-sidebar",
   },
   {
@@ -10981,25 +11075,25 @@ const onboardingSteps = [
   {
     title: "Goblin-Country",
     body: "Country mode handles team membership, join discovery, and per-role assignment across collaborators.",
-    targetId: "settings-chip",
+    targetId: "btn-sidebar-settings",
     popover: "country",
   },
   {
     title: "Friends and Mail",
     body: "Friend requests and DM threads are here. Opening a thread auto-marks unread messages as read.",
-    targetId: "settings-chip",
+    targetId: "btn-sidebar-settings",
     popover: "mail",
   },
   {
     title: "Provider Settings",
     body: "Choose your local provider, set model slots, and store an API key in the local secret file.",
-    targetId: "settings-chip",
+    targetId: "btn-sidebar-settings",
     popover: "provider",
   },
   {
     title: "You are ready",
-    body: "Run rites from the sidebar and use country + mail to coordinate distributed compute with teammates.",
-    targetId: "ops-run",
+    body: "Use chat first, start rites from the sidebar, and keep deeper configuration inside Settings.",
+    targetId: "btn-chat",
   },
 ];
 let onboardingIndex = 0;
@@ -11332,6 +11426,136 @@ function appendRootChatMessage(role, content, opts) {
   thread.scrollTop = thread.scrollHeight;
 }
 
+function chatPersonaPick(kind) {
+  const options = CHAT_PERSONA[kind] || [];
+  if (!options.length) return "";
+  return options[rootChatMessages.length % options.length];
+}
+
+function setRootChatStatus(kind, detail) {
+  const phrase = chatPersonaPick(kind) || kind;
+  $("root-chat-status").textContent = detail ? phrase + " · " + detail : phrase;
+}
+
+function chatErrorMessage(err) {
+  const message = err && err.message ? err.message : String(err);
+  return chatPersonaPick("errorPrefix") + ": " + message;
+}
+
+function goblinifyVoiceTranscript(value) {
+  return (value || "")
+    .replace(/\b rights?\b/gi, " rite")
+    .replace(/\bwrite\b/gi, "rite")
+    .replace(/\btank\b/gi, "Tank")
+    .replace(/\bhoard\b/gi, "Hoard")
+    .replace(/\bload\b/gi, "loot")
+    .replace(/\bmodel slots?\b/gi, "model slot")
+    .trim();
+}
+
+function appendVoiceTranscript(value) {
+  const input = $("root-chat-input");
+  const clean = goblinifyVoiceTranscript(value);
+  if (!clean) return;
+  const prefix = input.value.trim() ? input.value.trim() + " " : "";
+  input.value = prefix + clean;
+  input.focus();
+}
+
+function startBrowserVoice() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    setRootChatStatus("voicePending", "browser speech unavailable; configure a voice API in Settings");
+    return;
+  }
+  const recognition = new SpeechRecognition();
+  recognition.lang = voiceConfig.language || "en-US";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.onstart = () => setRootChatStatus("voicePending", "listening");
+  recognition.onerror = (event) => setRootChatStatus("voicePending", event.error || "speech error");
+  recognition.onresult = (event) => {
+    const transcript = event.results && event.results[0] && event.results[0][0]
+      ? event.results[0][0].transcript
+      : "";
+    appendVoiceTranscript(transcript);
+    setRootChatStatus("ready", "voice captured");
+  };
+  recognition.onend = () => {
+    if (!$("root-chat-input").value.trim()) setRootChatStatus("ready");
+  };
+  recognition.start();
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      resolve(value.includes(",") ? value.split(",").pop() : value);
+    };
+    reader.onerror = () => reject(reader.error || new Error("failed to read audio"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function transcribeVoiceBlob(blob) {
+  setRootChatStatus("voicePending", "transcribing");
+  const r = await fetch("/api/voice/transcribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      audioBase64: await blobToBase64(blob),
+      mimeType: blob.type || "audio/webm",
+    }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || "voice transcription failed");
+  appendVoiceTranscript(body.transcript || "");
+  setRootChatStatus("ready", "voice captured");
+}
+
+async function toggleServerVoice() {
+  if (voiceRecorder && voiceRecorder.state === "recording") {
+    voiceRecorder.stop();
+    setRootChatStatus("voicePending", "processing");
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    setRootChatStatus("voicePending", "microphone capture unavailable");
+    return;
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  voiceChunks = [];
+  voiceRecorder = new MediaRecorder(stream);
+  voiceRecorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) voiceChunks.push(event.data);
+  };
+  voiceRecorder.onstop = () => {
+    stream.getTracks().forEach((track) => track.stop());
+    const blob = new Blob(voiceChunks, { type: voiceRecorder.mimeType || "audio/webm" });
+    voiceChunks = [];
+    transcribeVoiceBlob(blob).catch((err) => {
+      $("root-chat-status").textContent = chatErrorMessage(err);
+    });
+  };
+  voiceRecorder.start();
+  setRootChatStatus("voicePending", "recording; click Voice again to stop");
+}
+
+function resetRootChat() {
+  const thread = $("chat-thread");
+  rootChatMessages.splice(0, rootChatMessages.length);
+  thread.innerHTML = "";
+  appendRootChatMessage(
+    "assistant",
+    CHAT_PERSONA.intro,
+  );
+  setRootChatOffer(null);
+  setRootChatStatus("ready");
+  $("root-chat-input").value = "";
+}
+
 function setRootChatOffer(nextOffer) {
   const offer = $("root-chat-offer");
   const text = $("root-chat-offer-text");
@@ -11353,7 +11577,7 @@ function startNewRiteChatFlow() {
     "system",
     "What type of rite should we run?\\nregular · thesis · crypto/onchain · sentiment · plan",
   );
-  $("root-chat-status").textContent = "choose rite type";
+  setRootChatStatus("riteType");
   setTimeout(() => $("root-chat-input").focus(), 30);
 }
 
@@ -11362,7 +11586,7 @@ async function startGoblintownFromChat(task) {
   if (!cleanTask) return;
   const runButton = $("root-chat-offer-run");
   runButton.disabled = true;
-  $("root-chat-status").textContent = "starting Goblintown";
+  setRootChatStatus("riteStarting");
   showTankMode();
   hideResumePanel();
   lastTask = cleanTask;
@@ -11389,7 +11613,7 @@ async function startGoblintownFromChat(task) {
     history.replaceState(null, "", "/?run=" + encodeURIComponent(body.runId));
     openStream(body.runId, false);
   } catch (err) {
-    $("root-chat-status").textContent = err.message || String(err);
+    $("root-chat-status").textContent = chatErrorMessage(err);
     showChatMode();
   } finally {
     runButton.disabled = false;
@@ -11399,24 +11623,27 @@ async function startGoblintownFromChat(task) {
 $("btn-chat").onclick = () => {
   history.replaceState(null, "", "/");
   showChatMode();
+  resetRootChat();
   setTicker("single goblin chat");
   setTimeout(() => $("root-chat-input").focus(), 30);
 };
 
-$("btn-api-configs").onclick = () => {
-  closeTopPopovers("provider-popover");
-  providerPopover.classList.add("open");
-};
-
 $("btn-sidebar-settings").onclick = () => setSettingsOpen(true);
+$("btn-regular-rite").onclick = startNewRiteChatFlow;
 
 $("root-chat-voice").onclick = () => {
-  $("root-chat-status").textContent = "voice coming soon";
+  if (voiceConfig.provider && voiceConfig.provider !== "browser") {
+    toggleServerVoice().catch((err) => {
+      $("root-chat-status").textContent = chatErrorMessage(err);
+    });
+  } else {
+    startBrowserVoice();
+  }
 };
 
 $("root-chat-input").addEventListener("keydown", (event) => {
   if (event.shiftKey && event.key === "Enter") return;
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+  if (event.key === "Enter") {
     event.preventDefault();
     $("root-chat-form").requestSubmit();
   }
@@ -11434,7 +11661,7 @@ $("root-chat-form").addEventListener("submit", async (event) => {
   appendRootChatMessage("user", content);
   input.value = "";
   send.disabled = true;
-  status.textContent = "thinking";
+  setRootChatStatus("thinking");
   setRootChatOffer(null);
   try {
     const response = await fetch("/api/chat", {
@@ -11443,17 +11670,27 @@ $("root-chat-form").addEventListener("submit", async (event) => {
       body: JSON.stringify({
         messages: rootChatMessages,
         personality: $("root-chat-personality").value,
+        modelSlot: $("root-chat-model").value === "inherit" ? undefined : $("root-chat-model").value,
         maxOutputTokens: Number($("root-chat-max").value || 900),
       }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || response.statusText);
+    if (!body.message || body.message.role !== "assistant" || !body.message.content) {
+      throw new Error(chatPersonaPick("emptyResponse") || "chat returned no assistant message");
+    }
     rootChatMessages.push(body.message);
     appendRootChatMessage("assistant", body.message.content);
-    setRootChatOffer(body.goblintownOffer);
-    status.textContent = body.lootId ? "saved " + body.lootId : "ready";
+    if (body.goblintownOffer && body.goblintownOffer.requested) {
+      appendRootChatMessage("system", chatPersonaPick("handoff") + ". " + chatPersonaPick("riteStarting") + "...");
+      await startGoblintownFromChat(body.goblintownOffer.task);
+    } else {
+      setRootChatOffer(body.goblintownOffer);
+    }
+    if (body.lootId) setRootChatStatus("saved", body.lootId);
+    else setRootChatStatus("ready");
   } catch (err) {
-    status.textContent = err.message || String(err);
+    status.textContent = chatErrorMessage(err);
   } finally {
     send.disabled = false;
     input.focus();
