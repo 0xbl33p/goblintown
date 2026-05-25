@@ -881,6 +881,12 @@ npm run dist:linux    # Linux x64 AppImage
 npm run dist:desktop  # all three targets from one command
 ```
 
+When installer binaries need to travel through a PR or fork that cannot accept
+GitHub Release uploads or new Git LFS objects, the large artifacts can be split
+under `release/parts/`. The files in that folder are small enough for regular
+git pushes and include `SHA256SUMS.txt` plus a local README with reconstruction
+commands for each DMG, AppImage, and NSIS installer.
+
 macOS public release builds require a Developer ID Application certificate and
 notarization credentials. The `electron-builder` config is prepared for hardened
 runtime signing, the entitlements in `build/`, and DMG notarization when Apple
