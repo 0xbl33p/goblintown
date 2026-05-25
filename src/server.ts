@@ -3219,9 +3219,7 @@ function chatPage(): string {
             <option value="goblin_mode">goblin_mode</option>
           </select>
         </label>
-        <label>Max tokens
-          <input id="chat-max" type="number" min="64" max="4000" value="900">
-        </label>
+        <input id="chat-max" type="hidden" value="900">
         <span class="chat-status" id="chat-status">ready</span>
       </div>
       <div class="chat-log" id="chat-log" aria-live="polite"></div>
@@ -5105,19 +5103,22 @@ function tankHtml(
 
   .workarea {
     display: grid;
-    grid-template-columns: 188px 1fr;
+    grid-template-columns: 300px 1fr;
     min-height: 0;
     border-bottom: 1px solid var(--line);
+    background: #0d0f0c;
   }
   .workarea.sidebar-collapsed { grid-template-columns: 52px 1fr; }
   .ops-sidebar {
     border-right: 1px solid var(--line);
-    background: rgba(8, 12, 8, 0.95);
-    padding: 0.55rem 0.42rem;
+    background:
+      linear-gradient(180deg, rgba(124,255,91,0.045), transparent 34%),
+      #151a14;
+    padding: 1rem 0.9rem;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    gap: 0.45rem;
+    gap: 1rem;
     overflow: auto;
   }
   .ops-head {
@@ -5128,10 +5129,10 @@ function tankHtml(
   }
   .ops-sidebar h3 {
     margin: 0;
-    font-size: 0.62rem;
-    color: var(--fg-bright);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-size: 1.2rem;
+    color: #e6e2d3;
+    letter-spacing: 0;
+    text-transform: none;
   }
   .ops-toggle {
     padding: 0.2rem 0.42rem;
@@ -5147,42 +5148,149 @@ function tankHtml(
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.45rem;
+    gap: 1rem;
+    flex: 1 1 auto;
   }
   .ops-quick {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 0.3rem;
+    gap: 0.65rem;
   }
   .ops-quick .btn {
-    padding: 0.44rem 0.22rem;
-    font-size: 0.58rem;
-    letter-spacing: 0.07em;
-    min-height: 2.2rem;
+    padding: 0.72rem 0.85rem;
+    font-size: 0.86rem;
+    letter-spacing: 0;
+    min-height: 2.8rem;
+    text-align: left;
+    text-transform: none;
+    border-radius: 8px;
   }
-  .ops-nav-group {
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    background: rgba(5,8,5,0.48);
-    overflow: hidden;
+  .sidebar-list {
+    display: grid;
+    gap: 0.34rem;
   }
-  .ops-nav-group summary {
-    cursor: pointer;
-    color: var(--fg-bright);
-    padding: 0.55rem 0.58rem;
-    font-size: 0.62rem;
-    letter-spacing: 0.08em;
+  .sidebar-label {
+    margin: 0.45rem 0 0.15rem;
+    color: #a8b09a;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
   }
-  .ops-nav-group .btn {
-    width: calc(100% - 0.6rem);
-    margin: 0 0.3rem 0.3rem;
-  }
-  .ops-danger {
+  .sidebar-item {
     width: 100%;
-    flex: 0 0 auto;
-    padding: 0.52rem 0.65rem;
-    font-size: 0.68rem;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #e6e2d3;
+    border-radius: 8px;
+    padding: 0.72rem 0.8rem;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .sidebar-item:hover {
+    background: rgba(124,255,91,0.08);
+    border-color: rgba(124,255,91,0.22);
+  }
+  .sidebar-item.active {
+    background: rgba(124,255,91,0.12);
+    border-color: rgba(124,255,91,0.42);
+  }
+  .sidebar-item strong,
+  .sidebar-item span {
+    display: block;
+  }
+  .sidebar-item span {
+    margin-top: 0.16rem;
+    color: #a8b09a;
+    font-size: 0.78rem;
+  }
+  .sidebar-settings {
+    position: relative;
+    margin-top: auto;
+    display: grid;
+    gap: 0.6rem;
+  }
+  .sidebar-settings-card {
+    display: none;
+    border: 1px solid rgba(124,255,91,0.18);
+    border-radius: 14px;
+    background: #1d241b;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.36);
+    padding: 0.75rem;
+  }
+  .sidebar-settings.open .sidebar-settings-card {
+    display: grid;
+    gap: 0.62rem;
+  }
+  .settings-card-head {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    color: #e6e2d3;
+    font-weight: 750;
+  }
+  .settings-icon {
+    width: 2rem;
+    height: 2rem;
+    object-fit: contain;
+  }
+  .settings-country {
+    border: 1px solid rgba(168,176,154,0.18);
+    border-radius: 10px;
+    background: rgba(13,15,12,0.68);
+    padding: 0.7rem;
+  }
+  .settings-country span,
+  .settings-joke {
+    display: block;
+    color: #a8b09a;
+    font-size: 0.72rem;
+  }
+  .settings-country strong {
+    display: block;
+    margin: 0.18rem 0;
+    color: #e6e2d3;
+    font-size: 0.95rem;
+  }
+  .settings-link {
+    border: 0;
+    background: transparent;
+    color: #e6e2d3;
+    font: inherit;
+    font-weight: 650;
+    padding: 0.28rem 0;
+    text-align: left;
+    cursor: pointer;
+  }
+  .settings-link:hover,
+  .settings-trigger:hover {
+    color: #7cff5b;
+  }
+  .settings-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    border: 0;
+    background: transparent;
+    color: #e6e2d3;
+    font: inherit;
+    font-weight: 650;
+    padding: 0.2rem 0;
+    text-align: left;
+    cursor: pointer;
+  }
+  .sidebar-settings.open #settings-icon-closed { display: none; }
+  .sidebar-settings:not(.open) #settings-icon-open { display: none; }
+  .sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
   }
   .workarea.sidebar-collapsed .ops-main { display: none; }
   .workarea.sidebar-collapsed .ops-sidebar { padding: 0.7rem 0.35rem; }
@@ -5203,8 +5311,13 @@ function tankHtml(
     position: relative; overflow: hidden;
     background: linear-gradient(180deg, var(--sky) 0%, #0c1310 65%, #0a0e08 100%);
   }
+  .codex-chat-surface {
+    background: #0d0f0c;
+  }
   .tank.chat-mode {
-    background: var(--bg-deep);
+    background:
+      radial-gradient(circle at 12% 0%, rgba(124,255,91,0.08), transparent 30rem),
+      #0d0f0c;
     overflow: hidden;
   }
   .tank:not(.chat-mode) .chat-main { display: none; }
@@ -5240,7 +5353,7 @@ function tankHtml(
     z-index: 12;
     display: flex;
     flex-direction: column;
-    background: var(--bg-deep);
+    background: transparent;
   }
   .chat-thread {
     flex: 1 1 auto;
@@ -5255,15 +5368,17 @@ function tankHtml(
     width: min(840px, 100%);
     white-space: pre-wrap;
     word-break: break-word;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 0.82rem 0.95rem;
-    background: rgba(20,32,26,0.52);
+    border: 0;
+    border-left: 3px solid rgba(124,255,91,0.35);
+    border-radius: 0;
+    padding: 0.35rem 0 0.35rem 0.95rem;
+    background: transparent;
+    color: #e6e2d3;
   }
   .chat-message.user {
     align-self: flex-end;
-    border-color: rgba(143,207,82,0.42);
-    background: rgba(31,58,20,0.32);
+    border-left-color: rgba(198,140,255,0.5);
+    background: transparent;
   }
   .chat-message.assistant,
   .chat-message.system {
@@ -5280,14 +5395,18 @@ function tankHtml(
   .chat-composer {
     flex: 0 0 auto;
     border-top: 1px solid var(--line);
-    padding: 0.8rem clamp(0.8rem, 2vw, 1.4rem);
-    background: rgba(8,12,8,0.98);
+    padding: 0.9rem clamp(0.8rem, 2vw, 1.4rem) 1.2rem;
+    background: rgba(13,15,12,0.94);
   }
   .chat-composer-inner {
     width: min(920px, 100%);
     margin: 0 auto;
     display: grid;
-    gap: 0.55rem;
+    gap: 0.5rem;
+    border: 1px solid rgba(168,176,154,0.18);
+    border-radius: 18px;
+    background: rgba(21,26,20,0.72);
+    padding: 0.85rem 0.95rem;
   }
   .chat-offer-inline {
     display: none;
@@ -5303,33 +5422,34 @@ function tankHtml(
   .chat-offer-inline.open { display: flex; }
   .chat-input-row {
     display: grid;
-    grid-template-columns: auto auto 1fr auto;
-    gap: 0.55rem;
-    align-items: end;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.5rem;
+    align-items: center;
   }
   .chat-input-row textarea {
-    min-height: 4.4rem;
+    min-height: 3.2rem;
     max-height: 12rem;
     resize: vertical;
     width: 100%;
-    background: var(--bg);
-    color: var(--fg-bright);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 0.75rem 0.85rem;
+    background: transparent;
+    color: #e6e2d3;
+    border: 0;
+    border-bottom: 1px solid rgba(168,176,154,0.22);
+    border-radius: 0;
+    padding: 0.55rem 0;
     font: inherit;
   }
   .chat-input-row textarea:focus {
     outline: none;
-    border-color: var(--accent);
+    border-color: #7cff5b;
   }
-  .chat-input-row button,
+  .chat-input-row button:not(.sr-only),
   .chat-offer-inline button {
     min-height: 2.6rem;
-    border: 1px solid var(--accent);
-    background: #1f3a14;
-    color: var(--fg-bright);
-    border-radius: 8px;
+    border: 1px solid rgba(124,255,91,0.42);
+    background: rgba(124,255,91,0.12);
+    color: #e6e2d3;
+    border-radius: 999px;
     padding: 0.52rem 0.85rem;
     font: inherit;
     cursor: pointer;
@@ -5343,6 +5463,108 @@ function tankHtml(
   .chat-offer-inline button:disabled {
     opacity: 0.55;
     cursor: wait;
+  }
+  .voice-picker,
+  .personality-picker {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .voice-trigger {
+    width: 2.6rem;
+    height: 2.6rem;
+    padding: 0 !important;
+    display: inline-grid;
+    place-items: center;
+  }
+  .voice-trigger img {
+    width: 1.85rem;
+    height: 1.85rem;
+    object-fit: contain;
+  }
+  .send-button {
+    width: 2.8rem;
+    height: 2.8rem;
+    padding: 0 !important;
+    background: #39ff14 !important;
+    color: #0d0f0c !important;
+    border-color: #39ff14 !important;
+    font-size: 1.35rem !important;
+    font-weight: 850 !important;
+  }
+  .voice-menu,
+  .personality-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 0.55rem);
+    min-width: 15rem;
+    z-index: 24;
+    border: 1px solid rgba(124,255,91,0.26);
+    border-radius: 14px;
+    background: rgba(21,26,20,0.98);
+    box-shadow: 0 18px 55px rgba(0,0,0,0.5);
+    padding: 0.42rem;
+  }
+  .personality-menu {
+    left: 0;
+    right: auto;
+    min-width: 11rem;
+  }
+  .voice-picker:hover .voice-menu,
+  .voice-picker:focus-within .voice-menu,
+  .voice-picker.open .voice-menu,
+  .personality-picker:hover .personality-menu,
+  .personality-picker:focus-within .personality-menu,
+  .personality-picker.open .personality-menu {
+    display: grid;
+    gap: 0.08rem;
+  }
+  .voice-choice,
+  .personality-choice {
+    display: grid;
+    grid-template-columns: 2rem 1fr;
+    align-items: center;
+    gap: 0.65rem;
+    border: 0;
+    background: transparent;
+    color: #e6e2d3;
+    border-radius: 10px;
+    padding: 0.42rem 0.5rem;
+    font: inherit;
+    font-weight: 650;
+    text-align: left;
+  }
+  .personality-choice {
+    grid-template-columns: 1fr;
+  }
+  .voice-choice:hover,
+  .voice-choice.active,
+  .personality-choice:hover,
+  .personality-choice.active {
+    background: rgba(124,255,91,0.14);
+    color: #7cff5b;
+  }
+  .voice-choice img {
+    width: 1.75rem;
+    height: 1.75rem;
+    object-fit: contain;
+  }
+  .personality-label {
+    border: 0;
+    background: transparent;
+    color: #a8b09a;
+    font: inherit;
+    padding: 0;
+    cursor: pointer;
+  }
+  .personality-label::after {
+    content: " ^";
+    color: transparent;
+  }
+  .personality-picker:hover .personality-label::after,
+  .personality-picker:focus-within .personality-label::after {
+    color: #7cff5b;
   }
   .chat-meta-row {
     display: flex;
@@ -6461,34 +6683,58 @@ function tankHtml(
     </div>
   </div>
 
-  <div class="workarea" id="workarea">
-  <aside class="ops-sidebar" id="ops-sidebar">
+  <div class="workarea goblin-shell" id="workarea">
+  <aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">
     <div class="ops-head">
       <h3>Goblintown</h3>
       <button class="ops-toggle" id="ops-toggle" type="button" aria-expanded="true" title="Collapse sidebar">◀</button>
     </div>
     <div class="ops-main" id="ops-main">
       <div class="ops-quick">
-        <button class="btn primary" id="btn-chat" type="button" title="Start a fresh single-goblin chat">New Chat</button>
-        <button class="btn primary" id="btn-rite" type="button" title="Start a new full Tank rite">New Rite</button>
-        <details class="ops-nav-group" id="ops-rites">
-          <summary title="Open rite shortcuts and run history">Rites</summary>
-          <button class="btn" id="btn-regular-rite" type="button" title="Start a regular rite">Regular</button>
-          <button class="btn" id="btn-thesis" type="button" title="Build a thesis rite">Thesis</button>
-          <button class="btn" id="btn-sentiment" type="button" title="Run sentiment tools">Sentiment</button>
-          <button class="btn" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
-          <a class="btn" href="/runs" title="Open previous runs">Runs</a>
-        </details>
-        <details class="ops-nav-group" id="ops-chats">
-          <summary title="Open chat shortcuts">Chats</summary>
-          <a class="btn" href="/chat" title="Open the standalone chat page">Single Chat</a>
-        </details>
-        <button class="btn" id="btn-sidebar-settings" type="button" title="Open Settings">Settings</button>
+        <button class="btn primary" id="btn-chat" type="button" title="Start a fresh single-goblin chat">+ New chat</button>
+        <button class="btn" id="btn-rite" type="button" title="Start a new full rite">+ New rite</button>
+        <button class="sr-only" id="btn-regular-rite" type="button" title="Start a regular rite">Regular</button>
+        <button class="sr-only" id="btn-thesis" type="button" title="Build a thesis rite">Thesis</button>
+        <button class="sr-only" id="btn-sentiment" type="button" title="Run sentiment tools">Sentiment</button>
+        <button class="sr-only" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
+        <section class="sidebar-list" aria-label="Chats">
+          <div class="sidebar-label">CHATS</div>
+          <button class="sidebar-item active" type="button">Bounty issue #72 chat</button>
+          <button class="sidebar-item" type="button">Solana wallet question</button>
+          <button class="sidebar-item" type="button">README cleanup chat</button>
+        </section>
+        <section class="sidebar-list" aria-label="Rites">
+          <div class="sidebar-label">RITES</div>
+          <button class="sidebar-item active" type="button"><strong>Bounty issue #72</strong><span>running</span></button>
+          <button class="sidebar-item" type="button">Provider setup audit</button>
+          <button class="sidebar-item" type="button">Tank UI simplification</button>
+        </section>
+        <div class="sidebar-settings" id="sidebar-settings">
+          <div class="sidebar-settings-card" id="sidebar-settings-card">
+            <div class="settings-card-head">
+              <img class="settings-icon" src="/assets/settingsopen.svg" alt="" aria-hidden="true" decoding="async">
+              <span>Settings</span>
+            </div>
+            <div class="settings-country">
+              <span>Goblin Country</span>
+              <strong>Moss Ledger</strong>
+              <span>Code: MOSS7 · Signed in</span>
+            </div>
+            <button class="settings-link" id="btn-sidebar-full-settings" type="button">Settings</button>
+            <a class="settings-link" href="/runs">Hoard</a>
+            <span class="settings-joke">"Never trust a clean cache."</span>
+          </div>
+          <button class="settings-trigger" id="btn-sidebar-settings" type="button" aria-expanded="false" title="Open Settings">
+            <img class="settings-icon" id="settings-icon-closed" src="/assets/settingsclosed.svg" alt="" aria-hidden="true" decoding="async">
+            <img class="settings-icon" id="settings-icon-open" src="/assets/settingsopen.svg" alt="" aria-hidden="true" decoding="async">
+            <span>Settings</span>
+          </button>
+        </div>
       </div>
     </div>
   </aside>
 
-  <div class="tank chat-mode" id="tank">
+  <div class="tank chat-mode codex-chat-surface" id="tank">
     <section class="chat-main" id="chat-main" aria-label="Single Goblin chat">
       <div class="chat-thread" id="chat-thread" aria-live="polite">
         <div class="chat-message assistant">
@@ -6503,32 +6749,50 @@ function tankHtml(
             <button id="root-chat-offer-run" type="button">Run Goblintown</button>
           </div>
           <div class="chat-input-row">
-            <button id="root-chat-voice" type="button" title="Voice">Voice</button>
-            <button id="root-chat-speak" type="button" title="Speak replies" aria-pressed="false">Speak</button>
             <textarea id="root-chat-input" rows="3" placeholder="Message the single Goblin..." required></textarea>
-            <button id="root-chat-send" type="submit" title="Send (Enter)">Send</button>
+            <div class="voice-picker" id="voice-picker">
+              <button id="root-chat-voice" type="button" class="voice-trigger" title="Voice mode" aria-haspopup="menu">
+                <img src="/assets/fullgoblinchat.svg" alt="" aria-hidden="true" decoding="async">
+              </button>
+              <div class="voice-menu" role="menu" aria-label="Voice">
+                <button class="voice-choice active" type="button" role="menuitem" data-voice-mode="full"><img src="/assets/fullgoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Chat Live</span></button>
+                <button class="voice-choice" type="button" role="menuitem" data-voice-mode="stt"><img src="/assets/sttgoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Speak Only</span></button>
+                <button class="voice-choice" type="button" role="menuitem" data-voice-mode="tts"><img src="/assets/ttsonlygoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Listen Only</span></button>
+              </div>
+            </div>
+            <button id="root-chat-speak" type="button" class="sr-only" title="Speak replies" aria-label="Speak replies" aria-pressed="false"></button>
+            <button id="root-chat-send" class="send-button" type="submit" title="Send (Enter)">↑</button>
           </div>
           <div class="chat-meta-row">
-            <label>Model
+            <div class="personality-picker" id="personality-picker">
+              <button id="root-chat-personality-label" class="personality-label" type="button" aria-haspopup="menu">goblin_mode</button>
+              <div class="personality-menu" role="menu" aria-label="Personality">
+                <button class="personality-choice" type="button" role="menuitem" data-personality="chipper">chipper</button>
+                <button class="personality-choice" type="button" role="menuitem" data-personality="nerdy">nerdy</button>
+                <button class="personality-choice" type="button" role="menuitem" data-personality="stoic">stoic</button>
+                <button class="personality-choice" type="button" role="menuitem" data-personality="cynical">cynical</button>
+                <button class="personality-choice" type="button" role="menuitem" data-personality="feral">feral</button>
+                <button class="personality-choice active" type="button" role="menuitem" data-personality="goblin_mode">goblin_mode</button>
+              </div>
+            </div>
+            <label class="sr-only">Model
               <select id="root-chat-model" title="Choose the chat model slot">
                 <option value="inherit">provider default</option>
                 <option value="goblin">goblin slot</option>
                 <option value="ogre">ogre slot</option>
               </select>
             </label>
-            <label>Personality
+            <label class="sr-only">Personality
               <select id="root-chat-personality" title="Choose the single-goblin personality">
                 <option value="chipper">chipper</option>
                 <option value="nerdy">nerdy</option>
                 <option value="stoic">stoic</option>
                 <option value="cynical">cynical</option>
                 <option value="feral">feral</option>
-                <option value="goblin_mode">goblin_mode</option>
+                <option value="goblin_mode" selected>goblin_mode</option>
               </select>
             </label>
-            <label>Max tokens
-              <input id="root-chat-max" type="number" min="64" max="4000" value="900" title="Maximum response tokens">
-            </label>
+            <input id="root-chat-max" class="sr-only" type="number" min="64" max="4000" value="900" title="Response length">
             <span id="root-chat-status">ready</span>
           </div>
         </div>
@@ -6821,6 +7085,8 @@ const warren = $("warren");
 const workarea = $("workarea");
 const opsToggle = $("ops-toggle");
 const settingsTrigger = $("btn-sidebar-settings");
+const sidebarSettings = $("sidebar-settings");
+const sidebarFullSettings = $("btn-sidebar-full-settings");
 const settingsPopover = $("settings-popover");
 const resetChip = $("reset-chip");
 const settingsResetPanel = $("settings-reset-panel");
@@ -6859,6 +7125,10 @@ const pick  = (arr)    => arr[Math.floor(Math.random() * arr.length)];
 
 function setSettingsOpen(open) {
   settingsPopover.classList.toggle("open", !!open);
+}
+
+function setSidebarSettingsOpen(open) {
+  sidebarSettings.classList.toggle("open", !!open);
   settingsTrigger.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
@@ -6903,10 +7173,12 @@ function settingsActionValue(button) {
 }
 
 settingsTrigger.onclick = () => {
-  const willOpen = !settingsPopover.classList.contains("open");
+  setSidebarSettingsOpen(!sidebarSettings.classList.contains("open"));
+};
+
+sidebarFullSettings.onclick = () => {
   closeTopPopovers("");
-  setSettingsOpen(willOpen);
-  if (!willOpen) closeResetMenu();
+  setSettingsOpen(true);
 };
 
 resetChip.onclick = () => {
@@ -6915,13 +7187,17 @@ resetChip.onclick = () => {
 
 document.addEventListener("click", (ev) => {
   if (!(ev.target instanceof Element)) return;
-  if (ev.target === settingsTrigger || settingsTrigger.contains(ev.target)) return;
+  if (ev.target === settingsTrigger || settingsTrigger.contains(ev.target) || sidebarSettings.contains(ev.target)) return;
   if (settingsPopover.contains(ev.target)) return;
   closeSettingsPopover();
+  setSidebarSettingsOpen(false);
 });
 
 document.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") closeSettingsPopover();
+  if (ev.key === "Escape") {
+    closeSettingsPopover();
+    setSidebarSettingsOpen(false);
+  }
 });
 
 const RACCOON_SPRITE_CONFIG = {
@@ -7969,7 +8245,6 @@ window.addEventListener("resize", () => {
   ["root-chat-speak", "Read single-goblin replies aloud with browser text-to-speech."],
   ["root-chat-model", "Choose which model slot this chat should use."],
   ["root-chat-personality", "Choose the personality for single-goblin replies."],
-  ["root-chat-max", "Limit the maximum length of the reply."],
   ["root-chat-offer-run", "Launch this prompt in the full Tank."],
   ["btn-rite", "Start a new full Tank rite."],
   ["btn-regular-rite", "Start a regular full Tank rite."],
@@ -11714,10 +11989,9 @@ $("btn-chat").onclick = () => {
   setTimeout(() => $("root-chat-input").focus(), 30);
 };
 
-$("btn-sidebar-settings").onclick = () => setSettingsOpen(true);
 $("btn-regular-rite").onclick = startNewRiteChatFlow;
 
-$("root-chat-voice").onclick = () => {
+function beginSpeechInput() {
   if (voiceConfig.provider && voiceConfig.provider !== "browser") {
     toggleServerVoice().catch((err) => {
       $("root-chat-status").textContent = chatErrorMessage(err);
@@ -11725,7 +11999,47 @@ $("root-chat-voice").onclick = () => {
   } else {
     startBrowserVoice();
   }
+}
+
+function setVoiceMenuOpen(open) {
+  $("voice-picker").classList.toggle("open", !!open);
+}
+
+function setPersonalityMenuOpen(open) {
+  $("personality-picker").classList.toggle("open", !!open);
+}
+
+$("root-chat-voice").onclick = () => {
+  setVoiceMenuOpen(!$("voice-picker").classList.contains("open"));
 };
+
+document.querySelectorAll(".voice-choice").forEach((button) => {
+  button.addEventListener("click", () => {
+    const mode = button.getAttribute("data-voice-mode") || "full";
+    document.querySelectorAll(".voice-choice").forEach((choice) => choice.classList.toggle("active", choice === button));
+    setVoiceMenuOpen(false);
+    if (mode === "tts") {
+      setRootChatSpeakEnabled(true);
+      return;
+    }
+    setRootChatSpeakEnabled(mode === "full");
+    beginSpeechInput();
+  });
+});
+
+$("root-chat-personality-label").onclick = () => {
+  setPersonalityMenuOpen(!$("personality-picker").classList.contains("open"));
+};
+
+document.querySelectorAll(".personality-choice").forEach((button) => {
+  button.addEventListener("click", () => {
+    const value = button.getAttribute("data-personality") || "goblin_mode";
+    $("root-chat-personality").value = value;
+    $("root-chat-personality-label").textContent = value;
+    document.querySelectorAll(".personality-choice").forEach((choice) => choice.classList.toggle("active", choice === button));
+    setPersonalityMenuOpen(false);
+  });
+});
 
 $("root-chat-speak").onclick = () => {
   setRootChatSpeakEnabled($("root-chat-speak").getAttribute("aria-pressed") !== "true");

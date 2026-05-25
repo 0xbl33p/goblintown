@@ -1,10 +1,14 @@
 import { strict as assert } from "node:assert";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { serve, type ServeHandle } from "../server.js";
 import { initWarren } from "../warren.js";
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 let handle: ServeHandle | undefined;
 let warrenRoot: string | undefined;
@@ -24,19 +28,42 @@ afterEach(async () => {
 });
 
 describe("Tank app smoke", () => {
-  it("renders the chat-first Tank as the first usable app surface", async () => {
+  it("bundles the approved shell state icons", () => {
+    for (const asset of [
+      "fullgoblinchat.svg",
+      "sttgoblinchat.svg",
+      "ttsonlygoblinchat.svg",
+      "settingsclosed.svg",
+      "settingsopen.svg",
+    ]) {
+      assert.equal(existsSync(join(repoRoot, "site/assets", asset)), true, `${asset} should be bundled`);
+    }
+  });
+
+  it("renders the simplified chat-and-rites shell as the first usable app surface", async () => {
     const url = await startApp();
     const response = await fetch(url);
     const html = await response.text();
 
     assert.equal(response.status, 200);
-    assert.match(html, /<div class="tank chat-mode" id="tank">/);
+    assert.match(html, /<div class="workarea goblin-shell" id="workarea">/);
+    assert.match(html, /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">/);
+    assert.match(html, /<section class="sidebar-list" aria-label="Chats">[\s\S]*Bounty issue #72 chat[\s\S]*Solana wallet question[\s\S]*README cleanup chat[\s\S]*<\/section>/);
+    assert.match(html, /<section class="sidebar-list" aria-label="Rites">[\s\S]*Bounty issue #72[\s\S]*Provider setup audit[\s\S]*Tank UI simplification[\s\S]*<\/section>/);
+    assert.match(html, /id="sidebar-settings-card"[\s\S]*Goblin Country[\s\S]*Moss Ledger[\s\S]*Code: MOSS7 · Signed in[\s\S]*Never trust a clean cache/);
+    assert.match(html, /id="settings-icon-closed"[^>]*src="\/assets\/settingsclosed\.svg"/);
+    assert.match(html, /id="settings-icon-open"[^>]*src="\/assets\/settingsopen\.svg"/);
+    assert.doesNotMatch(html, /settings-card::after/);
+    assert.match(html, /<div class="tank chat-mode codex-chat-surface" id="tank">/);
     assert.match(html, /<form class="chat-composer" id="root-chat-form">/);
-    assert.match(html, /Ask anything\. One goblin answers fast\./);
-    assert.match(html, /id="root-chat-send"[^>]*title="Send \(Enter\)"/);
-    assert.match(html, /id="root-chat-speak"[^>]*aria-pressed="false">Speak<\/button>/);
-    assert.match(html, /id="btn-sidebar-settings"[^>]*>Settings<\/button>/);
-    assert.match(html, /id="btn-regular-rite"[^>]*>Regular<\/button>/);
+    assert.match(html, /id="root-chat-personality-label"[\s\S]*goblin_mode/);
+    assert.match(html, /class="voice-menu"[\s\S]*fullgoblinchat\.svg[\s\S]*Chat Live[\s\S]*sttgoblinchat\.svg[\s\S]*Speak Only[\s\S]*ttsonlygoblinchat\.svg[\s\S]*Listen Only/);
+    assert.match(html, /id="root-chat-send"[^>]*title="Send \(Enter\)"[\s\S]*↑/);
+    assert.match(html, /id="root-chat-speak"[^>]*class="sr-only"/);
+    assert.doesNotMatch(html, />Speak<\/button>/);
+    assert.doesNotMatch(html, />Voice<\/button>/);
+    assert.doesNotMatch(html, /Max tokens/);
+    assert.doesNotMatch(html, /Live Tank/);
     assert.doesNotMatch(html, /id="ops-line"/);
     assert.doesNotMatch(html, /Cmd\/Ctrl\+Enter/);
   });

@@ -193,25 +193,30 @@ describe("single goblin chat", () => {
 
   it("makes the Tank root chat-first and swaps to Tank mode for runs", () => {
     assert.match(serverSource, /id="root-chat-form"/);
-    assert.match(serverSource, /class="tank chat-mode"/);
+    assert.match(serverSource, /class="tank chat-mode codex-chat-surface"/);
     assert.match(serverSource, /function showTankMode\(\)/);
     assert.match(serverSource, /function showChatMode\(\)/);
     assert.match(serverSource, /startGoblintownFromChat/);
   });
 
-  it("exposes AI-first Tank navigation in the left sidebar", () => {
-    assert.match(serverSource, /<aside class="ops-sidebar" id="ops-sidebar">/);
+  it("exposes separate chats and rites in the left sidebar", () => {
+    assert.match(serverSource, /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">/);
     assert.match(
       serverSource,
-      /<aside class="ops-sidebar" id="ops-sidebar">[\s\S]*New Chat[\s\S]*New Rite[\s\S]*Rites[\s\S]*Regular[\s\S]*Thesis[\s\S]*Sentiment[\s\S]*Plan[\s\S]*Runs[\s\S]*Chats[\s\S]*Settings[\s\S]*<\/aside>/,
+      /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">[\s\S]*\+ New chat[\s\S]*\+ New rite[\s\S]*CHATS[\s\S]*Bounty issue #72 chat[\s\S]*Solana wallet question[\s\S]*README cleanup chat[\s\S]*RITES[\s\S]*Bounty issue #72[\s\S]*Provider setup audit[\s\S]*Tank UI simplification[\s\S]*<\/aside>/,
     );
+    assert.match(serverSource, /<button class="sr-only" id="btn-regular-rite"/);
+    assert.match(serverSource, /id="settings-icon-closed"[^>]*src="\/assets\/settingsclosed\.svg"/);
+    assert.match(serverSource, /id="settings-icon-open"[^>]*src="\/assets\/settingsopen\.svg"/);
+    assert.match(serverSource, /id="sidebar-settings-card"[\s\S]*Goblin Country[\s\S]*Moss Ledger[\s\S]*Code: MOSS7 · Signed in[\s\S]*Never trust a clean cache/);
     assert.doesNotMatch(serverSource, /id="btn-api-configs"/);
     assert.doesNotMatch(serverSource, /id="ops-line"/);
     assert.doesNotMatch(serverSource, /id="ops-run"/);
     assert.doesNotMatch(serverSource, /id="ops-examples"/);
+    assert.doesNotMatch(serverSource, /Live Tank/);
   });
 
-  it("exposes the AI-first Tank chat composer controls and keyboard affordances", () => {
+  it("exposes the simplified chat composer controls and keyboard affordances", () => {
     assert.match(serverSource, /CHAT_PERSONA_UI\.intro/);
     assert.match(serverSource, /const CHAT_PERSONA = /);
     assert.match(serverSource, /function chatPersonaPick\(kind\)/);
@@ -220,9 +225,15 @@ describe("single goblin chat", () => {
       serverSource,
       /<div class="chat-thread" id="chat-thread"[\s\S]*<\/div>[\s\S]*<form class="chat-composer" id="root-chat-form">/,
     );
-    assert.match(serverSource, /<button id="root-chat-send" type="submit" title="Send \(Enter\)">Send<\/button>/);
-    assert.match(serverSource, /<button id="root-chat-voice" type="button" title="Voice">Voice<\/button>/);
-    assert.match(serverSource, /<button id="root-chat-speak" type="button" title="Speak replies" aria-pressed="false">Speak<\/button>/);
+    assert.match(serverSource, /id="root-chat-send"[^>]*type="submit"[^>]*title="Send \(Enter\)"[\s\S]*↑/);
+    assert.match(serverSource, /id="root-chat-voice" type="button" class="voice-trigger" title="Voice mode"/);
+    assert.match(serverSource, /class="voice-menu"[\s\S]*fullgoblinchat\.svg[\s\S]*Chat Live[\s\S]*sttgoblinchat\.svg[\s\S]*Speak Only[\s\S]*ttsonlygoblinchat\.svg[\s\S]*Listen Only/);
+    assert.match(serverSource, /id="root-chat-personality-label"[\s\S]*goblin_mode/);
+    assert.match(serverSource, /class="personality-menu"[\s\S]*chipper[\s\S]*nerdy[\s\S]*stoic[\s\S]*cynical[\s\S]*feral[\s\S]*goblin_mode/);
+    assert.match(serverSource, /<button id="root-chat-speak" type="button" class="sr-only" title="Speak replies" aria-label="Speak replies" aria-pressed="false">/);
+    assert.doesNotMatch(serverSource, />Voice<\/button>/);
+    assert.doesNotMatch(serverSource, />Speak<\/button>/);
+    assert.doesNotMatch(serverSource, /Max tokens/);
     assert.match(serverSource, /<select id="root-chat-model"/);
     assert.match(serverSource, /<select id="root-chat-personality"/);
     assert.match(serverSource, /const tooltipEl = document\.createElement\("div"\)/);
