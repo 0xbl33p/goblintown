@@ -5212,6 +5212,11 @@ function tankHtml(
   }
   .sidebar-settings-card {
     display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 0.75rem);
+    z-index: 18;
     border: 1px solid rgba(124,255,91,0.18);
     border-radius: 14px;
     background: #1d241b;

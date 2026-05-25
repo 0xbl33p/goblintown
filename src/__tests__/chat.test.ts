@@ -209,6 +209,7 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /id="settings-icon-closed"[^>]*src="\/assets\/settingsclosed\.svg"/);
     assert.match(serverSource, /id="settings-icon-open"[^>]*src="\/assets\/settingsopen\.svg"/);
     assert.match(serverSource, /id="sidebar-settings-card"[\s\S]*Goblin Country[\s\S]*Moss Ledger[\s\S]*Code: MOSS7 · Signed in[\s\S]*Never trust a clean cache/);
+    assert.match(serverSource, /\.sidebar-settings-card \{[\s\S]*position: absolute;[\s\S]*bottom: calc\(100% \+ 0\.75rem\);/);
     assert.doesNotMatch(serverSource, /id="btn-api-configs"/);
     assert.doesNotMatch(serverSource, /id="ops-line"/);
     assert.doesNotMatch(serverSource, /id="ops-run"/);
