@@ -5534,7 +5534,7 @@ function tankHtml(
     border: 0;
     background: transparent;
     color: #e6e2d3;
-    border-radius: 10px;
+    border-radius: 0;
     padding: 0.42rem 0.5rem;
     font: inherit;
     font-weight: 650;
@@ -5547,8 +5547,8 @@ function tankHtml(
   .voice-choice.active,
   .personality-choice:hover,
   .personality-choice.active {
-    background: rgba(124,255,91,0.14);
     color: #7cff5b;
+    text-shadow: 0 0 12px rgba(124,255,91,0.22);
   }
   .voice-choice img {
     width: 1.75rem;
