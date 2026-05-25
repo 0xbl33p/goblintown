@@ -14,7 +14,7 @@ describe("AI-first Tank shell", () => {
     assert.match(serverSource, /app\.get\("\/", async \(_req, res\) => renderHome/);
     assert.match(serverSource, /app\.get\("\/tank"/);
     assert.match(serverSource, /function tankHtml/);
-    assert.match(serverSource, /<div class="tank chat-mode" id="tank">/);
+    assert.match(serverSource, /<div class="tank chat-mode codex-chat-surface" id="tank">/);
     assert.doesNotMatch(serverSource, /app\.get\("\/", async \(_req, res\) => renderGoblinMode/);
   });
 
