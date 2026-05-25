@@ -4146,16 +4146,16 @@ function sidebarRiteButtons(runs: Map<string, RunState>): string {
     .slice(0, 6);
   if (!recentRuns.length) {
     return `
-          <button class="sidebar-item active" type="button" data-surface-kind="rite" data-run-id="sample-bounty-72"><strong>Bounty issue #72</strong><span>running</span></button>
-          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-provider-setup-audit">Provider setup audit</button>
-          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-tank-ui-simplification">Tank UI simplification</button>`;
+          <button class="sidebar-item active" type="button" data-surface-kind="rite" data-run-id="sample-bounty-72" title="Bounty issue #72"><strong>Bounty issue #72</strong><span>running</span></button>
+          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-provider-setup-audit" title="Provider setup audit">Provider setup audit</button>
+          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-tank-ui-simplification" title="Tank UI simplification">Tank UI simplification</button>`;
   }
   return recentRuns
     .map((state, index) => {
       const record = state.record;
       const status = record.status || (record.done ? "done" : "running");
       const active = index === 0 ? " active" : "";
-      return `<button class="sidebar-item${active}" type="button" data-surface-kind="rite" data-run-id="${esc(record.runId)}"><strong>${esc(record.task || record.runId)}</strong><span>${esc(status)}</span></button>`;
+      return `<button class="sidebar-item${active}" type="button" data-surface-kind="rite" data-run-id="${esc(record.runId)}" title="${esc(record.task || record.runId)}"><strong>${esc(record.task || record.runId)}</strong><span>${esc(status)}</span></button>`;
     })
     .join("\n          ");
 }
@@ -5207,6 +5207,9 @@ function tankHtml(
     font: inherit;
     text-align: left;
     cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .sidebar-item:hover {
     background: rgba(124,255,91,0.08);
@@ -5219,6 +5222,9 @@ function tankHtml(
   .sidebar-item strong,
   .sidebar-item span {
     display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .sidebar-item span {
     margin-top: 0.16rem;
@@ -5260,6 +5266,8 @@ function tankHtml(
     aspect-ratio: 210 / 246;
     height: auto;
     object-fit: contain;
+    filter: brightness(0) saturate(100%) invert(91%) sepia(12%) saturate(401%) hue-rotate(26deg) brightness(101%) contrast(92%) drop-shadow(0 0 7px rgba(124,255,91,0.18));
+    transition: filter 0.16s ease, opacity 0.16s ease;
   }
   .settings-country {
     border: 1px solid rgba(168,176,154,0.18);
@@ -5292,6 +5300,10 @@ function tankHtml(
   .settings-link:hover,
   .settings-trigger:hover {
     color: #7cff5b;
+  }
+  .settings-trigger:hover .settings-icon,
+  .settings-card-head .settings-icon {
+    filter: brightness(0) saturate(100%) invert(86%) sepia(62%) saturate(724%) hue-rotate(43deg) brightness(108%) contrast(105%) drop-shadow(0 0 9px rgba(124,255,91,0.34));
   }
   .settings-trigger {
     display: inline-flex;
@@ -5621,6 +5633,27 @@ function tankHtml(
     border-color: var(--accent-hot);
     background: #4d5b1f;
     color: #fff7c2;
+  }
+  .rite-choice-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.55rem;
+    white-space: normal;
+  }
+  .rite-choice {
+    border: 1px solid rgba(124,255,91,0.28);
+    border-radius: 999px;
+    background: rgba(124,255,91,0.08);
+    color: #e6e2d3;
+    font: inherit;
+    padding: 0.38rem 0.68rem;
+    cursor: pointer;
+  }
+  .rite-choice:hover {
+    border-color: rgba(124,255,91,0.58);
+    background: rgba(124,255,91,0.16);
+    color: #7cff5b;
   }
   .chat-input-row button:disabled,
   .chat-offer-inline button:disabled {
@@ -6869,9 +6902,9 @@ function tankHtml(
         <button class="sr-only" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
         <section class="sidebar-list" aria-label="Chats">
           <div class="sidebar-label">CHATS</div>
-          <button class="sidebar-item active" type="button" data-surface-kind="chat" data-chat-id="bounty-72-chat">Bounty issue #72 chat</button>
-          <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="solana-wallet-question">Solana wallet question</button>
-          <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="readme-cleanup-chat">README cleanup chat</button>
+          <button class="sidebar-item active" type="button" data-surface-kind="chat" data-chat-id="bounty-72-chat" title="Bounty issue #72 chat">Bounty issue #72 chat</button>
+          <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="solana-wallet-question" title="Solana wallet question">Solana wallet question</button>
+          <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="readme-cleanup-chat" title="README cleanup chat">README cleanup chat</button>
         </section>
         <section class="sidebar-list" aria-label="Rites">
           <div class="sidebar-label">RITES</div>
@@ -12072,6 +12105,7 @@ function appendRootChatMessage(role, content, opts) {
   }
   thread.appendChild(node);
   thread.scrollTop = thread.scrollHeight;
+  return node;
 }
 
 function browserTtsSupported() {
@@ -12275,16 +12309,67 @@ function setRootChatOffer(nextOffer) {
   offer.classList.add("open");
 }
 
+function clearRiteChoiceRows() {
+  document.querySelectorAll(".rite-choice-row").forEach((row) => row.remove());
+}
+
 function startNewRiteChatFlow() {
   showChatMode();
   showChatThreadSurface();
   setRootChatOffer(null);
-  appendRootChatMessage(
+  clearRiteChoiceRows();
+  const node = appendRootChatMessage(
     "system",
-    "What type of rite should we run?\\nregular · thesis · crypto/onchain · sentiment · plan",
+    "What type of rite should we run?",
   );
+  const row = document.createElement("div");
+  row.className = "rite-choice-row";
+  [
+    ["regular", "Regular"],
+    ["thesis", "Thesis"],
+    ["onchain", "Crypto/onchain"],
+    ["sentiment", "Sentiment"],
+    ["plan", "Plan"],
+  ].forEach(([choice, label]) => {
+    const button = document.createElement("button");
+    button.className = "rite-choice";
+    button.type = "button";
+    button.setAttribute("data-rite-choice", choice);
+    button.textContent = label;
+    button.addEventListener("click", () => handleRiteChoice(choice));
+    row.appendChild(button);
+  });
+  node.appendChild(row);
   setRootChatStatus("riteType");
   setTimeout(() => $("root-chat-input").focus(), 30);
+}
+
+function handleRiteChoice(choice) {
+  setRootChatOffer(null);
+  clearRiteChoiceRows();
+  setRootChatStatus("ready");
+  switch (choice) {
+    case "regular":
+      openRiteForm(false);
+      break;
+    case "thesis":
+      openThesisForm();
+      break;
+    case "onchain":
+      closeSettingsPopover();
+      closeTopPopovers("onchain-popover");
+      onchainPopover.classList.add("open");
+      setTimeout(() => onchainAddress.focus(), 30);
+      break;
+    case "sentiment":
+      sentimentToolButton.click();
+      break;
+    case "plan":
+      openRiteForm(true);
+      break;
+    default:
+      startNewRiteChatFlow();
+  }
 }
 
 async function startGoblintownFromChat(task) {

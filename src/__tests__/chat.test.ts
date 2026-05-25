@@ -287,8 +287,28 @@ describe("single goblin chat", () => {
   it("starts New Rite as a chat-guided rite type question", () => {
     assert.match(serverSource, /function startNewRiteChatFlow\(\)/);
     assert.match(serverSource, /What type of rite should we run\?/);
-    assert.match(serverSource, /regular · thesis · crypto\/onchain · sentiment · plan/);
+    assert.match(serverSource, /className = "rite-choice-row"/);
+    assert.match(serverSource, /\["regular", "Regular"\]/);
+    assert.match(serverSource, /\["thesis", "Thesis"\]/);
+    assert.match(serverSource, /\["onchain", "Crypto\/onchain"\]/);
+    assert.match(serverSource, /\["sentiment", "Sentiment"\]/);
+    assert.match(serverSource, /\["plan", "Plan"\]/);
+    assert.match(serverSource, /button\.setAttribute\("data-rite-choice", choice\)/);
+    assert.match(serverSource, /function handleRiteChoice\(choice\)/);
+    assert.match(serverSource, /function clearRiteChoiceRows\(\)/);
+    assert.match(serverSource, /document\.querySelectorAll\("\.rite-choice-row"\)\.forEach\(\(row\) => row\.remove\(\)\)/);
+    assert.match(serverSource, /case "thesis":[\s\S]*openThesisForm\(\)/);
+    assert.match(serverSource, /case "plan":[\s\S]*openRiteForm\(true\)/);
     assert.match(serverSource, /\$\("btn-rite"\)\.onclick = startNewRiteChatFlow/);
     assert.match(serverSource, /\$\("btn-regular-rite"\)\.onclick = startNewRiteChatFlow/);
+  });
+
+  it("keeps sidebar titles compact with hover tips and brighter settings icons", () => {
+    assert.match(serverSource, /title="Bounty issue #72 chat"/);
+    assert.match(serverSource, /title="\$\{esc\(record\.task \|\| record\.runId\)\}"/);
+    assert.match(serverSource, /\.sidebar-item \{[\s\S]*white-space: nowrap;[\s\S]*overflow: hidden;[\s\S]*text-overflow: ellipsis;/);
+    assert.match(serverSource, /\.sidebar-item strong,[\s\S]*\.sidebar-item span \{[\s\S]*overflow: hidden;[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);
+    assert.match(serverSource, /\.settings-icon \{[\s\S]*filter: brightness\(0\) saturate\(100%\) invert/);
+    assert.match(serverSource, /\.settings-trigger:hover \.settings-icon/);
   });
 });
