@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Script } from "node:vm";
 import { serve, type ServeHandle } from "../server.js";
 import { initWarren } from "../warren.js";
 
@@ -66,6 +67,17 @@ describe("Tank app smoke", () => {
     assert.doesNotMatch(html, /Live Tank/);
     assert.doesNotMatch(html, /id="ops-line"/);
     assert.doesNotMatch(html, /Cmd\/Ctrl\+Enter/);
+  });
+
+  it("ships parseable root app JavaScript so controls can attach", async () => {
+    const url = await startApp();
+    const response = await fetch(url);
+    const html = await response.text();
+    const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
+    const rootScript = scripts.at(-1)?.[1] ?? "";
+
+    assert.ok(rootScript.length > 1000);
+    assert.doesNotThrow(() => new Script(rootScript, { filename: "goblintown-root.js" }));
   });
 
   it("returns useful app API errors instead of a broken chat state", async () => {

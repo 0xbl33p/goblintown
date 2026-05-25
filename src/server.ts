@@ -11748,9 +11748,9 @@ function goblinTtsText(value) {
   return (value || "")
     .replace(new RegExp(String.fromCharCode(96).repeat(3) + "[\\\\s\\\\S]*?" + String.fromCharCode(96).repeat(3), "g"), "code block omitted")
     .replace(new RegExp(String.fromCharCode(96) + "([^" + String.fromCharCode(96) + "]+)" + String.fromCharCode(96), "g"), "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, "$1")
     .replace(/[#*_>~|]/g, "")
-    .replace(/\s+/g, " ")
+    .replace(/\\s+/g, " ")
     .trim()
     .slice(0, 1800);
 }
@@ -11804,12 +11804,12 @@ function chatErrorMessage(err) {
 
 function goblinifyVoiceTranscript(value) {
   return (value || "")
-    .replace(/\b rights?\b/gi, " rite")
-    .replace(/\bwrite\b/gi, "rite")
-    .replace(/\btank\b/gi, "Tank")
-    .replace(/\bhoard\b/gi, "Hoard")
-    .replace(/\bload\b/gi, "loot")
-    .replace(/\bmodel slots?\b/gi, "model slot")
+    .replace(/\\b rights?\\b/gi, " rite")
+    .replace(/\\bwrite\\b/gi, "rite")
+    .replace(/\\btank\\b/gi, "Tank")
+    .replace(/\\bhoard\\b/gi, "Hoard")
+    .replace(/\\bload\\b/gi, "loot")
+    .replace(/\\bmodel slots?\\b/gi, "model slot")
     .trim();
 }
 
