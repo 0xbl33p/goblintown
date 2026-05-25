@@ -114,7 +114,7 @@ export function extractChatWebUrls(messages: ChatMessage[]): string[] {
   const normalized = normalizeChatMessages(messages);
   const latest = [...normalized].reverse().find((m) => m.role === "user");
   if (!latest) return [];
-  const matches = latest.content.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+  const matches = normalizeLikelyChatUrls(latest.content).match(/https?:\/\/[^\s<>"']+/gi) ?? [];
   const urls: string[] = [];
   for (const raw of matches) {
     const cleaned = raw.replace(/[),.;:!?]+$/g, "");
@@ -129,6 +129,21 @@ export function extractChatWebUrls(messages: ChatMessage[]): string[] {
     }
   }
   return urls;
+}
+
+export function normalizeLikelyChatUrls(value: string): string {
+  return value.replace(
+    /https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/issues\/(\d+)[A-Za-z]+(?=$|[\s),.;:!?])/gi,
+    (raw, owner, repo, issue) => {
+      try {
+        const url = new URL(raw);
+        url.pathname = `/${owner}/${repo}/issues/${issue}`;
+        return url.toString().replace(/\/$/, "");
+      } catch {
+        return raw;
+      }
+    },
+  );
 }
 
 export async function collectChatWebToolResults(
@@ -151,7 +166,7 @@ export function detectGoblintownOffer(messages: ChatMessage[]): GoblintownOffer 
   const userMessages = normalized.filter((m) => m.role === "user");
   const latest = userMessages[userMessages.length - 1];
   if (!latest) return undefined;
-  let task = latest.content;
+  let task = normalizeLikelyChatUrls(latest.content);
   if (
     /\bgoblin\s*town\b|\bgoblintown\b|\bfull\s+pack\b|\bpack\s+of\s+goblins\b|\brite\b|\brites\b/i.test(
       task,
@@ -168,12 +183,12 @@ export function detectGoblintownOffer(messages: ChatMessage[]): GoblintownOffer 
 
 function resolveExplicitRunTask(userMessages: ChatMessage[]): string {
   const latest = userMessages[userMessages.length - 1]?.content ?? "";
-  if (!isBareRunRequest(latest)) return latest;
+  if (!isBareRunRequest(latest)) return normalizeLikelyChatUrls(latest);
   const previous = [...userMessages]
     .slice(0, -1)
     .reverse()
     .find((message) => !isBareRunRequest(message.content));
-  return previous?.content ?? latest;
+  return normalizeLikelyChatUrls(previous?.content ?? latest);
 }
 
 function isBareRunRequest(value: string): boolean {

@@ -3303,7 +3303,11 @@ function chatPage(): string {
           messages.push(body.message);
           renderMessage(body.message, body.lootId);
           renderGoblintownOffer(body.goblintownOffer);
-          status.textContent = body.lootId ? "saved " + body.lootId : "ready";
+          if (body.goblintownOffer && body.goblintownOffer.requested) {
+            await startOfferedRite(body.goblintownOffer.task);
+          } else {
+            status.textContent = body.lootId ? "saved " + body.lootId : "ready";
+          }
         } catch (err) {
           status.textContent = err instanceof Error ? err.message : String(err);
         } finally {
@@ -3320,8 +3324,8 @@ function chatPage(): string {
         input.focus();
       });
 
-      offerRun.addEventListener("click", async () => {
-        const task = offeredTask.trim();
+      async function startOfferedRite(taskValue) {
+        const task = (taskValue || offeredTask).trim();
         if (!task) return;
         offerRun.disabled = true;
         status.textContent = "starting Goblintown";
@@ -3345,7 +3349,9 @@ function chatPage(): string {
         } finally {
           offerRun.disabled = false;
         }
-      });
+      }
+
+      offerRun.addEventListener("click", () => startOfferedRite(offeredTask));
     </script>
   `;
 }

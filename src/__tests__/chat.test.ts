@@ -8,6 +8,7 @@ import {
   collectChatWebToolResults,
   detectGoblintownOffer,
   extractChatWebUrls,
+  normalizeLikelyChatUrls,
   normalizeChatMessages,
 } from "../chat.js";
 
@@ -61,6 +62,25 @@ describe("single goblin chat", () => {
       "https://github.com/0xbl33p/goblintown",
       "https://example.com/docs",
     ]);
+  });
+
+  it("normalizes obvious GitHub issue URL typo suffixes", () => {
+    assert.equal(
+      normalizeLikelyChatUrls("Run https://github.com/aeyakovenko/percolator-cli/issues/72g please"),
+      "Run https://github.com/aeyakovenko/percolator-cli/issues/72 please",
+    );
+    assert.deepEqual(
+      extractChatWebUrls([
+        { role: "user", content: "Solve https://github.com/aeyakovenko/percolator-cli/issues/72g" },
+      ]),
+      ["https://github.com/aeyakovenko/percolator-cli/issues/72"],
+    );
+    assert.equal(
+      detectGoblintownOffer([
+        { role: "user", content: "Lets run a rite to solve this bounty: https://github.com/aeyakovenko/percolator-cli/issues/72g" },
+      ])?.task,
+      "Lets run a rite to solve this bounty: https://github.com/aeyakovenko/percolator-cli/issues/72",
+    );
   });
 
   it("adds fetched website context to the single-goblin prompt", async () => {
@@ -158,6 +178,9 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /id="chat-form"/);
     assert.match(serverSource, /id="chat-offer-run"/);
     assert.match(serverSource, /fetch\("\/api\/rite"/);
+    assert.match(serverSource, /async function startOfferedRite\(taskValue\)/);
+    assert.match(serverSource, /body\.goblintownOffer && body\.goblintownOffer\.requested/);
+    assert.match(serverSource, /await startOfferedRite\(body\.goblintownOffer\.task\)/);
   });
 
   it("makes the Tank root chat-first and swaps to Tank mode for runs", () => {
