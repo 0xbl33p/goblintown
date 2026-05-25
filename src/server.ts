@@ -2774,7 +2774,7 @@ async function runCliLine(
 
 async function renderHome(
   warren: Warren,
-  _runs: Map<string, RunState>,
+  runs: Map<string, RunState>,
   res: Response,
 ): Promise<void> {
   const [rites, loot] = await Promise.all([
@@ -2783,7 +2783,7 @@ async function renderHome(
   ]);
   const driftSum = loot.reduce((s, l) => s + l.drift.driftRate, 0);
   const drift = loot.length ? driftSum / loot.length : 0;
-  res.send(tankHtml(warren.manifest.name, loot.length, rites.length, drift));
+  res.send(tankHtml(warren.manifest.name, loot.length, rites.length, drift, runs));
 }
 
 async function renderGoblinMode(
@@ -4140,11 +4140,32 @@ $("goblin-form").addEventListener("submit", async (event) => {
 </html>`;
 }
 
+function sidebarRiteButtons(runs: Map<string, RunState>): string {
+  const recentRuns = [...runs.values()]
+    .sort((a, b) => b.record.startedAt - a.record.startedAt)
+    .slice(0, 6);
+  if (!recentRuns.length) {
+    return `
+          <button class="sidebar-item active" type="button" data-surface-kind="rite" data-run-id="sample-bounty-72"><strong>Bounty issue #72</strong><span>running</span></button>
+          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-provider-setup-audit">Provider setup audit</button>
+          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-tank-ui-simplification">Tank UI simplification</button>`;
+  }
+  return recentRuns
+    .map((state, index) => {
+      const record = state.record;
+      const status = record.status || (record.done ? "done" : "running");
+      const active = index === 0 ? " active" : "";
+      return `<button class="sidebar-item${active}" type="button" data-surface-kind="rite" data-run-id="${esc(record.runId)}"><strong>${esc(record.task || record.runId)}</strong><span>${esc(status)}</span></button>`;
+    })
+    .join("\n          ");
+}
+
 function tankHtml(
   warrenName: string,
   lootCount: number,
   riteCount: number,
   drift: number,
+  runs: Map<string, RunState>,
 ): string {
   const initial = JSON.stringify({
     warren: warrenName,
@@ -6853,9 +6874,7 @@ function tankHtml(
         </section>
         <section class="sidebar-list" aria-label="Rites">
           <div class="sidebar-label">RITES</div>
-          <button class="sidebar-item active" type="button" data-surface-kind="rite" data-run-id="sample-bounty-72"><strong>Bounty issue #72</strong><span>running</span></button>
-          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-provider-setup-audit">Provider setup audit</button>
-          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-tank-ui-simplification">Tank UI simplification</button>
+          ${sidebarRiteButtons(runs)}
         </section>
         <div class="sidebar-settings" id="sidebar-settings">
           <div class="sidebar-settings-card" id="sidebar-settings-card">

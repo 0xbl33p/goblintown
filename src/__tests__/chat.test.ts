@@ -203,8 +203,9 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">/);
     assert.match(
       serverSource,
-      /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">[\s\S]*\+ New chat[\s\S]*\+ New rite[\s\S]*CHATS[\s\S]*Bounty issue #72 chat[\s\S]*Solana wallet question[\s\S]*README cleanup chat[\s\S]*RITES[\s\S]*Bounty issue #72[\s\S]*Provider setup audit[\s\S]*Tank UI simplification[\s\S]*<\/aside>/,
+      /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">[\s\S]*\+ New chat[\s\S]*\+ New rite[\s\S]*CHATS[\s\S]*Bounty issue #72 chat[\s\S]*Solana wallet question[\s\S]*README cleanup chat[\s\S]*RITES[\s\S]*sidebarRiteButtons\(runs\)[\s\S]*<\/aside>/,
     );
+    assert.match(serverSource, /function sidebarRiteButtons\(runs: Map<string, RunState>\)[\s\S]*Bounty issue #72[\s\S]*Provider setup audit[\s\S]*Tank UI simplification/);
     assert.match(serverSource, /<button class="sr-only" id="btn-regular-rite"/);
     assert.match(serverSource, /id="settings-icon-closed"[^>]*src="\/assets\/settingsclosed\.svg"/);
     assert.match(serverSource, /id="settings-icon-open"[^>]*src="\/assets\/settingsopen\.svg"/);
@@ -222,6 +223,9 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /data-surface-kind="rite" data-run-id="sample-bounty-72"/);
     assert.match(serverSource, /id="root-rite-surface"/);
     assert.match(serverSource, /id="root-rite-discussion"/);
+    assert.match(serverSource, /function sidebarRiteButtons\(runs: Map<string, RunState>\)/);
+    assert.match(serverSource, /res\.send\(tankHtml\(warren\.manifest\.name, loot\.length, rites\.length, drift, runs\)\)/);
+    assert.match(serverSource, /\[\.\.\.runs\.values\(\)\][\s\S]*sort\(\(a, b\) => b\.record\.startedAt - a\.record\.startedAt\)[\s\S]*slice\(0, 6\)/);
     assert.match(serverSource, /function selectSidebarSurface\(kind, id\)/);
     assert.match(serverSource, /function renderInlineRite\(record\)/);
     assert.match(serverSource, /fetch\("\/api\/runs\/" \+ encodeURIComponent\(runId\) \+ "\?full=1"\)/);
