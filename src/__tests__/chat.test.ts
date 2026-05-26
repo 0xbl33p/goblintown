@@ -246,7 +246,10 @@ describe("single goblin chat", () => {
     );
     assert.match(serverSource, /id="root-chat-send"[^>]*type="submit"[^>]*title="Send \(Enter\)"[\s\S]*↑/);
     assert.match(serverSource, /id="root-chat-voice" type="button" class="voice-trigger" title="Voice mode"/);
-    assert.match(serverSource, /class="voice-menu"[\s\S]*fullgoblinchat\.svg[\s\S]*Chat Live[\s\S]*sttgoblinchat\.svg[\s\S]*Speak Only[\s\S]*ttsonlygoblinchat\.svg[\s\S]*Listen Only/);
+    assert.match(serverSource, /id="root-chat-voice"[\s\S]*textgoblinchat\.svg/);
+    assert.match(serverSource, /class="voice-menu"[\s\S]*textgoblinchat\.svg[\s\S]*Text[\s\S]*fullgoblinchat\.svg[\s\S]*Chat Live[\s\S]*sttgoblinchat\.svg[\s\S]*Speak Only[\s\S]*ttsonlygoblinchat\.svg[\s\S]*Listen Only/);
+    assert.match(serverSource, /if \(mode === "text"\) \{[\s\S]*setRootChatSpeakEnabled\(false\);[\s\S]*return;/);
+    assert.match(serverSource, /function setVoiceTriggerIcon\(button\)/);
     assert.match(serverSource, /\.voice-menu \.voice-choice \{[\s\S]*background: transparent !important;[\s\S]*border: 0 !important;/);
     assert.doesNotMatch(serverSource, /\.voice-choice:hover,\n  \.voice-choice\.active,[^}]*background:/);
     assert.match(serverSource, /id="root-chat-personality-label"[\s\S]*goblin_mode/);

@@ -7047,10 +7047,11 @@ function tankHtml(
             <textarea id="root-chat-input" rows="3" placeholder="Message the single Goblin..." required></textarea>
             <div class="voice-picker" id="voice-picker">
               <button id="root-chat-voice" type="button" class="voice-trigger" title="Voice mode" aria-haspopup="menu">
-                <img src="/assets/fullgoblinchat.svg" alt="" aria-hidden="true" decoding="async">
+                <img src="/assets/textgoblinchat.svg" alt="" aria-hidden="true" decoding="async">
               </button>
               <div class="voice-menu" role="menu" aria-label="Voice">
-                <button class="voice-choice active" type="button" role="menuitem" data-voice-mode="full"><img src="/assets/fullgoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Chat Live</span></button>
+                <button class="voice-choice active" type="button" role="menuitem" data-voice-mode="text"><img src="/assets/textgoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Text</span></button>
+                <button class="voice-choice" type="button" role="menuitem" data-voice-mode="full"><img src="/assets/fullgoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Chat Live</span></button>
                 <button class="voice-choice" type="button" role="menuitem" data-voice-mode="stt"><img src="/assets/sttgoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Speak Only</span></button>
                 <button class="voice-choice" type="button" role="menuitem" data-voice-mode="tts"><img src="/assets/ttsonlygoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Listen Only</span></button>
               </div>
@@ -12535,11 +12536,23 @@ $("root-chat-voice").onclick = () => {
   setVoiceMenuOpen(!$("voice-picker").classList.contains("open"));
 };
 
+function setVoiceTriggerIcon(button) {
+  const triggerIcon = $("root-chat-voice").querySelector("img");
+  const choiceIcon = button.querySelector("img");
+  if (triggerIcon && choiceIcon) triggerIcon.src = choiceIcon.src;
+}
+
 document.querySelectorAll(".voice-choice").forEach((button) => {
   button.addEventListener("click", () => {
     const mode = button.getAttribute("data-voice-mode") || "full";
     document.querySelectorAll(".voice-choice").forEach((choice) => choice.classList.toggle("active", choice === button));
+    setVoiceTriggerIcon(button);
     setVoiceMenuOpen(false);
+    $("root-chat-input").focus();
+    if (mode === "text") {
+      setRootChatSpeakEnabled(false);
+      return;
+    }
     if (mode === "tts") {
       setRootChatSpeakEnabled(true);
       return;

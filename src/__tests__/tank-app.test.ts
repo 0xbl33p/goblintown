@@ -33,6 +33,7 @@ describe("Tank app smoke", () => {
     for (const asset of [
       "fullgoblinchat.svg",
       "sttgoblinchat.svg",
+      "textgoblinchat.svg",
       "ttsonlygoblinchat.svg",
       "settingsclosed.svg",
       "settingsopen.svg",
@@ -62,7 +63,8 @@ describe("Tank app smoke", () => {
     assert.match(html, /<div class="tank chat-mode codex-chat-surface" id="tank">/);
     assert.match(html, /<form class="chat-composer" id="root-chat-form">/);
     assert.match(html, /id="root-chat-personality-label"[\s\S]*goblin_mode/);
-    assert.match(html, /class="voice-menu"[\s\S]*fullgoblinchat\.svg[\s\S]*Chat Live[\s\S]*sttgoblinchat\.svg[\s\S]*Speak Only[\s\S]*ttsonlygoblinchat\.svg[\s\S]*Listen Only/);
+    assert.match(html, /id="root-chat-voice"[\s\S]*textgoblinchat\.svg/);
+    assert.match(html, /class="voice-menu"[\s\S]*textgoblinchat\.svg[\s\S]*Text[\s\S]*fullgoblinchat\.svg[\s\S]*Chat Live[\s\S]*sttgoblinchat\.svg[\s\S]*Speak Only[\s\S]*ttsonlygoblinchat\.svg[\s\S]*Listen Only/);
     assert.match(html, /id="root-chat-send"[^>]*title="Send \(Enter\)"[\s\S]*↑/);
     assert.match(html, /id="root-chat-speak"[^>]*class="sr-only"/);
     assert.doesNotMatch(html, />Speak<\/button>/);
