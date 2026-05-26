@@ -24,7 +24,7 @@ describe("settings launcher", () => {
     assert.doesNotMatch(stripMarkup, /id="btn-asteroid"/);
   });
 
-  it("collects account, country, mail, add-ons, API, sentiment config, and a nested reset menu in the settings launcher", () => {
+  it("collects account, country, group chats, add-ons, API, sentiment config, and a nested reset menu in the settings launcher", () => {
     const settingsStart = serverSource.indexOf('id="settings-popover"');
     const settingsEnd = serverSource.indexOf('id="provider-popover"', settingsStart);
     assert.notEqual(settingsStart, -1);
@@ -33,7 +33,8 @@ describe("settings launcher", () => {
 
     assert.match(settingsMarkup, /data-settings-label="Account"/);
     assert.match(settingsMarkup, /data-settings-label="Country"/);
-    assert.match(settingsMarkup, /data-settings-label="Mail"/);
+    assert.match(settingsMarkup, /data-settings-label="Group Chats"/);
+    assert.doesNotMatch(settingsMarkup, /data-settings-label="Mail"/);
     assert.match(settingsMarkup, /data-settings-label="Add-ons"/);
     assert.match(settingsMarkup, /data-settings-label="API"/);
     assert.match(settingsMarkup, /id="sentiment-config-chip"[\s\S]*data-settings-label="Sentiment Sources"/);

@@ -6825,8 +6825,8 @@ function tankHtml(
       <button class="country-chip" id="country-chip" type="button" data-settings-label="Country">
         <span>Country</span><strong>Country ▾</strong>
       </button>
-      <button class="mail-chip" id="mail-chip" type="button" data-settings-label="Mail">
-        <span>Mail</span><strong>Mail ▾</strong>
+      <button class="mail-chip" id="mail-chip" type="button" data-settings-label="Group Chats">
+        <span>Groups</span><strong>Groups ▾</strong>
       </button>
       <button class="addon-chip" id="addon-chip" type="button" data-settings-label="Add-ons">
         <span>Add-ons</span><strong>Add-ons ▾</strong>
@@ -7050,7 +7050,7 @@ function tankHtml(
         <div class="country-pane">
           <h4>Overview</h4>
           <p class="country-subtle">Your country: <strong id="country-name">-</strong> · ID code: <strong id="country-code">-</strong></p>
-          <h4 style="margin-top:0.75rem;">Online & Mail</h4>
+          <h4 style="margin-top:0.75rem;">Online & Groups</h4>
           <div class="country-list" id="country-members"></div>
           <h4 style="margin-top:0.75rem;">Queue</h4>
           <div class="country-list" id="country-queue"></div>
@@ -7087,7 +7087,7 @@ function tankHtml(
   </div>
 
   <div class="mail-popover" id="mail-popover">
-    <h3>Friends & Mail</h3>
+    <h3>Friends & Group Chats</h3>
     <p class="mail-subtle" id="mail-summary">Loading friends...</p>
     <div class="mail-grid">
       <div class="mail-pane">
@@ -7103,7 +7103,7 @@ function tankHtml(
         <div class="mail-list" id="friends-list"></div>
       </div>
       <div class="mail-pane">
-        <h4>Threads</h4>
+        <h4>Group Chats</h4>
         <div class="mail-list" id="dm-threads-list"></div>
         <h4 style="margin-top:0.75rem;">Messages</h4>
         <div class="mail-list" id="dm-messages-list" style="max-height:240px;"></div>
@@ -7177,7 +7177,7 @@ function tankHtml(
       <nav class="settings-sidebar-menu" id="settings-sidebar-menu" aria-label="Settings sections">
         <button class="active" type="button" data-settings-section="account">Account</button>
         <button type="button" data-settings-section="country">Country</button>
-        <button type="button" data-settings-section="mail">Mail</button>
+        <button type="button" data-settings-section="groups">Group Chats</button>
         <button type="button" data-settings-section="api">API</button>
         <button type="button" data-settings-section="voice">Voice</button>
         <button type="button" data-settings-section="imports">Import Records</button>
@@ -8728,7 +8728,7 @@ window.addEventListener("resize", () => {
 [
   ["auth-chip", "Sign in with Firebase for cloud collaboration mode."],
   ["country-chip", "Open Goblin-Country settings and collaboration panels."],
-  ["mail-chip", "Open friends, requests, and direct-message threads."],
+  ["mail-chip", "Open friends, requests, and group chats."],
   ["addon-chip", "Enable local Goblintown add-ons and verifier tool packs."],
   ["onchain-chip", "Look up Solana addresses and send findings into a rite."],
   ["onchain-address", "Enter a Solana wallet, token account, mint, or program address."],
@@ -9893,8 +9893,8 @@ function updateAuthUi() {
   const cloudOn = isCloudModeEnabled();
   const enabled = !!firebaseState.enabled;
   cloudModeStatus.textContent = cloudOn
-    ? "Goblintown Cloud is on. SSO, friend codes, discovery, mail, and country metadata use the shared cloud backend."
-    : "Local Only is on. Your town memory stays on this machine, and cloud sign-in/discovery/mail stay off.";
+    ? "Goblintown Cloud is on. SSO, friend codes, discovery, group chats, and country metadata use the shared cloud backend."
+    : "Local Only is on. Your town memory stays on this machine, and cloud sign-in/discovery/group chats stay off.";
   cloudLocalModeBtn.disabled = !cloudOn;
   cloudEnableModeBtn.disabled = cloudOn;
   cloudLocalModeBtn.classList.toggle("primary", !cloudOn);
@@ -9906,7 +9906,7 @@ function updateAuthUi() {
   if (!cloudOn) {
     setSettingsActionText(authChip, "Account", "Local Only ▾");
     authStatus.textContent = "Cloud mode is off.";
-    authNote.textContent = "Turn on Goblintown Cloud here when you want SSO, friend codes, discovery, and mail.";
+    authNote.textContent = "Turn on Goblintown Cloud here when you want SSO, friend codes, discovery, and group chats.";
     return;
   }
   if (!firebaseState.bootPromise && !firebaseState.initialized && !enabled) {
@@ -9937,7 +9937,7 @@ function updateAuthUi() {
   const stateText = state ? " · " + state : "";
   setSettingsActionText(authChip, "Account", display + " ▾");
   authStatus.textContent = "Signed in as " + display + code + stateText;
-  authNote.textContent = "Cloud mode stores usernames, membership/discovery metadata, and encrypted DM payloads.";
+  authNote.textContent = "Cloud mode stores usernames, membership/discovery metadata, and encrypted group chat payloads.";
 }
 
 async function loadFirebaseSdk() {
@@ -10388,7 +10388,7 @@ function renderCountryMembers() {
     const row = document.createElement("div");
     row.className = "country-member";
     const dot = '<span class="country-dot ' + (m.online ? "online" : "") + " " + (m.hasMail ? "mail" : "") + '"></span>';
-    const badge = (m.online ? "online" : "offline") + (m.hasMail ? " • mail" : "");
+    const badge = (m.online ? "online" : "offline") + (m.hasMail ? " • groups" : "");
     row.innerHTML =
       '<span>' + dot + escHtml(m.name) + (m.url ? ' <span class="muted">(' + escHtml(m.url) + ')</span>' : "") + "</span>" +
       '<span class="lead">' + (m.lead ? "lead" : badge) + "</span><span></span>";
@@ -11232,7 +11232,7 @@ loadCountryMenu();
   console.error("country-ui-init-failed", err);
 }
 
-/* Friends + Mail */
+/* Friends + Group Chats */
 try {
 let socialState = { friends: [], pendingRequests: [], threads: [] };
 let activeThreadId = "";
@@ -11281,7 +11281,7 @@ async function loadMailStateFirebase(silent) {
   const ready = await ensureFirebaseReady();
   if (!ready) throw new Error("Firebase is not configured.");
   if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
-    throw new Error("Sign in to use cloud friends and mail.");
+    throw new Error("Sign in to use cloud friends and group chats.");
   }
   const store = firebaseState.sdk.store;
   const db = firebaseState.db;
@@ -11597,7 +11597,7 @@ function renderFriends() {
     '<div class="mail-item">' +
       '<span><strong>' + socialEsc(f.name) + '</strong> <span class="meta">[' + socialEsc(f.id) + ']</span></span>' +
       '<span>' +
-        '<button class="btn" type="button" data-dm-friend="' + socialEsc(f.id) + '" data-tip="Open composer for this friend">DM</button> ' +
+        '<button class="btn" type="button" data-dm-friend="' + socialEsc(f.id) + '" data-tip="Open group chat composer for this friend">Chat</button> ' +
         '<button class="btn" type="button" data-rm-friend="' + socialEsc(f.id) + '" data-tip="Remove this friend connection">Remove</button>' +
       "</span>" +
     "</div>"
@@ -11608,7 +11608,7 @@ function renderFriends() {
       activeFriendId = btn.getAttribute("data-dm-friend") || "";
       const friend = (socialState.friends || []).find((f) => f.id === activeFriendId);
       activeThreadFriendName = friend ? friend.name : "";
-      setMailStatus(activeThreadFriendName ? ("Composing to " + activeThreadFriendName) : "Compose message");
+      setMailStatus(activeThreadFriendName ? ("Composing group chat with " + activeThreadFriendName) : "Compose group chat");
     };
   });
   friendsListEl.querySelectorAll("button[data-rm-friend]").forEach((btn) => {
@@ -11689,7 +11689,7 @@ function renderThreads() {
       "</div>"
     );
   }).join("");
-  threadsListEl.innerHTML = rows || '<div class="mail-item"><span class="meta">No threads yet.</span><span></span></div>';
+  threadsListEl.innerHTML = rows || '<div class="mail-item"><span class="meta">No group chats yet.</span><span></span></div>';
   threadsListEl.querySelectorAll("button[data-open-thread]").forEach((btn) => {
     btn.onclick = async () => {
       activeThreadId = btn.getAttribute("data-open-thread") || "";
@@ -11728,7 +11728,7 @@ async function loadThreadMessages(threadId) {
       const rows = await r.json();
       renderMessages(rows);
     }
-    setMailStatus(activeThreadFriendName ? ("Thread: " + activeThreadFriendName) : "Thread loaded.");
+    setMailStatus(activeThreadFriendName ? ("Group chat: " + activeThreadFriendName) : "Group chat loaded.");
   } catch (err) {
     setMailStatus("Load messages failed: " + (err.message || err));
   }
@@ -11754,7 +11754,7 @@ async function markThreadRead(threadId, silent) {
 function applyMailState(payload) {
   socialState = payload || { friends: [], pendingRequests: [], threads: [] };
   const unread = (socialState.threads || []).reduce((n, t) => n + (t.unread || 0), 0);
-  setSettingsActionText(mailChip, "Mail", unread > 0 ? ("Unread " + unread + " ▾") : "No unread ▾");
+  setSettingsActionText(mailChip, "Groups", unread > 0 ? ("Unread " + unread + " ▾") : "No unread ▾");
   if (unread > 0) mailChip.setAttribute("data-unread", "true");
   else mailChip.removeAttribute("data-unread");
   mailSummary.textContent =
@@ -11774,7 +11774,7 @@ async function loadMailState(silent) {
       await loadMailStateLocal(silent);
     }
   } catch (err) {
-    setMailStatus("Mail unavailable: " + (err.message || err));
+    setMailStatus("Group chats unavailable: " + (err.message || err));
   }
 }
 
@@ -11879,7 +11879,7 @@ const onboardingStorageKey = "goblintown.onboarding.v2";
 const onboardingSteps = [
   {
     title: "Choose Your Town",
-    body: "Stay Local keeps this Goblintown on your machine. Goblintown Cloud adds SSO, friend codes, discovery, mail, and shared country metadata through the official cloud backend.",
+    body: "Stay Local keeps this Goblintown on your machine. Goblintown Cloud adds SSO, friend codes, discovery, group chats, and shared country metadata through the official cloud backend.",
     cloudChoice: true,
   },
   {
@@ -11899,8 +11899,8 @@ const onboardingSteps = [
     popover: "country",
   },
   {
-    title: "Friends and Mail",
-    body: "Friend requests and DM threads are here. Opening a thread auto-marks unread messages as read.",
+    title: "Friends and Group Chats",
+    body: "Friend requests and group chat threads are here. Opening a thread auto-marks unread messages as read.",
     targetId: "btn-sidebar-settings",
     popover: "mail",
   },
@@ -12298,7 +12298,7 @@ function settingsSectionHtml(section) {
   const labels = {
     account: ["Account", "Sign in, cloud mode, and collaboration identity."],
     country: ["Country", "Town name, code, members, and role assignment."],
-    mail: ["Mail", "Friend requests, direct messages, and collaboration inbox."],
+    groups: ["Group Chats", "Friend group chats, shared threads, and collaboration rooms."],
     api: ["API", "LLM providers, model routing, and custom provider workflows."],
     reset: ["Reset", "Asteroid Mode and local/cloud cleanup controls."],
   };

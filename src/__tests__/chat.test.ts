@@ -241,7 +241,8 @@ describe("single goblin chat", () => {
 
   it("opens settings as an inline sidebar surface instead of a floating top menu", () => {
     assert.match(serverSource, /<section class="settings-surface" id="settings-surface" hidden/);
-    assert.match(serverSource, /<div class="settings-sidebar-panel" id="settings-sidebar-panel" hidden>[\s\S]*id="settings-sidebar-menu"[\s\S]*Account[\s\S]*Country[\s\S]*Mail[\s\S]*API[\s\S]*Voice[\s\S]*Import Records[\s\S]*Reset/);
+    assert.match(serverSource, /<div class="settings-sidebar-panel" id="settings-sidebar-panel" hidden>[\s\S]*id="settings-sidebar-menu"[\s\S]*Account[\s\S]*Country[\s\S]*Group Chats[\s\S]*API[\s\S]*Voice[\s\S]*Import Records[\s\S]*Reset/);
+    assert.doesNotMatch(serverSource, /data-settings-section="mail">Mail<\/button>/);
     assert.doesNotMatch(serverSource, /id="settings-surface-menu"/);
     assert.match(serverSource, /\.ops-sidebar\.settings-mode \.ops-main,[\s\S]*\.ops-sidebar\.settings-mode \.ops-head \.ops-toggle \{[\s\S]*display: none;/);
     assert.match(serverSource, /function setSidebarSettingsMode\(open\)/);
@@ -263,6 +264,18 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /fetch\("\/api\/context\/chats\/scan"/);
     assert.match(serverSource, /function importSettingsRecords\(all\)/);
     assert.match(serverSource, /fetch\("\/api\/context\/chats\/import"/);
+  });
+
+  it("renames the friends messaging surface to group chats", () => {
+    assert.match(serverSource, /data-settings-section="groups">Group Chats<\/button>/);
+    assert.match(serverSource, /groups: \["Group Chats", "Friend group chats, shared threads, and collaboration rooms\."\]/);
+    assert.match(serverSource, /<h3>Friends & Group Chats<\/h3>/);
+    assert.match(serverSource, /<h4>Group Chats<\/h4>/);
+    assert.match(serverSource, /encrypted group chat payloads/);
+    assert.match(serverSource, /No group chats yet\./);
+    assert.doesNotMatch(serverSource, /<h3>Friends & Mail<\/h3>/);
+    assert.doesNotMatch(serverSource, /<h4>Threads<\/h4>/);
+    assert.doesNotMatch(serverSource, /DM threads/);
   });
 
   it("loads chats and rites from the sidebar into the main surface", () => {
