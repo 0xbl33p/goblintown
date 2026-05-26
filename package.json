@@ -38,7 +38,7 @@
     "desktop": "npm run build && electron dist/desktop.js",
     "start": "node dist/cli.js",
     "serve": "node dist/cli.js serve",
-    "package:mac": "npm run build && electron-packager . Goblintown --platform=darwin --out=release --overwrite --ignore='^/src($|/)' --ignore='^/dist/__tests__($|/)' --ignore='^/.goblintown($|/)'",
+    "package:mac": "npm run build && electron-packager . Goblintown --platform=darwin --out=release --overwrite --extend-info=build/Info.plist --ignore='^/src($|/)' --ignore='^/dist/__tests__($|/)' --ignore='^/.goblintown($|/)'",
     "dist:mac": "npm run build && electron-builder --mac dmg --arm64",
     "dist:win": "npm run build && electron-builder --win nsis --x64",
     "dist:linux": "npm run build && electron-builder --linux AppImage --x64",
@@ -88,6 +88,9 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Goblintown uses the microphone when you enable live voice chat or speech-to-text."
+      },
       "notarize": true,
       "target": [
         "dmg"

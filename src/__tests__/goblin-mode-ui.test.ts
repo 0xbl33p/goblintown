@@ -7,7 +7,11 @@ import { fileURLToPath } from "node:url";
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const serverSource = readFileSync(join(repoRoot, "src", "server.ts"), "utf8");
 const cliSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
+const desktopSource = readFileSync(join(repoRoot, "src", "desktop.ts"), "utf8");
 const packageJson = readFileSync(join(repoRoot, "package.json"), "utf8");
+const macInfoPlist = readFileSync(join(repoRoot, "build", "Info.plist"), "utf8");
+const macEntitlements = readFileSync(join(repoRoot, "build", "entitlements.mac.plist"), "utf8");
+const macInheritEntitlements = readFileSync(join(repoRoot, "build", "entitlements.mac.inherit.plist"), "utf8");
 
 describe("AI-first Tank shell", () => {
   it("serves the full Tank shell from the default route", () => {
@@ -61,5 +65,18 @@ describe("AI-first Tank shell", () => {
     assert.match(packageJson, /"@electron\/packager"/);
     assert.match(packageJson, /"AppImage"/);
     assert.match(packageJson, /"nsis"/);
+  });
+
+  it("packages Electron with microphone permission support", () => {
+    assert.match(desktopSource, /systemPreferences\.askForMediaAccess\("microphone"\)/);
+    assert.match(desktopSource, /setPermissionCheckHandler/);
+    assert.match(desktopSource, /setPermissionRequestHandler/);
+    assert.match(desktopSource, /permission !== "media"/);
+    assert.match(desktopSource, /mediaTypes[\s\S]*includes\("audio"\)/);
+    assert.match(packageJson, /"extendInfo": \{[\s\S]*"NSMicrophoneUsageDescription"/);
+    assert.match(packageJson, /--extend-info=build\/Info\.plist/);
+    assert.match(macInfoPlist, /<key>NSMicrophoneUsageDescription<\/key>/);
+    assert.match(macEntitlements, /<key>com\.apple\.security\.device\.audio-input<\/key>/);
+    assert.match(macInheritEntitlements, /<key>com\.apple\.security\.device\.audio-input<\/key>/);
   });
 });
