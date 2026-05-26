@@ -19,7 +19,9 @@ Current beta release line: `goblintown@beta`.
 ## Download
 
 Beta 0.7 has real desktop installer packages: macOS DMGs, Windows one-click
-EXEs, and Linux AppImages. The intended download path is the GitHub prerelease:
+EXEs, and Linux AppImages. The full installers are built from this branch; the
+public GitHub Release URL below is the target once repository rules allow the
+`v0.7.0-beta.1` tag to be created:
 
 ```text
 https://github.com/water-bear86/goblintown/releases/tag/v0.7.0-beta.1
@@ -38,8 +40,8 @@ a time.
 | Linux | `Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` | Mark executable, launch. |
 | Linux ARM64 | `Goblintown-0.7.0-beta.1-linux-arm64.AppImage` | Mark executable, launch. |
 
-If the GitHub Release page is unavailable, the same beta 0.7 installer payloads
-are also committed in split form under
+Until that tag is allowed, the canonical public download is the split-parts
+fallback. The same beta 0.7 installer payloads are committed under
 [`release/parts`](release/parts/README.md) on the
 [`release/v0.7.0-beta.1`](https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts)
 branch. Concatenate the matching `*.part-*` files in lexical order, then run
@@ -927,9 +929,11 @@ ship together and are covered by the test suite:
 
 The Electron desktop shell packages the same local-first Tank app and starts its
 own embedded Goblintown server. Normal users should get a full DMG, EXE, or
-AppImage from the GitHub Release, not install from npm and not rebuild from
-source. The first-run path is kept to a few clicks: pick the AI provider or
-local model, choose local-only or cloud, then start chatting.
+AppImage from the GitHub Release once the `v0.7.0-beta.1` tag is allowed, not
+install from npm and not rebuild from source. Until then, the split-parts
+fallback carries the same installer bytes. The first-run path is kept to a few
+clicks: pick the AI provider or local model, choose local-only or cloud, then
+start chatting.
 
 The beta 0.7 artifact set is:
 

@@ -5,13 +5,13 @@ Release assets or new Git LFS objects are not available. It is a transport
 fallback for the same DMG, EXE, and AppImage files, not a separate package
 format.
 
-Preferred full-asset download:
+Target full-asset download once repository rules allow the `v0.7.0-beta.1` tag:
 
 ```text
 https://github.com/water-bear86/goblintown/releases/tag/v0.7.0-beta.1
 ```
 
-Split-parts fallback:
+Current canonical public download:
 
 ```text
 https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts
