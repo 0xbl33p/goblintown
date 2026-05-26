@@ -241,11 +241,17 @@ describe("single goblin chat", () => {
 
   it("opens settings as an inline sidebar surface instead of a floating top menu", () => {
     assert.match(serverSource, /<section class="settings-surface" id="settings-surface" hidden/);
-    assert.match(serverSource, /id="settings-surface-menu"[\s\S]*Account[\s\S]*Country[\s\S]*Mail[\s\S]*API[\s\S]*Voice[\s\S]*Import Records[\s\S]*Reset/);
+    assert.match(serverSource, /<div class="settings-sidebar-panel" id="settings-sidebar-panel" hidden>[\s\S]*id="settings-sidebar-menu"[\s\S]*Account[\s\S]*Country[\s\S]*Mail[\s\S]*API[\s\S]*Voice[\s\S]*Import Records[\s\S]*Reset/);
+    assert.doesNotMatch(serverSource, /id="settings-surface-menu"/);
+    assert.match(serverSource, /\.ops-sidebar\.settings-mode \.ops-main,[\s\S]*\.ops-sidebar\.settings-mode \.ops-head \.ops-toggle \{[\s\S]*display: none;/);
+    assert.match(serverSource, /function setSidebarSettingsMode\(open\)/);
+    assert.match(serverSource, /settingsSidebarPanel\.hidden = !open/);
+    assert.match(serverSource, /settingsSidebarBack\.onclick = \(\) => \{[\s\S]*setSidebarSettingsMode\(false\);[\s\S]*showChatThreadSurface\(\);/);
     assert.match(serverSource, /function showSettingsSurface\(\)/);
     assert.match(serverSource, /sidebarFullSettings\.onclick = \(\) => \{[\s\S]*showSettingsSurface\(\);/);
     assert.match(serverSource, /function showSettingsSection\(section\)/);
     assert.match(serverSource, /settingsPopover\.classList\.toggle\("open", false\)/);
+    assert.match(serverSource, /setSidebarSettingsMode\(true\);[\s\S]*\$\("settings-surface"\)\.hidden = false;/);
   });
 
   it("makes record import ready inside the settings surface", () => {

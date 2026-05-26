@@ -5419,6 +5419,60 @@ function tankHtml(
   }
   .sidebar-settings.open #settings-icon-closed { display: none; }
   .sidebar-settings:not(.open) #settings-icon-open { display: none; }
+  .settings-sidebar-panel[hidden] {
+    display: none;
+  }
+  .settings-sidebar-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: grid;
+    align-content: start;
+    gap: 0.72rem;
+  }
+  .settings-sidebar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .settings-sidebar-head strong {
+    color: #e6e2d3;
+    font-size: 1rem;
+  }
+  .settings-back {
+    border: 0;
+    background: transparent;
+    color: #a8b09a;
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+  }
+  .settings-back:hover {
+    color: #7cff5b;
+  }
+  .settings-sidebar-menu {
+    display: grid;
+    gap: 0.35rem;
+  }
+  .settings-sidebar-menu button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: #e6e2d3;
+    cursor: pointer;
+    font: inherit;
+    padding: 0.34rem 0;
+    text-align: left;
+  }
+  .settings-sidebar-menu button:hover,
+  .settings-sidebar-menu button.active {
+    color: #7cff5b;
+  }
+  .ops-sidebar.settings-mode .ops-main,
+  .ops-sidebar.settings-mode .ops-head .ops-toggle {
+    display: none;
+  }
   .sr-only {
     position: absolute !important;
     width: 1px !important;
@@ -5522,30 +5576,7 @@ function tankHtml(
     padding: clamp(1rem, 3vw, 2.2rem);
   }
   .settings-surface-inner {
-    display: grid;
-    grid-template-columns: minmax(180px, 0.28fr) minmax(0, 1fr);
-    gap: 1rem;
     width: min(980px, 100%);
-  }
-  .settings-surface-menu {
-    border-right: 1px solid rgba(124,255,91,0.16);
-    display: grid;
-    align-content: start;
-    gap: 0.25rem;
-    padding-right: 0.8rem;
-  }
-  .settings-surface-menu button {
-    border: 0;
-    background: transparent;
-    color: #e6e2d3;
-    cursor: pointer;
-    font: inherit;
-    padding: 0.34rem 0;
-    text-align: left;
-  }
-  .settings-surface-menu button:hover,
-  .settings-surface-menu button.active {
-    color: #7cff5b;
   }
   .settings-surface-panel {
     min-height: 22rem;
@@ -7138,6 +7169,21 @@ function tankHtml(
           </button>
         </div>
     </div>
+    <div class="settings-sidebar-panel" id="settings-sidebar-panel" hidden>
+      <div class="settings-sidebar-head">
+        <strong>Settings</strong>
+        <button class="settings-back" id="settings-sidebar-back" type="button">Back</button>
+      </div>
+      <nav class="settings-sidebar-menu" id="settings-sidebar-menu" aria-label="Settings sections">
+        <button class="active" type="button" data-settings-section="account">Account</button>
+        <button type="button" data-settings-section="country">Country</button>
+        <button type="button" data-settings-section="mail">Mail</button>
+        <button type="button" data-settings-section="api">API</button>
+        <button type="button" data-settings-section="voice">Voice</button>
+        <button type="button" data-settings-section="imports">Import Records</button>
+        <button type="button" data-settings-section="reset">Reset</button>
+      </nav>
+    </div>
   </aside>
 
   <div class="tank chat-mode codex-chat-surface" id="tank">
@@ -7173,18 +7219,9 @@ function tankHtml(
       </div>
       <section class="settings-surface" id="settings-surface" hidden aria-live="polite">
         <div class="settings-surface-inner">
-          <nav class="settings-surface-menu" id="settings-surface-menu" aria-label="Settings sections">
-            <button class="active" type="button" data-settings-section="account">Account</button>
-            <button type="button" data-settings-section="country">Country</button>
-            <button type="button" data-settings-section="mail">Mail</button>
-            <button type="button" data-settings-section="api">API</button>
-            <button type="button" data-settings-section="voice">Voice</button>
-            <button type="button" data-settings-section="imports">Import Records</button>
-            <button type="button" data-settings-section="reset">Reset</button>
-          </nav>
           <article class="settings-surface-panel" id="settings-surface-panel">
             <h2>Account</h2>
-            <p>Choose a section on the left. Existing settings controls stay connected while this becomes the full settings workbench.</p>
+            <p>Choose a section from the Settings sidebar. Existing settings controls stay connected while this becomes the full settings workbench.</p>
           </article>
         </div>
       </section>
@@ -7537,6 +7574,8 @@ const opsToggle = $("ops-toggle");
 const settingsTrigger = $("btn-sidebar-settings");
 const sidebarSettings = $("sidebar-settings");
 const sidebarFullSettings = $("btn-sidebar-full-settings");
+const settingsSidebarPanel = $("settings-sidebar-panel");
+const settingsSidebarBack = $("settings-sidebar-back");
 const settingsPopover = $("settings-popover");
 const resetChip = $("reset-chip");
 const settingsResetPanel = $("settings-reset-panel");
@@ -12235,15 +12274,22 @@ function setSidebarSelection(kind, id) {
 }
 
 function showChatThreadSurface() {
+  setSidebarSettingsMode(false);
   $("chat-thread").classList.remove("surface-hidden");
   $("root-rite-surface").hidden = true;
   $("settings-surface").hidden = true;
 }
 
 function showRiteSurface() {
+  setSidebarSettingsMode(false);
   $("chat-thread").classList.add("surface-hidden");
   $("root-rite-surface").hidden = false;
   $("settings-surface").hidden = true;
+}
+
+function setSidebarSettingsMode(open) {
+  $("ops-sidebar").classList.toggle("settings-mode", !!open);
+  settingsSidebarPanel.hidden = !open;
 }
 
 let settingsImportRecords = [];
@@ -12383,6 +12429,7 @@ function showSettingsSurface() {
   settingsPopover.classList.toggle("open", false);
   closeResetMenu();
   setSidebarSettingsOpen(false);
+  setSidebarSettingsMode(true);
   showChatMode();
   $("chat-thread").classList.add("surface-hidden");
   $("root-rite-surface").hidden = true;
@@ -12390,6 +12437,13 @@ function showSettingsSurface() {
   setSurfaceMode("settings");
   showSettingsSection("account");
 }
+
+settingsSidebarBack.onclick = () => {
+  setSidebarSettingsMode(false);
+  showChatMode();
+  showChatThreadSurface();
+  setSurfaceMode("chat");
+};
 
 function renderInlineRite(record) {
   const events = Array.isArray(record.events) ? record.events : [];
