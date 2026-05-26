@@ -29,12 +29,14 @@ first conversation, then walks through optional features one at a time.
 | Windows | `Goblintown-0.7.0-beta.1-win-x64.exe` | One-click NSIS installer with Start Menu and Desktop shortcuts. |
 | Linux | `Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` | Mark executable, launch. |
 
-For PRs and forks that cannot carry release uploads, installer candidates are
-also committed in split form under [`release/parts`](release/parts/README.md).
+For the unsigned beta 0.7 publish, installer candidates are committed in split
+form under [`release/parts`](release/parts/README.md) in
+[`water-bear86/goblintown`](https://github.com/water-bear86/goblintown/tree/codex/desktop-installers/release/parts).
 Concatenate the matching `*.part-*` files in lexical order, then run
 `shasum -a 256 -c release/parts/SHA256SUMS.txt` to verify the reconstructed
-installer. The committed beta 0.7 parts are unsigned candidate packages until
-Apple Developer ID and Windows signing credentials are available.
+installer. See [the beta 0.7 release note](docs/releases/0.7.0-beta.1.md) for
+platform-specific install notes. The committed beta 0.7 parts are unsigned
+packages until Apple Developer ID and Windows signing credentials are available.
 
 ## Background
 

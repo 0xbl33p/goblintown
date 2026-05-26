@@ -10,6 +10,7 @@ const cliHelpSource = readFileSync(join(repoRoot, "src", "cli-help.ts"), "utf8")
 const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
 const siteIndex = readFileSync(join(repoRoot, "site", "index.html"), "utf8");
 const desktopReleaseWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "desktop-release.yml"), "utf8");
+const beta07ReleaseNote = readFileSync(join(repoRoot, "docs", "releases", "0.7.0-beta.1.md"), "utf8");
 
 describe("docs and CLI help", () => {
   it("documents the Goblintown Cloud command in CLI help", () => {
@@ -53,6 +54,8 @@ describe("docs and CLI help", () => {
     assert.match(readme, /npm run release:ready/);
     assert.match(readme, /Gatekeeper or SmartScreen puzzle/);
     assert.match(readme, /\.github\/workflows\/desktop-release\.yml/);
+    assert.match(readme, /water-bear86\/goblintown/);
+    assert.match(readme, /docs\/releases\/0\.7\.0-beta\.1\.md/);
     assert.match(readme, /MAC_CSC_LINK/);
     assert.match(readme, /WIN_CSC_LINK/);
     assert.match(readme, /asks which AI provider should power it/);
@@ -101,6 +104,15 @@ describe("docs and CLI help", () => {
     assert.match(desktopReleaseWorkflow, /MAC_CSC_LINK/);
     assert.match(desktopReleaseWorkflow, /WIN_CSC_LINK/);
     assert.match(desktopReleaseWorkflow, /gh release upload/);
+  });
+
+  it("documents the unsigned beta 0.7 package location", () => {
+    assert.match(beta07ReleaseNote, /water-bear86\/goblintown/);
+    assert.match(beta07ReleaseNote, /codex\/desktop-installers\/release\/parts/);
+    assert.match(beta07ReleaseNote, /Gatekeeper friction/);
+    assert.match(beta07ReleaseNote, /SmartScreen warnings/);
+    assert.match(beta07ReleaseNote, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg\.part-\*/);
+    assert.match(beta07ReleaseNote, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
   });
 
   it("updates the marketing site copy for the Tank and cloud mode", () => {

@@ -7,6 +7,12 @@ Git LFS objects, so the installer artifacts in this folder are split into
 
 Beta 0.7 installers:
 
+Canonical repo location while GitHub Release tag creation is restricted:
+
+```text
+https://github.com/water-bear86/goblintown/tree/codex/desktop-installers/release/parts
+```
+
 ```sh
 cat release/parts/Goblintown-0.7.0-beta.1-mac-arm64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-arm64.dmg
 cat release/parts/Goblintown-0.7.0-beta.1-mac-x64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-x64.dmg
