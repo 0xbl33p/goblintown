@@ -1,7 +1,7 @@
-49ce42cb1d1bb9d7085800fc11520488d7fd576e79d2af83e8b2c865cd29eb9c  release/Goblintown-0.6.0-beta.1-mac-arm64.dmg
-a3a24c0214bb497ab7a40628ff443c6d2a6e181342a1d3b1f73162c476784e5a  release/Goblintown-0.6.0-beta.1-mac-x64.dmg
-b45c4efda6fc2a737a8772f8eef276f07741032032a7955a052918a21676068f  release/Goblintown-0.6.0-beta.1-linux-x86_64.AppImage
-febcae75e055616fd512bcd755681cc1dc96edc0cc47f7f2153551afc77747b2  release/Goblintown-0.6.0-beta.1-linux-arm64.AppImage
-d5ff9321f0d06cc1345de9346023f80387cb85adf9a3e3344c6b40ac6e2b2194  release/Goblintown-0.6.0-beta.1-win.exe
-88a4add73592a6f29e460e8d465ef37adbcf9eb8ebced15120f3ef1b39d090b5  release/Goblintown-0.6.0-beta.1-win-x64.exe
-9a6d6e6bf72706eafc38feb402921fe56eb9b6e3827f82f8a45215b9a3e016b3  release/Goblintown-0.6.0-beta.1-win-arm64.exe
+e43145fb9ae08e115f0cc858c43a4fa0af44ff792fbae52b688e89f55bb62d86  release/Goblintown-0.7.0-beta.1-mac-arm64.dmg
+f9919e092e959b16bf093c01ef3822e446e37a5278baf2788c47d2e33b2f6ef4  release/Goblintown-0.7.0-beta.1-mac-x64.dmg
+25147794eb1bf1d35c8c6b81561b6eadbe8188d3b57a1d0c5fee83145f699b5a  release/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage
+1863699ce17132aa38af6eedc5c29ca4d24472b2b6ae1d9a5bcbb930c94e298d  release/Goblintown-0.7.0-beta.1-linux-arm64.AppImage
+3b6ff133ea5f0e0f7399480596ecb686598ace897412475855b4151e5a683cb0  release/Goblintown-0.7.0-beta.1-win.exe
+7dff82e67af2bb507eccfa2b563ec507e06c80eb3804eb36c0a70427b92119bf  release/Goblintown-0.7.0-beta.1-win-x64.exe
+de2800413f2a01bb4a9445c98f322bc0298b566217847f8b60820bbe19413996  release/Goblintown-0.7.0-beta.1-win-arm64.exe
