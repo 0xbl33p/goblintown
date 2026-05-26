@@ -12,6 +12,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { makeTroll } from "./creatures.js";
+import { extractFirstJsonObject } from "./json-extract.js";
 import { callCreature } from "./openai-client.js";
 import type {
   Artifact,
@@ -251,30 +252,4 @@ export async function planTask(opts: {
   );
   const plan = parsePlanJson(text, opts.task);
   return { plan, usage: usage ? { totalTokens: usage.totalTokens } : undefined };
-}
-
-/* --------- internal --------- */
-
-function extractFirstJsonObject(s: string): string | null {
-  const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : s;
-  const start = candidate.indexOf("{");
-  if (start < 0) return null;
-  let depth = 0, inStr = false, esc = false;
-  for (let i = start; i < candidate.length; i++) {
-    const ch = candidate[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === "\\") esc = true;
-      else if (ch === '"') inStr = false;
-    } else {
-      if (ch === '"') inStr = true;
-      else if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) return candidate.slice(start, i + 1);
-      }
-    }
-  }
-  return null;
 }
