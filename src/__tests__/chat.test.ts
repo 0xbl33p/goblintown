@@ -248,6 +248,17 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /settingsPopover\.classList\.toggle\("open", false\)/);
   });
 
+  it("makes record import ready inside the settings surface", () => {
+    assert.match(serverSource, /settings-import-source/);
+    assert.match(serverSource, /settings-import-query/);
+    assert.match(serverSource, /settings-import-scan/);
+    assert.match(serverSource, /settings-import-all/);
+    assert.match(serverSource, /function scanSettingsImports\(\)/);
+    assert.match(serverSource, /fetch\("\/api\/context\/chats\/scan"/);
+    assert.match(serverSource, /function importSettingsRecords\(all\)/);
+    assert.match(serverSource, /fetch\("\/api\/context\/chats\/import"/);
+  });
+
   it("loads chats and rites from the sidebar into the main surface", () => {
     assert.match(serverSource, /data-surface-kind="chat" data-chat-id="bounty-72-chat"/);
     assert.match(serverSource, /data-surface-kind="rite" data-run-id="sample-bounty-72"/);

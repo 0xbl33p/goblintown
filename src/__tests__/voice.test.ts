@@ -168,4 +168,12 @@ describe("voice connectors", () => {
     assert.match(serverSource, /function goblinifyVoiceTranscript/);
     assert.match(serverSource, /fetch\("\/api\/voice\/transcribe"/);
   });
+
+  it("surfaces live voice actions from the full settings workbench", () => {
+    assert.match(serverSource, /data-settings-section="voice"/);
+    assert.match(serverSource, /settings-live-voice/);
+    assert.match(serverSource, /settings-voice-config/);
+    assert.match(serverSource, /settings-live-voice[\s\S]*setRootChatSpeakEnabled\(true\)[\s\S]*beginSpeechInput\(\)/);
+    assert.match(serverSource, /settings-voice-config[\s\S]*voiceChip\.click\(\)/);
+  });
 });

@@ -5563,6 +5563,47 @@ function tankHtml(
     margin: 0;
     color: #a8b09a;
   }
+  .settings-surface-actions,
+  .settings-surface-form {
+    display: grid;
+    gap: 0.55rem;
+    margin-top: 0.85rem;
+  }
+  .settings-surface-actions {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .settings-surface-panel button,
+  .settings-surface-panel input,
+  .settings-surface-panel select {
+    width: 100%;
+    border: 1px solid rgba(124,255,91,0.22);
+    border-radius: 4px;
+    background: rgba(6,10,6,0.72);
+    color: #e6e2d3;
+    font: inherit;
+    padding: 0.48rem 0.55rem;
+  }
+  .settings-surface-panel button {
+    cursor: pointer;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .settings-surface-panel button:hover {
+    border-color: #7cff5b;
+    color: #7cff5b;
+  }
+  .settings-import-results {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 0.75rem;
+    color: #a8b09a;
+    font-size: 0.76rem;
+  }
+  .settings-import-results code {
+    color: #7cff5b;
+    font-size: 0.7rem;
+  }
   .rite-inline-inner {
     width: min(980px, 100%);
     margin: 0 auto;
@@ -12205,21 +12246,137 @@ function showRiteSurface() {
   $("settings-surface").hidden = true;
 }
 
-function showSettingsSection(section) {
+let settingsImportRecords = [];
+
+function settingsSectionHtml(section) {
   const labels = {
     account: ["Account", "Sign in, cloud mode, and collaboration identity."],
     country: ["Country", "Town name, code, members, and role assignment."],
     mail: ["Mail", "Friend requests, direct messages, and collaboration inbox."],
     api: ["API", "LLM providers, model routing, and custom provider workflows."],
-    voice: ["Voice", "Speech input, TTS, browser voice, and external voice APIs."],
-    imports: ["Import Records", "Import prior chats and records into searchable memory."],
     reset: ["Reset", "Asteroid Mode and local/cloud cleanup controls."],
   };
+  if (section === "voice") {
+    return [
+      "<h2>Voice</h2>",
+      "<p>Start live chat, choose speech-only capture, or open connector settings for browser, OpenAI, Deepgram, local, or custom voice APIs.</p>",
+      "<div class=\\"settings-surface-actions\\">",
+      "<button id=\\"settings-live-voice\\" type=\\"button\\">Chat Live</button>",
+      "<button id=\\"settings-speak-only\\" type=\\"button\\">Speak Only</button>",
+      "<button id=\\"settings-listen-only\\" type=\\"button\\">Listen Only</button>",
+      "<button id=\\"settings-voice-config\\" type=\\"button\\">Voice API</button>",
+      "</div>",
+    ].join("");
+  }
+  if (section === "imports") {
+    return [
+      "<h2>Import Records</h2>",
+      "<p>Scan Codex sessions, ChatGPT exports, or a folder of chat records, then import them into searchable Hoard memory.</p>",
+      "<div class=\\"settings-surface-form\\">",
+      "<select id=\\"settings-import-source\\"><option value=\\"codex\\">Codex sessions</option><option value=\\"chatgpt\\">ChatGPT export</option><option value=\\"folder\\">Folder</option></select>",
+      "<input id=\\"settings-import-path\\" placeholder=\\"Optional path for export or folder\\" />",
+      "<input id=\\"settings-import-query\\" placeholder=\\"Optional filter text\\" />",
+      "<div class=\\"settings-surface-actions\\">",
+      "<button id=\\"settings-import-scan\\" type=\\"button\\">Scan</button>",
+      "<button id=\\"settings-import-all\\" type=\\"button\\">Import All</button>",
+      "</div>",
+      "<div class=\\"settings-import-results\\" id=\\"settings-import-results\\">Ready to scan previous chats.</div>",
+      "</div>",
+    ].join("");
+  }
   const [title, body] = labels[section] || labels.account;
+  return "<h2>" + title + "</h2><p>" + body + "</p>";
+}
+
+function wireSettingsPanel(section) {
+  if (section === "voice") {
+    $("settings-live-voice").onclick = () => {
+      showChatMode();
+      showChatThreadSurface();
+      setRootChatSpeakEnabled(true);
+      beginSpeechInput();
+    };
+    $("settings-speak-only").onclick = () => {
+      showChatMode();
+      showChatThreadSurface();
+      setRootChatSpeakEnabled(false);
+      beginSpeechInput();
+    };
+    $("settings-listen-only").onclick = () => {
+      showChatMode();
+      showChatThreadSurface();
+      setRootChatSpeakEnabled(true);
+      setRootChatStatus("voicePending", "listening for goblin replies");
+    };
+    $("settings-voice-config").onclick = () => {
+      closeSettingsPopover();
+      voiceChip.click();
+    };
+  }
+  if (section === "imports") {
+    $("settings-import-scan").onclick = () => scanSettingsImports();
+    $("settings-import-all").onclick = () => importSettingsRecords(true);
+  }
+}
+
+function settingsImportPayload() {
+  return {
+    source: $("settings-import-source").value,
+    path: $("settings-import-path").value.trim(),
+    query: $("settings-import-query").value.trim(),
+    limit: 50,
+  };
+}
+
+function renderSettingsImportRecords(records) {
+  const target = $("settings-import-results");
+  if (!records.length) {
+    target.textContent = "No matching records found.";
+    return;
+  }
+  target.innerHTML = records.slice(0, 10).map((record) =>
+    "<div><code>" + record.id + "</code> " + (record.title || "Untitled chat") + "</div>"
+  ).join("");
+}
+
+async function scanSettingsImports() {
+  const target = $("settings-import-results");
+  target.textContent = "Scanning previous chats...";
+  const r = await fetch("/api/context/chats/scan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settingsImportPayload()),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || "chat import scan failed");
+  settingsImportRecords = Array.isArray(body.records) ? body.records : [];
+  renderSettingsImportRecords(settingsImportRecords);
+}
+
+async function importSettingsRecords(all) {
+  const target = $("settings-import-results");
+  target.textContent = "Importing records...";
+  const payload = settingsImportPayload();
+  payload.all = !!all;
+  if (!all) payload.ids = settingsImportRecords.map((record) => record.id);
+  const r = await fetch("/api/context/chats/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || "chat import failed");
+  const count = Array.isArray(body.records) ? body.records.length : 0;
+  const artifacts = Array.isArray(body.artifacts) ? body.artifacts.length : 0;
+  target.textContent = "Imported " + count + " record(s), " + artifacts + " artifact(s).";
+}
+
+function showSettingsSection(section) {
   document.querySelectorAll("[data-settings-section]").forEach((button) => {
     button.classList.toggle("active", button.getAttribute("data-settings-section") === section);
   });
-  $("settings-surface-panel").innerHTML = "<h2>" + title + "</h2><p>" + body + "</p>";
+  $("settings-surface-panel").innerHTML = settingsSectionHtml(section);
+  wireSettingsPanel(section);
 }
 
 function showSettingsSurface() {
