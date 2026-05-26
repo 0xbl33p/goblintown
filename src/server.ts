@@ -7637,6 +7637,8 @@ const tickerText = $("ticker-text");
 const rootChatMessages = [];
 let rootChatOfferedTask = "";
 let rootChatSpeakEnabled = false;
+let rootChatSpeaking = false;
+let rootChatSpeechGeneration = 0;
 let rootChatVoiceMode = "text";
 let browserRecognition = null;
 let voiceRestartTimer = 0;
@@ -12714,7 +12716,11 @@ function setRootChatSpeakEnabled(enabled) {
   const button = $("root-chat-speak");
   button.setAttribute("aria-pressed", rootChatSpeakEnabled ? "true" : "false");
   button.textContent = rootChatSpeakEnabled ? "Speaking" : "Speak";
-  if (!rootChatSpeakEnabled && window.speechSynthesis) window.speechSynthesis.cancel();
+  if (!rootChatSpeakEnabled) {
+    rootChatSpeechGeneration += 1;
+    rootChatSpeaking = false;
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  }
   if (enabled && !rootChatSpeakEnabled) setRootChatStatus("voicePending", "browser text-to-speech unavailable");
 }
 
@@ -12741,9 +12747,12 @@ function pickGoblinVoice() {
 }
 
 function speakRootChatMessage(content) {
-  if (!rootChatSpeakEnabled || !browserTtsSupported()) return;
+  if (!rootChatSpeakEnabled || !browserTtsSupported()) return false;
   const text = goblinTtsText(content);
-  if (!text) return;
+  if (!text) return false;
+  stopVoiceInput();
+  const speechGeneration = rootChatSpeechGeneration + 1;
+  rootChatSpeechGeneration = speechGeneration;
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   const personality = $("root-chat-personality").value;
@@ -12752,12 +12761,21 @@ function speakRootChatMessage(content) {
   utterance.pitch = personality === "feral" || personality === "goblin_mode" ? 1.25 : 1.05;
   utterance.rate = personality === "stoic" ? 0.92 : personality === "feral" ? 1.12 : 1.0;
   utterance.volume = 1;
-  utterance.onstart = () => setRootChatStatus("voicePending", "goblin speaking");
-  utterance.onend = () => {
+  const finishSpeech = () => {
+    if (rootChatSpeechGeneration !== speechGeneration) return;
+    rootChatSpeaking = false;
     if (rootChatSpeakEnabled) setRootChatStatus("ready");
+    scheduleLiveVoiceRestart();
   };
-  utterance.onerror = () => setRootChatStatus("voicePending", "speech output failed");
+  rootChatSpeaking = true;
+  utterance.onstart = () => setRootChatStatus("voicePending", "goblin speaking");
+  utterance.onend = finishSpeech;
+  utterance.onerror = () => {
+    setRootChatStatus("voicePending", "speech output failed");
+    finishSpeech();
+  };
   window.speechSynthesis.speak(utterance);
+  return true;
 }
 
 function chatPersonaPick(kind) {
@@ -12852,9 +12870,10 @@ function stopVoiceInput(invalidate) {
 function scheduleLiveVoiceRestart(generation) {
   clearVoiceRestart();
   if (rootChatVoiceMode !== "full") return;
+  if (rootChatSpeaking) return;
   const expectedGeneration = generation === undefined ? voiceSessionGeneration : generation;
   voiceRestartTimer = setTimeout(() => {
-    if (rootChatVoiceMode !== "full" || voiceSessionGeneration !== expectedGeneration) return;
+    if (rootChatVoiceMode !== "full" || rootChatSpeaking || voiceSessionGeneration !== expectedGeneration) return;
     beginSpeechInput(expectedGeneration);
   }, 450);
 }
@@ -13262,7 +13281,7 @@ $("root-chat-form").addEventListener("submit", async (event) => {
     }
     rootChatMessages.push(body.message);
     appendRootChatMessage("assistant", body.message.content);
-    speakRootChatMessage(body.message.content);
+    const speakingReply = speakRootChatMessage(body.message.content);
     if (body.goblintownOffer && body.goblintownOffer.requested) {
       appendRootChatMessage("system", chatPersonaPick("handoff") + ". " + chatPersonaPick("riteStarting") + "...");
       await startGoblintownFromChat(body.goblintownOffer.task);
@@ -13270,7 +13289,7 @@ $("root-chat-form").addEventListener("submit", async (event) => {
       setRootChatOffer(body.goblintownOffer);
     }
     if (body.lootId) setRootChatStatus("saved", body.lootId);
-    else setRootChatStatus("ready");
+    else if (!speakingReply) setRootChatStatus("ready");
   } catch (err) {
     status.textContent = chatErrorMessage(err);
   } finally {

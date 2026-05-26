@@ -403,14 +403,19 @@ describe("single goblin chat", () => {
 
   it("wires browser text-to-speech for single-goblin replies", () => {
     assert.match(serverSource, /let rootChatSpeakEnabled = false/);
+    assert.match(serverSource, /let rootChatSpeaking = false/);
+    assert.match(serverSource, /let rootChatSpeechGeneration = 0/);
     assert.match(serverSource, /function browserTtsSupported\(\)/);
     assert.match(serverSource, /"speechSynthesis" in window && "SpeechSynthesisUtterance" in window/);
     assert.match(serverSource, /function goblinTtsText\(value\)/);
     assert.match(serverSource, /function speakRootChatMessage\(content\)/);
+    assert.match(serverSource, /stopVoiceInput\(\);[\s\S]*rootChatSpeaking = true/);
+    assert.match(serverSource, /const finishSpeech = \(\) => \{[\s\S]*rootChatSpeaking = false;[\s\S]*scheduleLiveVoiceRestart\(\);/);
     assert.match(serverSource, /new SpeechSynthesisUtterance\(text\)/);
     assert.match(serverSource, /window\.speechSynthesis\.speak\(utterance\)/);
     assert.match(serverSource, /\$\("root-chat-speak"\)\.onclick = \(\) =>/);
-    assert.match(serverSource, /speakRootChatMessage\(body\.message\.content\)/);
+    assert.match(serverSource, /const speakingReply = speakRootChatMessage\(body\.message\.content\)/);
+    assert.match(serverSource, /else if \(!speakingReply\) setRootChatStatus\("ready"\)/);
     assert.match(serverSource, /\["root-chat-speak", "Read single-goblin replies aloud with browser text-to-speech\."\]/);
   });
 

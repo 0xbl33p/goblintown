@@ -190,6 +190,8 @@ describe("voice connectors", () => {
     assert.match(serverSource, /function submitLiveVoiceInput\(\)/);
     assert.match(serverSource, /voiceSessionGeneration !== expectedGeneration/);
     assert.match(serverSource, /function stopVoiceInput\(invalidate\)[\s\S]*voiceSessionGeneration \+= 1/);
+    assert.match(serverSource, /if \(rootChatSpeaking\) return/);
+    assert.match(serverSource, /rootChatSpeaking \|\| voiceSessionGeneration !== expectedGeneration/);
     assert.match(serverSource, /recognition\.continuous = rootChatVoiceMode === "full"/);
     assert.match(serverSource, /submitLiveVoiceInput\(\);/);
     assert.match(serverSource, /scheduleLiveVoiceRestart\(activeGeneration\);/);
