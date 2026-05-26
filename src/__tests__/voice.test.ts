@@ -185,11 +185,15 @@ describe("voice connectors", () => {
 
   it("treats Chat Live as a hands-free conversation loop", () => {
     assert.match(serverSource, /let rootChatVoiceMode = "text"/);
-    assert.match(serverSource, /function scheduleLiveVoiceRestart\(\)/);
+    assert.match(serverSource, /let voiceSessionGeneration = 0/);
+    assert.match(serverSource, /function scheduleLiveVoiceRestart\(generation\)/);
     assert.match(serverSource, /function submitLiveVoiceInput\(\)/);
+    assert.match(serverSource, /voiceSessionGeneration !== expectedGeneration/);
+    assert.match(serverSource, /function stopVoiceInput\(invalidate\)[\s\S]*voiceSessionGeneration \+= 1/);
     assert.match(serverSource, /recognition\.continuous = rootChatVoiceMode === "full"/);
     assert.match(serverSource, /submitLiveVoiceInput\(\);/);
-    assert.match(serverSource, /scheduleLiveVoiceRestart\(\);/);
+    assert.match(serverSource, /scheduleLiveVoiceRestart\(activeGeneration\);/);
+    assert.match(serverSource, /if \(voiceRecorder === recorder\) voiceRecorder = null/);
     assert.match(serverSource, /live listening/);
     assert.doesNotMatch(serverSource, /recording; click Voice again to stop/);
   });

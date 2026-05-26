@@ -15,6 +15,15 @@ import {
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const serverSource = readFileSync(join(repoRoot, "src", "server.ts"), "utf8");
 
+function assertContainsInOrder(source: string, values: string[]): void {
+  let cursor = 0;
+  for (const value of values) {
+    const next = source.indexOf(value, cursor);
+    assert.notEqual(next, -1, `expected source to include ${value}`);
+    cursor = next + value.length;
+  }
+}
+
 describe("single goblin chat", () => {
   it("normalizes only user and assistant messages", () => {
     const messages = normalizeChatMessages([
@@ -242,7 +251,20 @@ describe("single goblin chat", () => {
   it("opens settings as an inline sidebar surface instead of a floating top menu", () => {
     assert.match(serverSource, /<section class="settings-surface" id="settings-surface" hidden/);
     assert.match(serverSource, /<div id="settings-panel-dock" hidden><\/div>/);
-    assert.match(serverSource, /<div class="settings-sidebar-panel" id="settings-sidebar-panel" hidden>[\s\S]*id="settings-sidebar-menu"[\s\S]*Account[\s\S]*Country[\s\S]*Group Chats[\s\S]*Add-ons[\s\S]*API[\s\S]*Voice[\s\S]*Solana Tools[\s\S]*Context APIs[\s\S]*Import Records[\s\S]*Reset/);
+    assertContainsInOrder(serverSource, [
+      '<div class="settings-sidebar-panel" id="settings-sidebar-panel" hidden>',
+      'id="settings-sidebar-menu"',
+      "Account",
+      "Country",
+      "Group Chats",
+      "Add-ons",
+      "API",
+      "Voice",
+      "Solana Tools",
+      "Context APIs",
+      "Import Records",
+      "Reset",
+    ]);
     assert.doesNotMatch(serverSource, /id="settings-sidebar-surface-panel"/);
     assert.doesNotMatch(serverSource, /data-settings-section="mail">Mail<\/button>/);
     assert.doesNotMatch(serverSource, /id="settings-surface-menu"/);
@@ -256,7 +278,18 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /function showSettingsSection\(section\)/);
     assert.match(serverSource, /settingsPopover\.classList\.toggle\("open", false\)/);
     assert.match(serverSource, /\$\("settings-surface-panel"\)\.innerHTML = settingsSectionHtml\(section\);/);
-    assert.match(serverSource, /const settingsEmbeddedPanelIds = \{[\s\S]*account: "auth-popover"[\s\S]*country: "country-popover"[\s\S]*groups: "mail-popover"[\s\S]*addons: "addon-popover"[\s\S]*api: "provider-popover"[\s\S]*voice: "voice-popover"[\s\S]*solana: "onchain-popover"[\s\S]*context: "sentiment-config-popover"[\s\S]*reset: "settings-reset-panel"/);
+    assertContainsInOrder(serverSource, [
+      "const settingsEmbeddedPanelIds = {",
+      'account: "auth-popover"',
+      'country: "country-popover"',
+      'groups: "mail-popover"',
+      'addons: "addon-popover"',
+      'api: "provider-popover"',
+      'voice: "voice-popover"',
+      'solana: "onchain-popover"',
+      'context: "sentiment-config-popover"',
+      'reset: "settings-reset-panel"',
+    ]);
     assert.match(serverSource, /function clearSettingsEmbeddedPanel\(\)/);
     assert.match(serverSource, /\.settings-surface-panel \.settings-embedded \{[\s\S]*position: static;[\s\S]*width: 100%;/);
     assert.match(serverSource, /target\.appendChild\(panel\);[\s\S]*panel\.classList\.add\("settings-embedded", "open"\);/);
@@ -338,11 +371,12 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /id="root-chat-voice" type="button" class="voice-trigger" title="Voice mode"/);
     assert.match(serverSource, /id="root-chat-voice"[\s\S]*textgoblinchat\.svg/);
     assert.match(serverSource, /class="voice-menu"[\s\S]*textgoblinchat\.svg[\s\S]*Text[\s\S]*fullgoblinchat\.svg[\s\S]*Chat Live[\s\S]*sttgoblinchat\.svg[\s\S]*Speak Only[\s\S]*ttsonlygoblinchat\.svg[\s\S]*Listen Only/);
-    assert.match(serverSource, /rootChatVoiceMode = mode/);
+    assert.match(serverSource, /function setRootChatVoiceMode\(mode\)/);
+    assert.match(serverSource, /\$\("root-chat-voice"\)\.onclick = \(\) => \{[\s\S]*if \(rootChatVoiceMode !== "text"\) \{[\s\S]*setRootChatVoiceMode\("text"\);/);
     assert.match(serverSource, /if \(mode === "text"\) \{[\s\S]*setRootChatSpeakEnabled\(false\);[\s\S]*return;/);
     assert.match(serverSource, /function setVoiceTriggerIcon\(button\)/);
     assert.match(serverSource, /recognition\.onerror = \(event\) => setRootChatStatus\("voicePending", voiceInputErrorMessage\(event\)\)/);
-    assert.match(serverSource, /toggleServerVoice\(\)\.catch\(\(err\) => \{[\s\S]*setRootChatStatus\("voicePending", voiceInputErrorMessage\(err\)\);/);
+    assert.match(serverSource, /toggleServerVoice\(activeGeneration\)\.catch\(\(err\) => \{[\s\S]*setRootChatStatus\("voicePending", voiceInputErrorMessage\(err\)\);/);
     assert.match(serverSource, /\.voice-menu \.voice-choice \{[\s\S]*background: transparent !important;[\s\S]*border: 0 !important;/);
     assert.doesNotMatch(serverSource, /\.voice-choice:hover,\n  \.voice-choice\.active,[^}]*background:/);
     assert.match(serverSource, /id="root-chat-personality-label"[\s\S]*goblin_mode/);
