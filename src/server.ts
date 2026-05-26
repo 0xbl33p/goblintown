@@ -65,6 +65,7 @@ import {
 import {
   CREATURE_KINDS,
   type Artifact,
+  type CountryConfig,
   type CountryJoinRequest,
   type CountryQueuedRite,
   type CreatureKind,
@@ -2783,7 +2784,7 @@ async function renderHome(
   ]);
   const driftSum = loot.reduce((s, l) => s + l.drift.driftRate, 0);
   const drift = loot.length ? driftSum / loot.length : 0;
-  res.send(tankHtml(warren.manifest.name, loot.length, rites.length, drift, runs));
+  res.send(tankHtml(warren.manifest.name, warren.manifest.country, loot.length, rites.length, drift, runs));
 }
 
 async function renderGoblinMode(
@@ -4178,15 +4179,25 @@ function sidebarStatusGlyph(status: string): string {
   }
 }
 
+function townIdentityLabel(warrenName: string, countryConfig: CountryConfig | undefined): string {
+  const country = normalizeCountryConfig(countryConfig);
+  const id = country.countryId ? country.countryId.slice(0, 6).toUpperCase() : warrenName;
+  const code = country.countryCode || "LOCAL";
+  return `${id} · ${code}`;
+}
+
 function tankHtml(
   warrenName: string,
+  countryConfig: CountryConfig | undefined,
   lootCount: number,
   riteCount: number,
   drift: number,
   runs: Map<string, RunState>,
 ): string {
+  const townIdentity = townIdentityLabel(warrenName, countryConfig);
   const initial = JSON.stringify({
     warren: warrenName,
+    townIdentity,
     loot: lootCount,
     rites: riteCount,
     drift,
@@ -4246,8 +4257,6 @@ function tankHtml(
     color: var(--muted); font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase;
   }
   .strip .name { color: var(--fg-bright); font-weight: 600; }
-  .strip .stat { color: var(--fg); }
-  .strip .stat b { color: var(--accent); font-weight: 600; }
   .strip .grow { flex: 1; }
   .strip .clock { color: var(--muted); }
   .strip .tier { color: var(--warn); }
@@ -5233,12 +5242,39 @@ function tankHtml(
     display: grid;
     gap: 0.34rem;
   }
+  .sidebar-list.collapsed .sidebar-items {
+    display: none;
+  }
   .sidebar-label {
     margin: 0.45rem 0 0.15rem;
     color: #a8b09a;
     font-size: 0.72rem;
     letter-spacing: 0.12em;
     text-transform: uppercase;
+  }
+  .sidebar-section-toggle {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: #a8b09a;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0;
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-align: left;
+    text-transform: uppercase;
+  }
+  .sidebar-section-toggle::after {
+    content: "⌄";
+    color: #7cff5b;
+    font-size: 0.72rem;
+  }
+  .sidebar-list.collapsed .sidebar-section-toggle::after {
+    content: "›";
   }
   .sidebar-item {
     width: 100%;
@@ -5470,11 +5506,62 @@ function tankHtml(
   .rite-surface[hidden] {
     display: none;
   }
+  .settings-surface[hidden] {
+    display: none;
+  }
   .rite-surface {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
     padding: clamp(1rem, 3vw, 2.2rem);
+  }
+  .settings-surface {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: clamp(1rem, 3vw, 2.2rem);
+  }
+  .settings-surface-inner {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.28fr) minmax(0, 1fr);
+    gap: 1rem;
+    width: min(980px, 100%);
+  }
+  .settings-surface-menu {
+    border-right: 1px solid rgba(124,255,91,0.16);
+    display: grid;
+    align-content: start;
+    gap: 0.25rem;
+    padding-right: 0.8rem;
+  }
+  .settings-surface-menu button {
+    border: 0;
+    background: transparent;
+    color: #e6e2d3;
+    cursor: pointer;
+    font: inherit;
+    padding: 0.34rem 0;
+    text-align: left;
+  }
+  .settings-surface-menu button:hover,
+  .settings-surface-menu button.active {
+    color: #7cff5b;
+  }
+  .settings-surface-panel {
+    min-height: 22rem;
+    border: 1px solid rgba(124,255,91,0.16);
+    border-radius: 8px;
+    background: rgba(13,15,12,0.5);
+    padding: 1rem;
+  }
+  .settings-surface-panel h2 {
+    margin: 0 0 0.45rem;
+    color: #e6e2d3;
+    font-size: 1.1rem;
+  }
+  .settings-surface-panel p {
+    margin: 0;
+    color: #a8b09a;
   }
   .rite-inline-inner {
     width: min(980px, 100%);
@@ -6648,13 +6735,10 @@ function tankHtml(
 <div class="warren" id="warren" data-tier="0">
 
   <div class="strip">
-    <span class="name">WARREN · ${esc(warrenName)}</span>
-    <span class="stat"><b id="stat-loot">${lootCount}</b> loot</span>
-    <span class="stat"><b id="stat-rites">${riteCount}</b> rites</span>
-    <span class="stat">drift <b id="stat-drift">${drift.toFixed(3)}</b></span>
+    <span class="name" id="town-identity">Goblintown · ${esc(townIdentity)}</span>
     <span class="grow"></span>
-    <span class="tier" id="tier-display">tier 0 · empty plot</span>
-    <span class="clock" id="clock">idle</span>
+    <span class="tier" id="tier-display">tier 1 · unincorporated</span>
+    <span class="clock" id="surface-mode">chat</span>
   </div>
 
   <div class="settings-popover" id="settings-popover">
@@ -6976,15 +7060,19 @@ function tankHtml(
         <button class="sr-only" id="btn-thesis" type="button" title="Build a thesis rite">Thesis</button>
         <button class="sr-only" id="btn-sentiment" type="button" title="Run sentiment tools">Sentiment</button>
         <button class="sr-only" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
-        <section class="sidebar-list" aria-label="Chats">
-          <div class="sidebar-label">CHATS</div>
-          <button class="sidebar-item active" type="button" data-surface-kind="chat" data-chat-id="bounty-72-chat" title="Bounty issue #72 chat">Bounty issue #72 chat</button>
-          <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="solana-wallet-question" title="Solana wallet question">Solana wallet question</button>
-          <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="readme-cleanup-chat" title="README cleanup chat">README cleanup chat</button>
+        <section class="sidebar-list" data-sidebar-section="chats" aria-label="Chats">
+          <button class="sidebar-section-toggle" type="button" data-sidebar-toggle="chats" aria-expanded="true">CHATS</button>
+          <div class="sidebar-items">
+            <button class="sidebar-item active" type="button" data-surface-kind="chat" data-chat-id="bounty-72-chat" title="Bounty issue #72 chat">Bounty issue #72 chat</button>
+            <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="solana-wallet-question" title="Solana wallet question">Solana wallet question</button>
+            <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="readme-cleanup-chat" title="README cleanup chat">README cleanup chat</button>
+          </div>
         </section>
-        <section class="sidebar-list" aria-label="Rites">
-          <div class="sidebar-label">RITES</div>
-          ${sidebarRiteButtons(runs)}
+        <section class="sidebar-list" data-sidebar-section="rites" aria-label="Rites">
+          <button class="sidebar-section-toggle" type="button" data-sidebar-toggle="rites" aria-expanded="true">RITES</button>
+          <div class="sidebar-items">
+            ${sidebarRiteButtons(runs)}
+          </div>
         </section>
       </div>
         <div class="sidebar-settings" id="sidebar-settings">
@@ -7042,6 +7130,23 @@ function tankHtml(
           </section>
         </div>
       </div>
+      <section class="settings-surface" id="settings-surface" hidden aria-live="polite">
+        <div class="settings-surface-inner">
+          <nav class="settings-surface-menu" id="settings-surface-menu" aria-label="Settings sections">
+            <button class="active" type="button" data-settings-section="account">Account</button>
+            <button type="button" data-settings-section="country">Country</button>
+            <button type="button" data-settings-section="mail">Mail</button>
+            <button type="button" data-settings-section="api">API</button>
+            <button type="button" data-settings-section="voice">Voice</button>
+            <button type="button" data-settings-section="imports">Import Records</button>
+            <button type="button" data-settings-section="reset">Reset</button>
+          </nav>
+          <article class="settings-surface-panel" id="settings-surface-panel">
+            <h2>Account</h2>
+            <p>Choose a section on the left. Existing settings controls stay connected while this becomes the full settings workbench.</p>
+          </article>
+        </div>
+      </section>
       <form class="chat-composer" id="root-chat-form">
         <div class="chat-composer-inner">
           <div class="chat-offer-inline" id="root-chat-offer">
@@ -7362,6 +7467,9 @@ function tankHtml(
 
   <div class="ticker" id="ticker">
     <span class="dot">●</span> <span id="ticker-text">idle</span>
+    <span class="status-stats" id="status-stats">
+      <b id="stat-loot">${lootCount}</b> loot · <b id="stat-rites">${riteCount}</b> rites · drift <b id="stat-drift">${drift.toFixed(3)}</b>
+    </span>
   </div>
 
 </div>
@@ -7448,6 +7556,30 @@ function closeSettingsPopover() {
   closeResetMenu();
 }
 
+function setSurfaceMode(mode) {
+  $("surface-mode").textContent = mode;
+}
+
+function setSidebarSectionCollapsed(section, collapsed) {
+  const root = document.querySelector('[data-sidebar-section="' + section + '"]');
+  const toggle = document.querySelector('[data-sidebar-toggle="' + section + '"]');
+  if (!root || !toggle) return;
+  root.classList.toggle("collapsed", !!collapsed);
+  toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+}
+
+document.querySelectorAll("[data-sidebar-toggle]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const section = button.getAttribute("data-sidebar-toggle") || "";
+    const root = document.querySelector('[data-sidebar-section="' + section + '"]');
+    setSidebarSectionCollapsed(section, !(root && root.classList.contains("collapsed")));
+  });
+});
+
+document.querySelectorAll("[data-settings-section]").forEach((button) => {
+  button.addEventListener("click", () => showSettingsSection(button.getAttribute("data-settings-section") || "account"));
+});
+
 function closeTopPopovers(exceptId) {
   ["auth-popover", "country-popover", "mail-popover", "addon-popover", "onchain-popover", "sentiment-tool-popover", "sentiment-config-popover", "provider-popover", "voice-popover"].forEach((id) => {
     if (id === exceptId) return;
@@ -7479,7 +7611,7 @@ settingsTrigger.onclick = () => {
 
 sidebarFullSettings.onclick = () => {
   closeTopPopovers("");
-  setSettingsOpen(true);
+  showSettingsSurface();
 };
 
 resetChip.onclick = () => {
@@ -8614,23 +8746,25 @@ applyFallbackTips();
 
 /* Town tier from real warren stats */
 function tierOf(rites) {
+  if (rites >= 80) return 7;
+  if (rites >= 48) return 6;
+  if (rites >= 24) return 5;
   if (rites >= 12) return 4;
   if (rites >= 6)  return 3;
   if (rites >= 2)  return 2;
-  if (rites >= 1)  return 1;
-  return 0;
+  return 1;
 }
-const tierName = ["empty plot","settlement","camp","village","town"];
+const tierName = ["unincorporated","hamlet","village","town","city","metropolis","city-state","goblin empire"];
 function applyStats(stats) {
   const t = tierOf(stats.rites);
   warren.dataset.tier = t;
   $("stat-loot").textContent = stats.loot;
   $("stat-rites").textContent = stats.rites;
   $("stat-drift").textContent = (stats.drift ?? 0).toFixed(3);
-  $("tier-display").textContent = "tier " + t + " · " + tierName[t];
+  $("tier-display").textContent = "tier " + t + " · " + tierName[t - 1];
   const piles = ["", "💰", "💰💰", "💰💰💰", "💰💰💰💰💎"];
   $("hoard").textContent = piles[t] || "";
-  if (stats.rites === 0) setTicker("idle — empty plot, awaiting first rite");
+  if (stats.rites === 0) setTicker("idle — unincorporated, awaiting first rite");
   else if (!ticker.classList.contains("live")) setTicker("idle — " + stats.rites + " rites in this town");
 }
 applyStats(INITIAL);
@@ -12062,11 +12196,42 @@ function setSidebarSelection(kind, id) {
 function showChatThreadSurface() {
   $("chat-thread").classList.remove("surface-hidden");
   $("root-rite-surface").hidden = true;
+  $("settings-surface").hidden = true;
 }
 
 function showRiteSurface() {
   $("chat-thread").classList.add("surface-hidden");
   $("root-rite-surface").hidden = false;
+  $("settings-surface").hidden = true;
+}
+
+function showSettingsSection(section) {
+  const labels = {
+    account: ["Account", "Sign in, cloud mode, and collaboration identity."],
+    country: ["Country", "Town name, code, members, and role assignment."],
+    mail: ["Mail", "Friend requests, direct messages, and collaboration inbox."],
+    api: ["API", "LLM providers, model routing, and custom provider workflows."],
+    voice: ["Voice", "Speech input, TTS, browser voice, and external voice APIs."],
+    imports: ["Import Records", "Import prior chats and records into searchable memory."],
+    reset: ["Reset", "Asteroid Mode and local/cloud cleanup controls."],
+  };
+  const [title, body] = labels[section] || labels.account;
+  document.querySelectorAll("[data-settings-section]").forEach((button) => {
+    button.classList.toggle("active", button.getAttribute("data-settings-section") === section);
+  });
+  $("settings-surface-panel").innerHTML = "<h2>" + title + "</h2><p>" + body + "</p>";
+}
+
+function showSettingsSurface() {
+  settingsPopover.classList.toggle("open", false);
+  closeResetMenu();
+  setSidebarSettingsOpen(false);
+  showChatMode();
+  $("chat-thread").classList.add("surface-hidden");
+  $("root-rite-surface").hidden = true;
+  $("settings-surface").hidden = false;
+  setSurfaceMode("settings");
+  showSettingsSection("account");
 }
 
 function renderInlineRite(record) {
@@ -12156,12 +12321,13 @@ function selectSidebarSurface(kind, id) {
 
 function showChatMode() {
   tank.classList.add("chat-mode");
-  $("clock").textContent = "chat";
+  setSurfaceMode("chat");
   setLaunchButtonsDisabled(false);
 }
 
 function showTankMode() {
   tank.classList.remove("chat-mode");
+  setSurfaceMode("rite");
 }
 
 function appendRootChatMessage(role, content, opts) {
@@ -12459,7 +12625,7 @@ async function startGoblintownFromChat(task) {
   hideResumePanel();
   lastTask = cleanTask;
   setLaunchButtonsDisabled(true);
-  $("clock").textContent = "rite running";
+  setSurfaceMode("rite running");
   resetRunStage(false, 3);
   setTicker("POSTing rite ...", true);
   try {
@@ -13193,7 +13359,7 @@ async function refreshResumePanel(runId, fallbackIsPlan) {
     if (canResumeRecord(record)) {
       showResumePanel(record);
       setLaunchButtonsDisabled(false);
-      $("clock").textContent = (fallbackIsPlan ? "plan" : "rite") + " · " + runStatus(record);
+      setSurfaceMode((fallbackIsPlan ? "plan" : "rite") + " · " + runStatus(record));
     }
   } catch {}
 }
@@ -13638,7 +13804,7 @@ $("resume-start").onclick = async () => {
     showTankMode();
     resetRunStage(isPlan, packSize);
     setLaunchButtonsDisabled(true);
-    $("clock").textContent = isPlan ? "plan running" : "rite running";
+    setSurfaceMode(isPlan ? "plan running" : "rite running");
     rememberActiveRun(body.runId, isPlan);
     history.replaceState(null, "", "/?run=" + encodeURIComponent(body.runId));
     setTicker("resumed as " + body.runId, true);
@@ -13782,7 +13948,7 @@ $("rite-form").addEventListener("submit", async (e) => {
   lastTask = payload.task;
   showTankMode();
   setLaunchButtonsDisabled(true);
-  $("clock").textContent = isPlan ? "plan running" : "rite running";
+  setSurfaceMode(isPlan ? "plan running" : "rite running");
   resetRunStage(isPlan, payload.packSize);
   setTicker(isPlan ? "POSTing plan ..." : "POSTing rite ...", true);
 
@@ -13801,7 +13967,7 @@ $("rite-form").addEventListener("submit", async (e) => {
   } catch (err) {
     setTicker("error: " + (err.message || err));
     setLaunchButtonsDisabled(false);
-    $("clock").textContent = "idle";
+    setSurfaceMode("chat");
   }
 });
 
@@ -13824,7 +13990,7 @@ $("thesis-form").addEventListener("submit", async (e) => {
   lastTask = "Thesis: " + (payload.subject || "");
   showTankMode();
   setLaunchButtonsDisabled(true);
-  $("clock").textContent = "thesis running";
+  setSurfaceMode("thesis running");
   resetRunStage(false, 3);
   setTicker("POSTing thesis ...", true);
 
@@ -13843,7 +14009,7 @@ $("thesis-form").addEventListener("submit", async (e) => {
   } catch (err) {
     setTicker("thesis error: " + (err.message || err));
     setLaunchButtonsDisabled(false);
-    $("clock").textContent = "idle";
+    setSurfaceMode("chat");
   }
 });
 
@@ -13933,7 +14099,7 @@ function openStream(runId, isPlan, opts) {
     clearRememberedRun(runId);
     hideResumePanel();
     setLaunchButtonsDisabled(false);
-    $("clock").textContent = "idle";
+    setSurfaceMode("chat");
     setTimeout(refreshStats, 400);
     setTimeout(() => {
       ["c-raccoon","c-gremlin","c-troll","c-pigeon"].forEach(id => setState(id,"idle"));
@@ -13974,7 +14140,7 @@ function openStream(runId, isPlan, opts) {
     es.close();
     activeStream = null;
     setLaunchButtonsDisabled(false);
-    $("clock").textContent = "idle";
+    setSurfaceMode("chat");
     goHomeAllGoblins(300);
     setTimeout(() => refreshResumePanel(runId, isPlan), 350);
   });
@@ -14260,7 +14426,7 @@ async function attachToRunFromUrl() {
 
     const status = runStatus(record);
     const label = record.done ? status : "watching live";
-    $("clock").textContent = isPlan ? "plan · " + label : "rite · " + label;
+    setSurfaceMode(isPlan ? "plan · " + label : "rite · " + label);
     setTicker((isPlan ? "plan " : "rite ") + runId + " · " + label, true);
     setLaunchButtonsDisabled(!record.done);
     if (canResumeRecord(record)) {

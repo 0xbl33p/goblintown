@@ -50,8 +50,8 @@ describe("Tank app smoke", () => {
     assert.equal(response.status, 200);
     assert.match(html, /<div class="workarea goblin-shell" id="workarea">/);
     assert.match(html, /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">/);
-    assert.match(html, /<section class="sidebar-list" aria-label="Chats">[\s\S]*Bounty issue #72 chat[\s\S]*Solana wallet question[\s\S]*README cleanup chat[\s\S]*<\/section>/);
-    assert.match(html, /<section class="sidebar-list" aria-label="Rites">[\s\S]*Bounty issue #72[\s\S]*Provider setup audit[\s\S]*Tank UI simplification[\s\S]*<\/section>/);
+    assert.match(html, /<section class="sidebar-list" data-sidebar-section="chats" aria-label="Chats">[\s\S]*data-sidebar-toggle="chats"[\s\S]*Bounty issue #72 chat[\s\S]*Solana wallet question[\s\S]*README cleanup chat[\s\S]*<\/section>/);
+    assert.match(html, /<section class="sidebar-list" data-sidebar-section="rites" aria-label="Rites">[\s\S]*data-sidebar-toggle="rites"[\s\S]*Bounty issue #72[\s\S]*Provider setup audit[\s\S]*Tank UI simplification[\s\S]*<\/section>/);
     assert.match(html, /data-surface-kind="chat" data-chat-id="bounty-72-chat"/);
     assert.match(html, /data-surface-kind="rite" data-run-id="sample-bounty-72"/);
     assert.match(html, /id="root-rite-surface"/);
@@ -68,7 +68,7 @@ describe("Tank app smoke", () => {
     assert.match(html, /id="root-chat-send"[^>]*title="Send \(Enter\)"[\s\S]*↑/);
     assert.match(html, /id="root-chat-speak"[^>]*class="sr-only"/);
     assert.doesNotMatch(html, />Speak<\/button>/);
-    assert.doesNotMatch(html, />Voice<\/button>/);
+    assert.doesNotMatch(html, /<button[^>]*id="root-chat-voice"[^>]*>Voice<\/button>/);
     assert.doesNotMatch(html, /Max tokens/);
     assert.doesNotMatch(html, /Live Tank/);
     assert.doesNotMatch(html, /id="ops-line"/);

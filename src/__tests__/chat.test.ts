@@ -223,13 +223,38 @@ describe("single goblin chat", () => {
     assert.doesNotMatch(serverSource, /Live Tank/);
   });
 
+  it("collapses sidebar sections and moves town stats to the status bar", () => {
+    assert.match(serverSource, /<span class="name" id="town-identity">Goblintown ·/);
+    assert.doesNotMatch(serverSource, /<span class="name">WARREN ·/);
+    assert.doesNotMatch(serverSource, /<span class="stat"><b id="stat-loot"/);
+    assert.match(serverSource, /<span class="status-stats" id="status-stats">[\s\S]*id="stat-loot"[\s\S]*id="stat-rites"[\s\S]*id="stat-drift"/);
+    assert.match(serverSource, /const tierName = \["unincorporated","hamlet","village","town","city"/);
+    assert.match(serverSource, /id="surface-mode">chat<\/span>/);
+    assert.match(serverSource, /function setSurfaceMode\(mode\)/);
+    assert.match(serverSource, /setSurfaceMode\("chat"\)/);
+    assert.match(serverSource, /setSurfaceMode\("rite"\)/);
+    assert.match(serverSource, /class="sidebar-section-toggle"[\s\S]*data-sidebar-toggle="chats"[\s\S]*CHATS/);
+    assert.match(serverSource, /class="sidebar-section-toggle"[\s\S]*data-sidebar-toggle="rites"[\s\S]*RITES/);
+    assert.match(serverSource, /function setSidebarSectionCollapsed\(section, collapsed\)/);
+    assert.match(serverSource, /\.sidebar-list\.collapsed \.sidebar-items \{[\s\S]*display: none;/);
+  });
+
+  it("opens settings as an inline sidebar surface instead of a floating top menu", () => {
+    assert.match(serverSource, /<section class="settings-surface" id="settings-surface" hidden/);
+    assert.match(serverSource, /id="settings-surface-menu"[\s\S]*Account[\s\S]*Country[\s\S]*Mail[\s\S]*API[\s\S]*Voice[\s\S]*Import Records[\s\S]*Reset/);
+    assert.match(serverSource, /function showSettingsSurface\(\)/);
+    assert.match(serverSource, /sidebarFullSettings\.onclick = \(\) => \{[\s\S]*showSettingsSurface\(\);/);
+    assert.match(serverSource, /function showSettingsSection\(section\)/);
+    assert.match(serverSource, /settingsPopover\.classList\.toggle\("open", false\)/);
+  });
+
   it("loads chats and rites from the sidebar into the main surface", () => {
     assert.match(serverSource, /data-surface-kind="chat" data-chat-id="bounty-72-chat"/);
     assert.match(serverSource, /data-surface-kind="rite" data-run-id="sample-bounty-72"/);
     assert.match(serverSource, /id="root-rite-surface"/);
     assert.match(serverSource, /id="root-rite-discussion"/);
     assert.match(serverSource, /function sidebarRiteButtons\(runs: Map<string, RunState>\)/);
-    assert.match(serverSource, /res\.send\(tankHtml\(warren\.manifest\.name, loot\.length, rites\.length, drift, runs\)\)/);
+    assert.match(serverSource, /res\.send\(tankHtml\(warren\.manifest\.name, warren\.manifest\.country, loot\.length, rites\.length, drift, runs\)\)/);
     assert.match(serverSource, /\[\.\.\.runs\.values\(\)\][\s\S]*sort\(\(a, b\) => b\.record\.startedAt - a\.record\.startedAt\)[\s\S]*slice\(0, 6\)/);
     assert.match(serverSource, /function selectSidebarSurface\(kind, id\)/);
     assert.match(serverSource, /function renderInlineRite\(record\)/);
@@ -245,7 +270,7 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /function setRootChatStatus\(kind, detail\)/);
     assert.match(
       serverSource,
-      /<div class="chat-thread" id="chat-thread"[\s\S]*<\/div>[\s\S]*<form class="chat-composer" id="root-chat-form">/,
+      /<div class="chat-thread" id="chat-thread"[\s\S]*<section class="settings-surface" id="settings-surface" hidden[\s\S]*<form class="chat-composer" id="root-chat-form">/,
     );
     assert.match(serverSource, /id="root-chat-send"[^>]*type="submit"[^>]*title="Send \(Enter\)"[\s\S]*↑/);
     assert.match(serverSource, /id="root-chat-voice" type="button" class="voice-trigger" title="Voice mode"/);
@@ -258,7 +283,7 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /id="root-chat-personality-label"[\s\S]*goblin_mode/);
     assert.match(serverSource, /class="personality-menu"[\s\S]*chipper[\s\S]*nerdy[\s\S]*stoic[\s\S]*cynical[\s\S]*feral[\s\S]*goblin_mode/);
     assert.match(serverSource, /<button id="root-chat-speak" type="button" class="sr-only" title="Speak replies" aria-label="Speak replies" aria-pressed="false">/);
-    assert.doesNotMatch(serverSource, />Voice<\/button>/);
+    assert.doesNotMatch(serverSource, /<button[^>]*id="root-chat-voice"[^>]*>Voice<\/button>/);
     assert.doesNotMatch(serverSource, />Speak<\/button>/);
     assert.doesNotMatch(serverSource, /Max tokens/);
     assert.match(serverSource, /<select id="root-chat-model"/);
