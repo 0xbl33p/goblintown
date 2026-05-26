@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -31,6 +32,34 @@ function commandOk(file, args) {
   }
 }
 
+function commandResult(file, args) {
+  try {
+    const output = execFileSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return { ok: true, output };
+  } catch (err) {
+    return {
+      ok: false,
+      output: err.stdout?.toString() || err.stderr?.toString() || err.message,
+    };
+  }
+}
+
+function verifyMacDmgAppSignature(artifact) {
+  if (process.platform !== "darwin") return { ok: true, output: "skipped outside macOS" };
+  const dmg = join(root, "release", artifact);
+  if (!existsSync(dmg)) return { ok: false, output: `${artifact} missing` };
+  const mount = mkdtempSync(join(tmpdir(), "goblintown-release-dmg-"));
+  try {
+    const attach = commandResult("hdiutil", ["attach", dmg, "-mountpoint", mount, "-nobrowse", "-readonly"]);
+    if (!attach.ok) return attach;
+    const app = join(mount, "Goblintown.app");
+    return commandResult("codesign", ["--verify", "--deep", "--strict", "--verbose=4", app]);
+  } finally {
+    commandResult("hdiutil", ["detach", mount]);
+    rmSync(mount, { recursive: true, force: true });
+  }
+}
+
 add("package version is beta 0.7", /^0\.7\.0-beta\.\d+$/.test(version), version);
 add("release parts directory exists", existsSync(partDir), "release/parts");
 
@@ -44,6 +73,11 @@ if (existsSync(partDir)) {
 
 const checksumOutput = commandOk("shasum", ["-a", "256", "-c", "release/parts/SHA256SUMS.txt"]);
 add("split installer checksums verify", !/FAILED|No such file|not found/i.test(checksumOutput), checksumOutput.trim());
+
+for (const artifact of requiredArtifacts.filter((name) => name.endsWith(".dmg"))) {
+  const result = verifyMacDmgAppSignature(artifact);
+  add(`${artifact} contains a valid macOS app signature`, result.ok, result.output.trim());
+}
 
 const macSigningSecret = Boolean(process.env.MAC_CSC_LINK || process.env.CSC_LINK);
 const macSigningPassword = Boolean(process.env.MAC_CSC_KEY_PASSWORD || process.env.CSC_KEY_PASSWORD);
