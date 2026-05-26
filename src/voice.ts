@@ -31,7 +31,7 @@ export function normalizeVoiceConfig(value: unknown): VoiceConfig {
   const provider = normalizeVoiceProvider(input.provider);
   const baseURL = stringOrUndefined(input.baseURL);
   const apiKeyEnv = isEnvName(input.apiKeyEnv) ? input.apiKeyEnv : undefined;
-  const model = stringOrUndefined(input.model);
+  const model = normalizeVoiceModel(provider, stringOrUndefined(input.model));
   const language = stringOrUndefined(input.language) ?? "en-US";
   const prompt = stringOrUndefined(input.prompt) ?? DEFAULT_VOICE_PROMPT;
   return {
@@ -172,6 +172,13 @@ function normalizeVoiceProvider(value: unknown): VoiceProviderId {
     value === "browser"
     ? value
     : "browser";
+}
+
+function normalizeVoiceModel(provider: VoiceProviderId, model: string | undefined): string | undefined {
+  if (provider === "deepgram") {
+    if (!model || /^aura-/i.test(model)) return "nova-3";
+  }
+  return model;
 }
 
 function compactHeaders(headers: Record<string, string | undefined>): Record<string, string> {

@@ -7637,6 +7637,9 @@ const tickerText = $("ticker-text");
 const rootChatMessages = [];
 let rootChatOfferedTask = "";
 let rootChatSpeakEnabled = false;
+let rootChatVoiceMode = "text";
+let browserRecognition = null;
+let voiceRestartTimer = 0;
 const CHAT_PERSONA = ${JSON.stringify(CHAT_PERSONA_UI)};
 const goblinPile = $("goblin-pile");
 const goblinExplosion = $("goblin-explosion");
@@ -12771,6 +12774,37 @@ function chatErrorMessage(err) {
   return chatPersonaPick("errorPrefix") + ": " + message;
 }
 
+function voicePermissionRuntimeLabel() {
+  const ua = (navigator.userAgent || "").toLowerCase();
+  if (ua.includes("electron")) return "Goblintown in macOS System Settings > Privacy & Security > Microphone";
+  if (ua.includes("codex")) return "the Codex app or your browser in macOS System Settings > Privacy & Security > Microphone";
+  return "this browser in site settings and macOS System Settings > Privacy & Security > Microphone";
+}
+
+function voiceInputErrorMessage(err) {
+  const name = err && err.name ? String(err.name) : "";
+  const message = err && err.message ? String(err.message) : String(err || "");
+  const combined = (name + " " + message).toLowerCase();
+  if (
+    combined.includes("notallowed") ||
+    combined.includes("not allowed") ||
+    combined.includes("permission") ||
+    combined.includes("denied") ||
+    combined.includes("403") ||
+    combined.includes("service-not-allowed") ||
+    combined.includes("service not allowed")
+  ) {
+    return "microphone permission denied; allow " + voicePermissionRuntimeLabel() + ", then try Speak Only or Chat Live again";
+  }
+  if (combined.includes("network")) {
+    return "browser speech service is blocked; set Voice API to OpenAI, Deepgram, local, or custom in Settings";
+  }
+  if (combined.includes("notfound") || combined.includes("no device") || combined.includes("device not found")) {
+    return "no microphone found; connect or select an input device, then try again";
+  }
+  return message || "microphone capture failed";
+}
+
 function goblinifyVoiceTranscript(value) {
   return (value || "")
     .replace(/\\b rights?\\b/gi, " rite")
@@ -12791,27 +12825,66 @@ function appendVoiceTranscript(value) {
   input.focus();
 }
 
+function clearVoiceRestart() {
+  if (voiceRestartTimer) clearTimeout(voiceRestartTimer);
+  voiceRestartTimer = 0;
+}
+
+function stopVoiceInput() {
+  clearVoiceRestart();
+  if (browserRecognition) {
+    const recognition = browserRecognition;
+    browserRecognition = null;
+    recognition.onend = null;
+    recognition.onerror = null;
+    try { recognition.stop(); } catch {}
+  }
+  if (voiceRecorder && voiceRecorder.state === "recording") {
+    try { voiceRecorder.stop(); } catch {}
+  }
+}
+
+function scheduleLiveVoiceRestart() {
+  clearVoiceRestart();
+  if (rootChatVoiceMode !== "full") return;
+  voiceRestartTimer = setTimeout(() => beginSpeechInput(), 450);
+}
+
+function submitLiveVoiceInput() {
+  const input = $("root-chat-input");
+  if (rootChatVoiceMode !== "full" || !input.value.trim()) return false;
+  stopVoiceInput();
+  $("root-chat-form").requestSubmit();
+  return true;
+}
+
 function startBrowserVoice() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    setRootChatStatus("voicePending", "browser speech unavailable; configure a voice API in Settings");
+    setRootChatStatus("voicePending", "browser speech unavailable; configure OpenAI, Deepgram, local, or custom voice in Settings");
     return;
   }
+  stopVoiceInput();
   const recognition = new SpeechRecognition();
+  browserRecognition = recognition;
   recognition.lang = voiceConfig.language || "en-US";
   recognition.interimResults = false;
   recognition.maxAlternatives = 1;
-  recognition.onstart = () => setRootChatStatus("voicePending", "listening");
-  recognition.onerror = (event) => setRootChatStatus("voicePending", event.error || "speech error");
+  recognition.continuous = rootChatVoiceMode === "full";
+  recognition.onstart = () => setRootChatStatus("voicePending", rootChatVoiceMode === "full" ? "live listening" : "listening");
+  recognition.onerror = (event) => setRootChatStatus("voicePending", voiceInputErrorMessage(event));
   recognition.onresult = (event) => {
     const transcript = event.results && event.results[0] && event.results[0][0]
       ? event.results[0][0].transcript
       : "";
     appendVoiceTranscript(transcript);
     setRootChatStatus("ready", "voice captured");
+    submitLiveVoiceInput();
   };
   recognition.onend = () => {
+    if (browserRecognition === recognition) browserRecognition = null;
     if (!$("root-chat-input").value.trim()) setRootChatStatus("ready");
+    scheduleLiveVoiceRestart();
   };
   recognition.start();
 }
@@ -12865,16 +12938,26 @@ async function toggleServerVoice() {
     const blob = new Blob(voiceChunks, { type: voiceRecorder.mimeType || "audio/webm" });
     voiceChunks = [];
     transcribeVoiceBlob(blob).catch((err) => {
-      $("root-chat-status").textContent = chatErrorMessage(err);
+      setRootChatStatus("voicePending", voiceInputErrorMessage(err));
+    }).finally(() => {
+      if (!submitLiveVoiceInput()) scheduleLiveVoiceRestart();
     });
   };
   voiceRecorder.start();
-  setRootChatStatus("voicePending", "recording; click Voice again to stop");
+  if (rootChatVoiceMode === "full") {
+    setRootChatStatus("voicePending", "live listening");
+    setTimeout(() => {
+      if (voiceRecorder && voiceRecorder.state === "recording") voiceRecorder.stop();
+    }, 4200);
+  } else {
+    setRootChatStatus("voicePending", "recording");
+  }
 }
 
 function resetRootChat() {
   const thread = $("chat-thread");
   if (window.speechSynthesis) window.speechSynthesis.cancel();
+  stopVoiceInput();
   showChatThreadSurface();
   rootChatMessages.splice(0, rootChatMessages.length);
   thread.innerHTML = "";
@@ -13037,7 +13120,7 @@ $("root-rite-resume").onclick = () => {
 function beginSpeechInput() {
   if (voiceConfig.provider && voiceConfig.provider !== "browser") {
     toggleServerVoice().catch((err) => {
-      $("root-chat-status").textContent = chatErrorMessage(err);
+      setRootChatStatus("voicePending", voiceInputErrorMessage(err));
     });
   } else {
     startBrowserVoice();
@@ -13065,16 +13148,21 @@ function setVoiceTriggerIcon(button) {
 document.querySelectorAll(".voice-choice").forEach((button) => {
   button.addEventListener("click", () => {
     const mode = button.getAttribute("data-voice-mode") || "full";
+    rootChatVoiceMode = mode;
     document.querySelectorAll(".voice-choice").forEach((choice) => choice.classList.toggle("active", choice === button));
     setVoiceTriggerIcon(button);
     setVoiceMenuOpen(false);
     $("root-chat-input").focus();
     if (mode === "text") {
+      stopVoiceInput();
       setRootChatSpeakEnabled(false);
+      setRootChatStatus("ready");
       return;
     }
     if (mode === "tts") {
+      stopVoiceInput();
       setRootChatSpeakEnabled(true);
+      setRootChatStatus("ready", "listen only");
       return;
     }
     setRootChatSpeakEnabled(mode === "full");
@@ -13154,6 +13242,7 @@ $("root-chat-form").addEventListener("submit", async (event) => {
   } finally {
     send.disabled = false;
     input.focus();
+    scheduleLiveVoiceRestart();
   }
 });
 

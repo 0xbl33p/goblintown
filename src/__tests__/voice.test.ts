@@ -40,6 +40,17 @@ describe("voice connectors", () => {
     assert.match(config.prompt ?? "", /Goblintown/);
   });
 
+  it("normalizes Deepgram voice models to speech-to-text models", () => {
+    assert.equal(
+      normalizeVoiceConfig({ provider: "deepgram", model: "aura-2-draco-en" }).model,
+      "nova-3",
+    );
+    assert.equal(
+      normalizeVoiceConfig({ provider: "deepgram" }).model,
+      "nova-3",
+    );
+  });
+
   it("rejects malformed config values back to safe browser defaults", () => {
     const config = normalizeVoiceConfig({
       provider: "../deepgram",
@@ -166,7 +177,21 @@ describe("voice connectors", () => {
     assert.match(serverSource, /app\.post\("\/api\/voice\/transcribe"/);
     assert.match(serverSource, /SpeechRecognition \|\| window\.webkitSpeechRecognition/);
     assert.match(serverSource, /function goblinifyVoiceTranscript/);
+    assert.match(serverSource, /function voiceInputErrorMessage\(err\)/);
+    assert.match(serverSource, /microphone permission denied; allow/);
+    assert.match(serverSource, /Privacy & Security > Microphone/);
     assert.match(serverSource, /fetch\("\/api\/voice\/transcribe"/);
+  });
+
+  it("treats Chat Live as a hands-free conversation loop", () => {
+    assert.match(serverSource, /let rootChatVoiceMode = "text"/);
+    assert.match(serverSource, /function scheduleLiveVoiceRestart\(\)/);
+    assert.match(serverSource, /function submitLiveVoiceInput\(\)/);
+    assert.match(serverSource, /recognition\.continuous = rootChatVoiceMode === "full"/);
+    assert.match(serverSource, /submitLiveVoiceInput\(\);/);
+    assert.match(serverSource, /scheduleLiveVoiceRestart\(\);/);
+    assert.match(serverSource, /live listening/);
+    assert.doesNotMatch(serverSource, /recording; click Voice again to stop/);
   });
 
   it("surfaces live voice actions from the full settings workbench", () => {
