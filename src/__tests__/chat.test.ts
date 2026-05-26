@@ -241,6 +241,7 @@ describe("single goblin chat", () => {
 
   it("opens settings as an inline sidebar surface instead of a floating top menu", () => {
     assert.match(serverSource, /<section class="settings-surface" id="settings-surface" hidden/);
+    assert.match(serverSource, /<div id="settings-panel-dock" hidden><\/div>/);
     assert.match(serverSource, /<div class="settings-sidebar-panel" id="settings-sidebar-panel" hidden>[\s\S]*id="settings-sidebar-menu"[\s\S]*Account[\s\S]*Country[\s\S]*Group Chats[\s\S]*API[\s\S]*Voice[\s\S]*Import Records[\s\S]*Reset/);
     assert.doesNotMatch(serverSource, /id="settings-sidebar-surface-panel"/);
     assert.doesNotMatch(serverSource, /data-settings-section="mail">Mail<\/button>/);
@@ -255,7 +256,20 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /function showSettingsSection\(section\)/);
     assert.match(serverSource, /settingsPopover\.classList\.toggle\("open", false\)/);
     assert.match(serverSource, /\$\("settings-surface-panel"\)\.innerHTML = settingsSectionHtml\(section\);/);
+    assert.match(serverSource, /const settingsEmbeddedPanelIds = \{[\s\S]*account: "auth-popover"[\s\S]*country: "country-popover"[\s\S]*groups: "mail-popover"[\s\S]*api: "provider-popover"[\s\S]*voice: "voice-popover"[\s\S]*reset: "settings-reset-panel"/);
+    assert.match(serverSource, /function clearSettingsEmbeddedPanel\(\)/);
+    assert.match(serverSource, /\.settings-surface-panel \.settings-embedded \{[\s\S]*position: static;[\s\S]*width: 100%;/);
+    assert.match(serverSource, /target\.appendChild\(panel\);[\s\S]*panel\.classList\.add\("settings-embedded", "open"\);/);
     assert.match(serverSource, /setSidebarSettingsMode\(true\);[\s\S]*\$\("chat-main"\)\.classList\.add\("settings-active"\);[\s\S]*\$\("settings-surface"\)\.hidden = false;/);
+  });
+
+  it("embeds real settings controls into the main settings canvas", () => {
+    assert.match(serverSource, /id="auth-popover"[\s\S]*id="cloud-local-mode"[\s\S]*id="cloud-enable-mode"[\s\S]*id="auth-google-btn"/);
+    assert.match(serverSource, /id="country-popover"[\s\S]*id="country-enabled"[\s\S]*id="country-backend"[\s\S]*id="country-save"/);
+    assert.match(serverSource, /id="mail-popover"[\s\S]*id="friend-target-code"[\s\S]*id="dm-compose-body"[\s\S]*id="dm-send-btn"/);
+    assert.match(serverSource, /id="provider-popover"[\s\S]*id="provider-preset"[\s\S]*id="provider-baseurl"[\s\S]*id="provider-save"/);
+    assert.match(serverSource, /id="voice-popover"[\s\S]*id="voice-provider"[\s\S]*id="voice-baseurl"[\s\S]*id="voice-save"/);
+    assert.match(serverSource, /id="settings-reset-panel"[\s\S]*id="btn-asteroid"[\s\S]*Asteroid Mode/);
   });
 
   it("keeps new chat and new rite as pinned unboxed sidebar actions", () => {

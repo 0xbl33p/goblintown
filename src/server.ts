@@ -5649,6 +5649,47 @@ function tankHtml(
     border-color: #7cff5b;
     color: #7cff5b;
   }
+  .settings-surface-panel .settings-embedded {
+    position: static;
+    inset: auto;
+    width: 100%;
+    max-height: none;
+    box-shadow: none;
+    margin: 0;
+  }
+  .settings-surface-panel .auth-popover.settings-embedded,
+  .settings-surface-panel .country-popover.settings-embedded,
+  .settings-surface-panel .mail-popover.settings-embedded,
+  .settings-surface-panel .settings-reset-panel.settings-embedded {
+    display: block;
+  }
+  .settings-surface-panel .provider-popover.settings-embedded {
+    display: flex;
+  }
+  .settings-surface-panel .addon-popover.settings-embedded {
+    display: block;
+  }
+  .settings-surface-panel .onchain-popover.settings-embedded,
+  .settings-surface-panel .sentiment-popover.settings-embedded {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .settings-surface-panel .settings-danger-action {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.45rem;
+    align-items: center;
+    text-align: left;
+  }
+  .settings-surface-panel .settings-danger-action span {
+    color: #ffb347;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .settings-surface-panel .settings-danger-action strong {
+    color: #ff5d73;
+  }
   .settings-import-results {
     display: grid;
     gap: 0.35rem;
@@ -7142,6 +7183,7 @@ function tankHtml(
       </div>
     </div>
   </div>
+  <div id="settings-panel-dock" hidden></div>
 
   <div class="workarea goblin-shell" id="workarea">
   <aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">
@@ -12322,6 +12364,25 @@ function setSidebarSettingsMode(open) {
 }
 
 let settingsImportRecords = [];
+const settingsEmbeddedPanelIds = {
+  account: "auth-popover",
+  country: "country-popover",
+  groups: "mail-popover",
+  api: "provider-popover",
+  voice: "voice-popover",
+  reset: "settings-reset-panel",
+};
+
+function clearSettingsEmbeddedPanel() {
+  const dock = $("settings-panel-dock");
+  document.querySelectorAll(".settings-embedded").forEach((panel) => {
+    panel.classList.remove("settings-embedded", "open");
+    panel.removeAttribute("data-settings-embedded");
+    panel.setAttribute("aria-hidden", "true");
+    dock.appendChild(panel);
+  });
+  if (resetChip) resetChip.setAttribute("aria-expanded", "false");
+}
 
 function settingsSectionHtml(section) {
   const labels = {
@@ -12364,6 +12425,33 @@ function settingsSectionHtml(section) {
 }
 
 function wireSettingsPanel(section) {
+  const embeddedId = settingsEmbeddedPanelIds[section];
+  if (embeddedId) {
+    const panel = $(embeddedId);
+    if (panel) {
+      const target = $("settings-surface-panel");
+      target.innerHTML = "";
+      target.appendChild(panel);
+      panel.classList.add("settings-embedded", "open");
+      panel.dataset.settingsEmbedded = "true";
+      panel.setAttribute("aria-hidden", "false");
+      if (section === "account" && typeof updateAuthUi === "function") updateAuthUi();
+      if (section === "country") {
+        if (typeof setCountryTab === "function") setCountryTab("overview");
+        if (typeof loadCountryMenu === "function") loadCountryMenu().catch(() => {});
+      }
+      if (section === "groups" && mailMenuReload) {
+        mailMenuReload(true).catch(() => {});
+      }
+      if (section === "api" && typeof loadProviderMenu === "function") void loadProviderMenu();
+      if (section === "voice" && typeof loadVoiceMenu === "function") void loadVoiceMenu();
+      if (section === "reset") {
+        panel.classList.add("open");
+        resetChip.setAttribute("aria-expanded", "true");
+      }
+    }
+    return;
+  }
   if (section === "voice") {
     $("settings-live-voice").onclick = () => {
       showChatMode();
@@ -12450,6 +12538,7 @@ function showSettingsSection(section) {
   document.querySelectorAll("[data-settings-section]").forEach((button) => {
     button.classList.toggle("active", button.getAttribute("data-settings-section") === section);
   });
+  clearSettingsEmbeddedPanel();
   $("settings-surface-panel").innerHTML = settingsSectionHtml(section);
   wireSettingsPanel(section);
 }
