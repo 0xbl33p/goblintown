@@ -5491,18 +5491,6 @@ function tankHtml(
   .settings-sidebar-menu button.active {
     color: #7cff5b;
   }
-  .settings-sidebar-content {
-    border-top: 1px solid rgba(124,255,91,0.16);
-    margin-top: 0.15rem;
-    padding-top: 0.85rem;
-  }
-  .settings-sidebar-content .settings-surface-panel {
-    min-height: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    padding: 0;
-  }
   .chat-main.settings-active .chat-composer {
     display: none;
   }
@@ -7222,12 +7210,6 @@ function tankHtml(
         <button type="button" data-settings-section="imports">Import Records</button>
         <button type="button" data-settings-section="reset">Reset</button>
       </nav>
-      <div class="settings-sidebar-content" id="settings-sidebar-content">
-        <article class="settings-surface-panel" id="settings-sidebar-surface-panel">
-          <h2>Account</h2>
-          <p>Choose a section above. Settings details stay in this sidebar while chat remains out of the way.</p>
-        </article>
-      </div>
     </div>
   </aside>
 
@@ -12468,7 +12450,7 @@ function showSettingsSection(section) {
   document.querySelectorAll("[data-settings-section]").forEach((button) => {
     button.classList.toggle("active", button.getAttribute("data-settings-section") === section);
   });
-  $("settings-sidebar-surface-panel").innerHTML = settingsSectionHtml(section);
+  $("settings-surface-panel").innerHTML = settingsSectionHtml(section);
   wireSettingsPanel(section);
 }
 
@@ -12481,7 +12463,7 @@ function showSettingsSurface() {
   $("chat-main").classList.add("settings-active");
   $("chat-thread").classList.add("surface-hidden");
   $("root-rite-surface").hidden = true;
-  $("settings-surface").hidden = true;
+  $("settings-surface").hidden = false;
   setSurfaceMode("settings");
   showSettingsSection("account");
 }

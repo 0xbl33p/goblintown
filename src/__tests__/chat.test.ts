@@ -242,7 +242,7 @@ describe("single goblin chat", () => {
   it("opens settings as an inline sidebar surface instead of a floating top menu", () => {
     assert.match(serverSource, /<section class="settings-surface" id="settings-surface" hidden/);
     assert.match(serverSource, /<div class="settings-sidebar-panel" id="settings-sidebar-panel" hidden>[\s\S]*id="settings-sidebar-menu"[\s\S]*Account[\s\S]*Country[\s\S]*Group Chats[\s\S]*API[\s\S]*Voice[\s\S]*Import Records[\s\S]*Reset/);
-    assert.match(serverSource, /<div class="settings-sidebar-content" id="settings-sidebar-content">[\s\S]*id="settings-sidebar-surface-panel"/);
+    assert.doesNotMatch(serverSource, /id="settings-sidebar-surface-panel"/);
     assert.doesNotMatch(serverSource, /data-settings-section="mail">Mail<\/button>/);
     assert.doesNotMatch(serverSource, /id="settings-surface-menu"/);
     assert.match(serverSource, /\.ops-sidebar\.settings-mode \.ops-main,[\s\S]*\.ops-sidebar\.settings-mode \.ops-head \.ops-toggle \{[\s\S]*display: none;/);
@@ -254,8 +254,8 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /sidebarFullSettings\.onclick = \(\) => \{[\s\S]*showSettingsSurface\(\);/);
     assert.match(serverSource, /function showSettingsSection\(section\)/);
     assert.match(serverSource, /settingsPopover\.classList\.toggle\("open", false\)/);
-    assert.match(serverSource, /\$\("settings-sidebar-surface-panel"\)\.innerHTML = settingsSectionHtml\(section\);/);
-    assert.match(serverSource, /setSidebarSettingsMode\(true\);[\s\S]*\$\("chat-main"\)\.classList\.add\("settings-active"\);[\s\S]*\$\("settings-surface"\)\.hidden = true;/);
+    assert.match(serverSource, /\$\("settings-surface-panel"\)\.innerHTML = settingsSectionHtml\(section\);/);
+    assert.match(serverSource, /setSidebarSettingsMode\(true\);[\s\S]*\$\("chat-main"\)\.classList\.add\("settings-active"\);[\s\S]*\$\("settings-surface"\)\.hidden = false;/);
   });
 
   it("keeps new chat and new rite as pinned unboxed sidebar actions", () => {
