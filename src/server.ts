@@ -5215,6 +5215,10 @@ function tankHtml(
     display: grid;
     grid-template-columns: 1fr;
     gap: 0.65rem;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.15rem;
   }
   .ops-quick .btn {
     padding: 0.72rem 0.85rem;
@@ -5292,6 +5296,7 @@ function tankHtml(
   .sidebar-settings {
     position: relative;
     margin-top: auto;
+    flex: 0 0 auto;
     display: grid;
     gap: 0.6rem;
   }
@@ -6981,6 +6986,7 @@ function tankHtml(
           <div class="sidebar-label">RITES</div>
           ${sidebarRiteButtons(runs)}
         </section>
+      </div>
         <div class="sidebar-settings" id="sidebar-settings">
           <div class="sidebar-settings-card" id="sidebar-settings-card">
             <div class="settings-card-head">
@@ -7002,7 +7008,6 @@ function tankHtml(
             <span>Settings</span>
           </button>
         </div>
-      </div>
     </div>
   </aside>
 

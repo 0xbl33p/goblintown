@@ -211,6 +211,9 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /id="settings-icon-open"[^>]*src="\/assets\/settingsopen\.svg"/);
     assert.match(serverSource, /id="sidebar-settings-card"[\s\S]*Goblin Country[\s\S]*Moss Ledger[\s\S]*Code: MOSS7 · Signed in[\s\S]*Never trust a clean cache/);
     assert.match(serverSource, /\.sidebar-settings-card \{[\s\S]*position: absolute;[\s\S]*bottom: calc\(100% \+ 0\.75rem\);/);
+    assert.match(serverSource, /<div class="ops-quick">[\s\S]*<\/div>\n        <div class="sidebar-settings" id="sidebar-settings">/);
+    assert.match(serverSource, /\.ops-quick \{[\s\S]*flex: 1 1 auto;[\s\S]*min-height: 0;[\s\S]*overflow-y: auto;/);
+    assert.match(serverSource, /\.sidebar-settings \{[\s\S]*margin-top: auto;[\s\S]*flex: 0 0 auto;/);
     assert.match(serverSource, /\.settings-icon \{[\s\S]*width: 1\.9rem;[\s\S]*aspect-ratio: 210 \/ 246;[\s\S]*height: auto;/);
     assert.match(serverSource, /\.settings-trigger \{[\s\S]*align-items: center;/);
     assert.doesNotMatch(serverSource, /id="btn-api-configs"/);
