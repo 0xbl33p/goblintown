@@ -49,6 +49,8 @@ describe("docs and CLI help", () => {
     assert.match(readme, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe/);
     assert.match(readme, /release\/parts/);
     assert.match(readme, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
+    assert.match(readme, /npm run release:ready/);
+    assert.match(readme, /Gatekeeper or SmartScreen puzzle/);
     assert.match(readme, /asks which AI provider should power it/);
     assert.match(readme, /## Goblintown Cloud/);
     assert.match(readme, /Stay Local/);

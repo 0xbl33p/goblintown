@@ -928,6 +928,18 @@ Then verify:
 shasum -a 256 -c release/parts/SHA256SUMS.txt
 ```
 
+Before calling a build public, run:
+
+```bash
+npm run release:ready
+```
+
+That readiness gate checks the beta 0.7 artifact set, verifies split-package
+checksums, and refuses to pass unless Apple Developer ID, Apple notarization,
+and Windows signing credentials are available. This keeps the human-facing
+download path honest: public installers should be a few-click experience, not a
+Gatekeeper or SmartScreen puzzle.
+
 Installer artifacts are written to `release/`, which is intentionally
 gitignored:
 
