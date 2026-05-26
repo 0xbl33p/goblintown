@@ -8,11 +8,29 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const cliSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
 const cliHelpSource = readFileSync(join(repoRoot, "src", "cli-help.ts"), "utf8");
 const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+const docsIndex = readFileSync(join(repoRoot, "docs", "README.md"), "utf8");
+const beta07Install = readFileSync(join(repoRoot, "docs", "install", "beta-0.7.md"), "utf8");
+const pipelineDoc = readFileSync(join(repoRoot, "docs", "architecture", "pipeline.md"), "utf8");
+const singleGoblinDoc = readFileSync(join(repoRoot, "docs", "modes", "single-goblin.md"), "utf8");
+const goblintownModeDoc = readFileSync(join(repoRoot, "docs", "modes", "goblintown-mode.md"), "utf8");
+const extensionsOverview = readFileSync(join(repoRoot, "docs", "extensions", "overview.md"), "utf8");
+const skillsDoc = readFileSync(join(repoRoot, "docs", "extensions", "skills.md"), "utf8");
+const cloudCountryDoc = readFileSync(join(repoRoot, "docs", "features", "cloud-country.md"), "utf8");
+const researchToolsDoc = readFileSync(join(repoRoot, "docs", "features", "research-tools.md"), "utf8");
+const cliReference = readFileSync(join(repoRoot, "docs", "reference", "cli.md"), "utf8");
+const httpApiReference = readFileSync(join(repoRoot, "docs", "reference", "http-api.md"), "utf8");
+const storageLayout = readFileSync(join(repoRoot, "docs", "reference", "storage-layout.md"), "utf8");
 const siteIndex = readFileSync(join(repoRoot, "site", "index.html"), "utf8");
 const desktopReleaseWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "desktop-release.yml"), "utf8");
 const beta07ReleaseNote = readFileSync(join(repoRoot, "docs", "releases", "0.7.0-beta.1.md"), "utf8");
 const assetReadme = readFileSync(join(repoRoot, "site", "assets", "README.md"), "utf8");
 const packageJson = readFileSync(join(repoRoot, "package.json"), "utf8");
+
+function assertIncludesAll(source: string, patterns: RegExp[]): void {
+  for (const pattern of patterns) {
+    assert.match(source, pattern);
+  }
+}
 
 describe("docs and CLI help", () => {
   it("documents the Goblintown Cloud command in CLI help", () => {
@@ -46,55 +64,135 @@ describe("docs and CLI help", () => {
     assert.match(cliSource, /Use Goblintown Cloud/);
   });
 
-  it("updates README for local-first cloud, Settings, and reset flows", () => {
-    assert.match(readme, /<img src="site\/assets\/gtownlogo\.svg"/);
-    assert.match(readme, /## Download/);
-    assert.match(readme, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/);
-    assert.match(readme, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe/);
-    assert.match(readme, /release\/parts/);
-    assert.match(readme, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
-    assert.match(readme, /npm run release:ready/);
-    assert.match(readme, /Gatekeeper or SmartScreen puzzle/);
-    assert.match(readme, /\.github\/workflows\/desktop-release\.yml/);
-    assert.match(readme, /water-bear86\/goblintown/);
-    assert.match(readme, /docs\/releases\/0\.7\.0-beta\.1\.md/);
-    assert.match(readme, /MAC_CSC_LINK/);
-    assert.match(readme, /WIN_CSC_LINK/);
-    assert.match(readme, /asks which AI provider should power it/);
-    assert.match(readme, /## Goblintown Cloud/);
-    assert.match(readme, /Stay Local/);
-    assert.match(readme, /Use Goblintown Cloud/);
-    assert.match(readme, /Settings -> Account/);
-    assert.match(readme, /Settings -> Reset -> Asteroid Mode/);
-    assert.match(readme, /FIREBASE_API_KEY/);
-    assert.match(readme, /optional Firebase overrides/);
-    assert.match(readme, /318 tests/);
-    assert.match(readme, /goblintown context ingest \.\/notes/);
-    assert.match(readme, /goblintown context scan chats/);
-    assert.match(readme, /goblintown context import chats --source chatgpt/);
-    assert.match(readme, /pre-vectorized/);
-    assert.match(readme, /AI summaries are opt-in/);
-    assert.match(readme, /\/context search "desktop app tank"/);
-    assert.match(readme, /local context ingestion/);
-    assert.match(readme, /## Add-ons/);
-    assert.match(readme, /## Thesis Engine/);
-    assert.match(readme, /## Sentiment Sources/);
-    assert.match(readme, /Tank `SENTIMENT`/);
-    assert.match(readme, /Settings -> Sentiment Sources/);
-    assert.match(readme, /--scan "README\.md"/);
-    assert.match(readme, /Unknown \/ Unverified/);
-    assert.match(readme, /\.goblintown\/secrets\.json/);
-    assert.match(readme, /goblintown sentiment sources/);
-    assert.match(readme, /COINGECKO_API_KEY/);
-    assert.match(readme, /NEYNAR_API_KEY/);
-    assert.match(readme, /goblintown thesis ".*" --solana <address>/);
-    assert.match(readme, /quality and advantages/);
-    assert.match(readme, /not a buy\/sell recommendation/);
-    assert.match(readme, /solana\.profile/);
-    assert.match(readme, /solana\.transaction/);
-    assert.match(readme, /solana\.balance/);
-    assert.match(readme, /Settings -> Onchain/);
-    assert.match(readme, /\/api\/onchain\/solana\/lookup/);
+  it("keeps README as the front page and moves detailed product docs into docs/", () => {
+    assertIncludesAll(readme, [
+      /<img src="site\/assets\/gtownlogo\.svg"/,
+      /docs\/assets\/screenshots\/goblintown-chat\.jpg/,
+      /docs\/assets\/screenshots\/goblintown-settings\.jpg/,
+      /docs\/assets\/screenshots\/goblintown-rites\.jpg/,
+      /## Download/,
+      /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/,
+      /Goblintown-0\.7\.0-beta\.1-win-x64\.exe/,
+      /release\/parts/,
+      /docs\/install\/beta-0\.7\.md/,
+      /docs\/architecture\/pipeline\.md/,
+      /docs\/extensions\/skills\.md/,
+      /docs\/reference\/http-api\.md/,
+      /docs\/reference\/cli\.md/,
+      /Single Goblin mode/,
+      /Goblintown mode/,
+      /not a buy\/sell recommendation/,
+    ]);
+
+    assertIncludesAll(docsIndex, [
+      /Goblintown Docs/,
+      /install\/beta-0\.7\.md/,
+      /architecture\/pipeline\.md/,
+      /modes\/single-goblin\.md/,
+      /modes\/goblintown-mode\.md/,
+      /extensions\/overview\.md/,
+      /reference\/http-api\.md/,
+      /assets\/screenshots/,
+    ]);
+
+    assertIncludesAll(beta07Install, [
+      /release\/parts/,
+      /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/,
+      /npm run release:ready/,
+      /Gatekeeper/,
+      /SmartScreen/,
+      /\.github\/workflows\/desktop-release\.yml/,
+      /MAC_CSC_LINK/,
+      /WIN_CSC_LINK/,
+    ]);
+
+    assertIncludesAll(pipelineDoc, [
+      /Raccoon/,
+      /Goblin pack/,
+      /Gremlin/,
+      /Troll/,
+      /Specialists/,
+      /Ogre/,
+      /Pigeon-Scribe/,
+      /src\/rite\.ts/,
+      /src\/plan-executor\.ts/,
+    ]);
+
+    assertIncludesAll(singleGoblinDoc, [
+      /\/api\/goblin\/single/,
+      /goblintown \/ask/,
+      /one worker/,
+      /configured Goblin model slot/,
+    ]);
+
+    assertIncludesAll(goblintownModeDoc, [
+      /goblintown rite/,
+      /goblintown plan/,
+      /Planner/,
+      /\.goblintown\/runs/,
+    ]);
+
+    assertIncludesAll(cloudCountryDoc, [
+      /Stay Local/,
+      /Use Goblintown Cloud/,
+      /Settings -> Account/,
+      /Settings -> Reset -> Asteroid Mode/,
+      /FIREBASE_API_KEY/,
+      /goblintown-88fd6/,
+      /country peer add/,
+    ]);
+
+    assertIncludesAll(researchToolsDoc, [
+      /goblintown thesis/,
+      /--scan "README\.md"/,
+      /Unknown \/ Unverified/,
+      /not a buy\/sell recommendation/,
+      /quality and advantages/,
+      /Tank `SENTIMENT`/,
+      /Settings -> Sentiment Sources/,
+      /COINGECKO_API_KEY/,
+      /NEYNAR_API_KEY/,
+      /\.goblintown\/secrets\.json/,
+      /solana\.profile/,
+      /solana\.transaction/,
+      /solana\.balance/,
+      /GOBLINTOWN_TOOLS_SOLANA/,
+    ]);
+
+    assertIncludesAll(extensionsOverview, [
+      /Add-ons/,
+      /Solana/,
+      /Reward Plugins/,
+      /Provider Routes/,
+      /src\/addons\.ts/,
+      /src\/tools\.ts/,
+    ]);
+
+    assertIncludesAll(skillsDoc, [
+      /\.agents\/skills\/add-provider-package\/SKILL\.md/,
+      /npx skills add/,
+      /docs explain Goblintown to users/,
+    ]);
+
+    assertIncludesAll(storageLayout, [
+      /\.goblintown\//,
+      /hoard\/loot/,
+      /hoard\/artifacts/,
+      /runs\/<runId>\.json/,
+    ]);
+
+    assertIncludesAll(cliReference, [
+      /goblintown context ingest \.\/notes/,
+      /goblintown context scan chats/,
+      /goblintown context import chats --source chatgpt/,
+      /goblintown sentiment sources/,
+    ]);
+
+    assertIncludesAll(httpApiReference, [
+      /\/api\/goblin\/single/,
+      /\/api\/context\/ingest/,
+      /\/api\/onchain\/solana\/lookup/,
+    ]);
   });
 
   it("ships a signed desktop release workflow for GitHub Release assets", () => {
