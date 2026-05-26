@@ -275,6 +275,11 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /id="settings-reset-panel"[\s\S]*id="btn-asteroid"[\s\S]*Asteroid Mode/);
   });
 
+  it("keeps first-run onboarding from swallowing app control clicks", () => {
+    assert.match(serverSource, /\.onboard-overlay \{[\s\S]*pointer-events: none;/);
+    assert.match(serverSource, /\.onboard-card \{[\s\S]*pointer-events: auto;/);
+  });
+
   it("keeps new chat and new rite as pinned unboxed sidebar actions", () => {
     assert.match(serverSource, /<div class="ops-actions" aria-label="New work">[\s\S]*id="btn-chat"[\s\S]*id="btn-rite"[\s\S]*<\/div>/);
     assert.match(serverSource, /\.ops-actions \.btn \{[\s\S]*min-height: 1\.45rem;[\s\S]*border: 0;[\s\S]*background: transparent;[\s\S]*text-align: left;/);

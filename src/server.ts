@@ -6755,9 +6755,11 @@ function tankHtml(
     align-items: center;
     justify-content: center;
     padding: 1rem;
+    pointer-events: none;
   }
   .onboard-overlay.open { display: flex; }
   .onboard-card {
+    pointer-events: auto;
     width: min(560px, calc(100% - 1.2rem));
     background: rgba(10,14,8,0.98);
     border: 1px solid var(--accent);
