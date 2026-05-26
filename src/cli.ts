@@ -17,6 +17,14 @@ import {
 import { printBanner } from "./banners.js";
 import { compareRites } from "./compare.js";
 import {
+  chatRecordPreview,
+  importChatRecords,
+  scanChatImports,
+  type ChatImportSource,
+  vectorizeStoredArtifacts,
+} from "./chat-import.js";
+import { ingestContextPath } from "./context-ingest.js";
+import {
   dispatchRiteToPeer,
   MAX_PEERS,
   normalizeCountryConfig,
@@ -36,6 +44,7 @@ import { loadRewardPlugin } from "./reward-plugin.js";
 import { ensureRunDir, loadAllRuns, loadRun } from "./run-store.js";
 import { previewScan, scavenge } from "./scavenge.js";
 import { serve } from "./server.js";
+import { commandToCliArgs, parseGoblinCommand } from "./slash-commands.js";
 import {
   profileSolanaAddress,
   summarizeSolanaActivity,
@@ -81,6 +90,19 @@ Usage:
   goblintown init
       Initialize a Warren in the current directory.
 
+  goblintown /ask "<task>"
+      Goblin Mode: Single Goblin, one worker, one answer.
+  goblintown /town "<task>"
+      Goblin Mode: Goblintown planner DAG with multi-agent execution.
+  goblintown /tank "<task>"
+      Goblintown planner DAG intended for the compact live Tank.
+  goblintown /history
+      Show recent persisted runs.
+  goblintown /context ingest <path> [--limit <N>]
+      Import older conversations or project notes as referenceable artifacts.
+  goblintown /context search "<query>" [--limit <N>]
+      Search imported context and prior run artifacts.
+
   goblintown summon <kind> --task "..." [--personality <p>]
       Run a single creature once. Output goes to stdout; loot is stashed.
       Kinds: ${CREATURE_KINDS.join(" ")}
@@ -123,6 +145,20 @@ Usage:
       execute them in order. Each sub-rite produces its own artifact;
       dependent sub-rites consume them. On a node failure the planner is
       re-invoked (recursive replan, max depth 2 by default).
+
+  goblintown context ingest <path> [--limit <N>]
+      Import local text files from an old conversation or project folder into
+      the Hoard as file-backed Artifacts. Generated folders are skipped.
+  goblintown context search "<query>" [--limit <N>]
+      Search all stored Artifacts, including imported context, by relevance.
+  goblintown context scan chats [--source codex|chatgpt|folder] [--path <path>] [--query <q>] [--since <date>] [--limit <N>] [--json]
+      Scan previous chats without importing. Defaults to local Codex sessions.
+  goblintown context import chats [--source codex|chatgpt|folder] [--path <path>] [--all|--ids <id,...>] [--query <q>] [--since <date>] [--limit <N>] [--no-vectorize] [--summarize]
+      Import selected previous chats as Hoard Artifacts. Default is local parse
+      plus pre-vectorized embeddings when an embedding provider is configured.
+      AI summaries are opt-in through --summarize.
+  goblintown context vectorize [--missing-only] [--limit <N>]
+      Precompute embeddings for stored Artifacts using the embedding route.
 
   goblintown export-trace <runId> [--out <path.json>]
       Export a run as an LLM-MAS Orchestration Trace (academic schema —
@@ -222,7 +258,7 @@ Usage:
       Sources: coingecko, dune, neynar, santiment, cryptopanic, lunarcrush.
 
   goblintown serve [--port <N>]
-      Start the Tank UI. Default port=7777.
+      Start the Goblin Mode GUI. Default port=7777. The legacy Tank UI is at /tank.
       First run asks Local Only vs Goblintown Cloud; later change it in Settings -> Account.
       Settings also contains Country, Mail, Add-ons, API Provider, and Reset -> Asteroid Mode.
       Bundled sprite sheets and the Goblintown wordmark are loaded from site/assets.
@@ -267,6 +303,10 @@ async function main(): Promise<void> {
   if (!cmd || cmd === "--help" || cmd === "-h" || cmd === "help") {
     process.stdout.write(HELP);
     return;
+  }
+
+  if (cmd.startsWith("/")) {
+    return cmdSlash(argv);
   }
 
   switch (cmd) {
@@ -321,6 +361,8 @@ async function main(): Promise<void> {
       return cmdExportTrace(argv.slice(1));
     case "plan":
       return cmdPlan(argv.slice(1));
+    case "context":
+      return cmdContext(argv.slice(1));
     case "fold":
       return cmdFold(argv.slice(1));
     case "reset":
@@ -328,6 +370,217 @@ async function main(): Promise<void> {
     default:
       process.stderr.write(`Unknown command: ${cmd}\n\n${HELP}`);
       process.exitCode = 1;
+  }
+}
+
+async function cmdSlash(args: string[]): Promise<void> {
+  const parsed = parseGoblinCommand(shellArgsToSlashLine(args));
+  if (parsed.kind === "help") {
+    process.stdout.write(
+      `Goblin Mode slash commands:\n\n` +
+        `  /ask <task>       Single Goblin: one worker, one answer.\n` +
+        `  /run <task>       Use the selected/default mode.\n` +
+        `  /town <task>      Goblintown: planner DAG and multi-agent execution.\n` +
+        `  /tank <task>      Goblintown run intended for the visual Tank.\n` +
+        `  /history          Recent persisted runs.\n` +
+        `  /context ingest <path>    Import old conversations/projects as artifacts.\n` +
+        `  /context search <query>   Search imported context and prior artifacts.\n` +
+        `  /help             Show this help.\n`,
+    );
+    return;
+  }
+  if (parsed.kind === "history") {
+    const runDir = await ensureRunDir(process.cwd());
+    const runs = (await loadAllRuns(runDir)).sort((a, b) => b.startedAt - a.startedAt);
+    if (runs.length === 0) {
+      process.stdout.write("No Goblintown runs yet.\n");
+      return;
+    }
+    for (const r of runs.slice(0, 20)) {
+      process.stdout.write(
+        `${r.runId}  ${r.mode ?? "rite"}  ${r.status ?? (r.done ? "done" : "running")}  ${truncate(r.task, 90)}\n`,
+      );
+    }
+    return;
+  }
+  if (parsed.kind === "context") {
+    return cmdContext(parsed.args);
+  }
+  if (!parsed.task) {
+    process.stderr.write(`usage: goblintown /ask "<task>" or goblintown /town "<task>"\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const mapped = commandToCliArgs(parsed);
+  const target = mapped[0];
+  if (target === "summon") return cmdSummon(mapped.slice(1));
+  if (target === "plan") return cmdPlan(mapped.slice(1));
+  process.stderr.write(`Unsupported Goblin Mode command: /${parsed.kind}\n`);
+  process.exitCode = 1;
+}
+
+async function cmdContext(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const positionals = positionalArgs(args);
+  const action = positionals[0];
+  const limit = clampCliLimit(flags.limit, 10, 1, 100);
+
+  if (action === "scan" && positionals[1] === "chats") {
+    return cmdContextScanChats(args);
+  }
+
+  if (action === "import" && positionals[1] === "chats") {
+    return cmdContextImportChats(args);
+  }
+
+  if (action === "vectorize") {
+    return cmdContextVectorize(args);
+  }
+
+  if (action === "ingest") {
+    const inputPath = positionals[1];
+    if (!inputPath) {
+      process.stderr.write(`usage: goblintown context ingest <path> [--limit N]\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const w = await loadWarren(process.cwd());
+    const result = await ingestContextPath({
+      root: w.root,
+      hoard: w.hoard,
+      inputPath,
+      limit: clampCliLimit(flags.limit, 80, 1, 500),
+    });
+    process.stdout.write(`Ingested ${result.artifacts.length} context artifact(s).\n`);
+    for (const artifact of result.artifacts.slice(0, 20)) {
+      const ref = artifact.evidence[0]?.ref ?? artifact.id;
+      process.stdout.write(`  ${artifact.id}  ${ref}\n`);
+    }
+    if (result.artifacts.length > 20) {
+      process.stdout.write(`  ... ${result.artifacts.length - 20} more\n`);
+    }
+    if (result.skipped.length > 0) {
+      process.stdout.write(`Skipped ${result.skipped.length} file(s).\n`);
+    }
+    return;
+  }
+
+  if (action === "search") {
+    const query = positionals.slice(1).join(" ").trim();
+    if (!query) {
+      process.stderr.write(`usage: goblintown context search "<query>" [--limit N]\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const w = await loadWarren(process.cwd());
+    const all = await w.hoard.allArtifacts();
+    const { findRelevantArtifactsEmbedded } = await import("./embeddings.js");
+    const matches = await findRelevantArtifactsEmbedded({
+      artifacts: all,
+      queryText: query,
+      limit,
+      hoard: w.hoard,
+    });
+    if (matches.length === 0) {
+      process.stdout.write("No matching context artifacts found.\n");
+      return;
+    }
+    for (const artifact of matches) {
+      const ref = artifact.evidence.find((e) => e.kind === "file")?.ref ?? artifact.riteId;
+      const claim = artifact.claims[0]?.text ?? artifact.task;
+      process.stdout.write(`${artifact.id}  ${ref}\n  ${truncate(claim, 140)}\n`);
+    }
+    return;
+  }
+
+  process.stderr.write(
+    `usage: goblintown context ingest <path> [--limit N]\n` +
+      `   or: goblintown context search "<query>" [--limit N]\n` +
+      `   or: goblintown context scan chats [--source codex|chatgpt|folder]\n` +
+      `   or: goblintown context import chats [--all|--ids <id,...>]\n` +
+      `   or: goblintown context vectorize [--missing-only]\n`,
+  );
+  process.exitCode = 1;
+}
+
+async function cmdContextScanChats(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const result = await scanChatImports({
+    source: normalizeChatSource(flags.source),
+    path: flags.path,
+    query: flags.query,
+    since: flags.since,
+    limit: clampCliLimit(flags.limit, 50, 1, 500),
+  });
+  if (flags.json === "true") {
+    process.stdout.write(JSON.stringify({
+      records: result.records.map(chatRecordPreview),
+      skipped: result.skipped,
+    }, null, 2) + "\n");
+    return;
+  }
+  process.stdout.write(`Found ${result.records.length} previous chat(s).\n`);
+  for (const record of result.records) {
+    process.stdout.write(
+      `${record.id}  ${record.source}  ${record.updatedAt ?? record.createdAt ?? "unknown"}  ${truncate(record.title, 90)}\n`,
+    );
+  }
+  if (result.skipped.length > 0) {
+    process.stdout.write(`Skipped ${result.skipped.length} path(s).\n`);
+  }
+}
+
+async function cmdContextImportChats(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const ids = splitCsv(flags.ids);
+  const importAll = flags.all === "true";
+  if (!importAll && ids.length === 0) {
+    process.stderr.write(
+      `usage: goblintown context import chats --all [--source codex|chatgpt|folder] [--path <path>]\n` +
+        `   or: goblintown context import chats --ids <id,...> [--source codex|chatgpt|folder]\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const w = await loadWarren(process.cwd());
+  const scan = await scanChatImports({
+    source: normalizeChatSource(flags.source),
+    path: flags.path,
+    query: flags.query,
+    since: flags.since,
+    limit: clampCliLimit(flags.limit, 50, 1, 500),
+  });
+  const result = await importChatRecords({
+    hoard: w.hoard,
+    records: scan.records,
+    ids: importAll ? undefined : ids,
+    vectorize: flags["no-vectorize"] !== "true",
+    summarize: flags.summarize === "true",
+  });
+  process.stdout.write(
+    `Imported ${result.records.length} chat(s), ${result.artifacts.length} artifact(s), vectorized ${result.vectorized} artifact(s).\n`,
+  );
+  for (const record of result.records.slice(0, 20)) {
+    process.stdout.write(`  ${record.id}  ${record.source}  ${truncate(record.title, 90)}\n`);
+  }
+  if (result.skipped.length > 0) {
+    process.stdout.write(`Vectorization skipped/failed for ${result.skipped.length} artifact(s).\n`);
+  }
+}
+
+async function cmdContextVectorize(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const w = await loadWarren(process.cwd());
+  const result = await vectorizeStoredArtifacts({
+    hoard: w.hoard,
+    missingOnly: flags["missing-only"] === "true",
+    limit: flags.limit ? clampCliLimit(flags.limit, 100, 1, 500) : undefined,
+  });
+  process.stdout.write(
+    `Scanned ${result.scanned} artifact(s), vectorized ${result.vectorized} artifact(s).\n`,
+  );
+  if (result.failed.length > 0) {
+    process.stdout.write(`Failed ${result.failed.length} artifact(s).\n`);
   }
 }
 
@@ -356,12 +609,15 @@ async function cmdSummon(args: string[]): Promise<void> {
     return;
   }
   const personality = flags.personality as Personality | undefined;
+  const outputFormat = normalizeOutputFormat(flags.format);
   const creature = makeCreature(kind, personality);
 
   printBanner(kind);
 
   const { text, usage } = await callCreatureStream(creature, task, (chunk) => {
     process.stdout.write(chunk);
+  }, {
+    outputFormat,
   });
   process.stdout.write("\n");
 
@@ -2007,7 +2263,6 @@ async function cmdPlan(args: string[]): Promise<void> {
   );
   const rewardPlugin = await loadRewardPlugin(w.root);
 
-  const { findRelevantArtifacts } = await import("./artifact.js");
   const parents: Artifact[] = [];
   for (const r of cites) {
     const a = await w.hoard.getArtifactByRiteId(r);
@@ -2015,7 +2270,13 @@ async function cmdPlan(args: string[]): Promise<void> {
   }
   if (remember) {
     const all = await w.hoard.allArtifacts();
-    const auto = findRelevantArtifacts(all, task, 3).filter(
+    const { findRelevantArtifactsEmbedded } = await import("./embeddings.js");
+    const auto = (await findRelevantArtifactsEmbedded({
+      artifacts: all,
+      queryText: task,
+      limit: 3,
+      hoard: w.hoard,
+    })).filter(
       (a) => !parents.some((p) => p.id === a.id),
     );
     parents.push(...auto);
@@ -2297,6 +2558,55 @@ function parseFlags(args: string[]): Record<string, string> {
     }
   }
   return out;
+}
+
+function positionalArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith("--")) {
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("--")) i++;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+function normalizeChatSource(raw: string | undefined): ChatImportSource | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === "codex" || value === "chatgpt" || value === "folder") return value;
+  throw new Error("--source must be codex, chatgpt, or folder");
+}
+
+function splitCsv(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function shellArgsToSlashLine(args: string[]): string {
+  return args.map((arg, index) => (index === 0 ? arg : quoteSlashArg(arg))).join(" ");
+}
+
+function quoteSlashArg(arg: string): string {
+  return /^[^\s"'\\]+$/.test(arg) ? arg : JSON.stringify(arg);
+}
+
+function clampCliLimit(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
 function parseBoolFlag(raw: string, name: string): boolean | null {

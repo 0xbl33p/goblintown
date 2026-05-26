@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import type { Server } from "node:http";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,11 @@ import {
   normalizeAddonId,
   setAddonEnabled,
 } from "./addons.js";
+import {
+  normalizeChatMessages,
+  runSingleGoblinChat,
+} from "./chat.js";
+import { CHAT_PERSONA_UI } from "./chat-persona.js";
 import {
   MAX_PEERS,
   MAX_TEAM_MEMBERS,
@@ -32,8 +38,19 @@ import {
   signCountryPayload,
   verifyCountryPayload,
 } from "./country-identity.js";
+import {
+  chatRecordPreview,
+  importChatRecords,
+  scanChatImports,
+  type ChatImportSource,
+  vectorizeStoredArtifacts,
+} from "./chat-import.js";
+import { ingestContextPath } from "./context-ingest.js";
+import { findRelevantArtifactsEmbedded } from "./embeddings.js";
 import { verifyHmac, verifyInbox } from "./federation.js";
+import { makeGoblin } from "./creatures.js";
 import { performRite, type RiteStep } from "./rite.js";
+import { callCreature } from "./openai-client.js";
 import { loadRewardPlugin } from "./reward-plugin.js";
 import {
   appendRunEvent,
@@ -48,6 +65,7 @@ import {
 import {
   CREATURE_KINDS,
   type Artifact,
+  type CountryConfig,
   type CountryJoinRequest,
   type CountryQueuedRite,
   type CreatureKind,
@@ -56,14 +74,17 @@ import {
   type FriendRecord,
   type FriendRequest,
   type InboxMessage,
+  type Loot,
   type OutputFormat,
   type Personality,
   type ProviderConfig,
+  type VoiceConfig,
 } from "./types.js";
 import { executePlan, type PlanExecutionEvent } from "./plan-executor.js";
 import { planTask } from "./planner.js";
-import { findRelevantArtifacts } from "./artifact.js";
+import { renderArtifactContext } from "./artifact.js";
 import { exportRunAsMasTrace } from "./trace-export.js";
+import { measureDrift } from "./drift.js";
 import {
   normalizeSolanaAddress,
   normalizeSolanaSignature,
@@ -97,6 +118,17 @@ import {
   readProviderSecretsForRootSync,
   setProviderSecretForRoot,
 } from "./provider-secrets.js";
+import {
+  clearVoiceSecretForRoot,
+  readVoiceSecretsForRootSync,
+  setVoiceSecretForRoot,
+} from "./voice-secrets.js";
+import {
+  normalizeVoiceConfig,
+  transcribeVoiceAudio,
+  voiceApiKeyEnv,
+  voiceProviderNeedsServer,
+} from "./voice.js";
 import { loadWarren, resetWarren, saveWarrenManifest, type Warren } from "./warren.js";
 import {
   directMessagePayload,
@@ -116,6 +148,11 @@ import {
 export interface ServeOptions {
   cwd: string;
   port: number;
+}
+
+export interface ServeHandle {
+  url: string;
+  close: () => Promise<void>;
 }
 
 interface RunState {
@@ -161,6 +198,49 @@ function runSummary(record: RunRecord): Omit<RunRecord, "events"> & { eventCount
     ...rest,
     eventCount: record.nextSeq ?? events.length,
   };
+}
+
+function contextArtifactPayload(artifact: Artifact): Record<string, unknown> {
+  return {
+    id: artifact.id,
+    riteId: artifact.riteId,
+    task: artifact.task,
+    ref: artifact.evidence.find((e) => e.kind === "file")?.ref ?? artifact.riteId,
+    claim: artifact.claims[0]?.text ?? artifact.task,
+    keywords: artifact.keywords,
+    timestamp: artifact.timestamp,
+  };
+}
+
+function apiLimit(
+  raw: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+function apiChatSource(raw: unknown): ChatImportSource | undefined {
+  if (typeof raw !== "string" || raw.trim().length === 0) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === "codex" || value === "chatgpt" || value === "folder") return value;
+  throw new Error("source must be codex, chatgpt, or folder");
+}
+
+function apiStringArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+  if (typeof raw === "string") {
+    return raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return [];
 }
 
 function sanitizeRunPayload(body: Record<string, unknown>): Record<string, unknown> {
@@ -287,7 +367,7 @@ function cspHeaderForRequest(): string {
   ].join("; ");
 }
 
-export async function serve(opts: ServeOptions): Promise<void> {
+export async function serve(opts: ServeOptions): Promise<ServeHandle> {
   let warren = await loadWarren(opts.cwd);
   await ensureCountryIdentity(warren.root);
   ensureCountryDefaults(warren);
@@ -331,6 +411,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
   });
 
   app.get("/", async (_req, res) => renderHome(warren, runs, res));
+  app.get("/tank", async (_req, res) => renderHome(warren, runs, res));
+  app.get("/chat", (_req, res) =>
+    res.send(layout("Single Goblin Chat", chatPage())),
+  );
   app.get("/rite/new", (_req, res) =>
     res.send(layout("New Rite", newRiteForm())),
   );
@@ -345,12 +429,47 @@ export async function serve(opts: ServeOptions): Promise<void> {
   app.post("/api/rite", async (req, res) =>
     startRiteRun(warren, runs, runDir, req, res),
   );
+  app.post("/api/goblin/single", async (req, res) =>
+    startSingleGoblinRun(warren, req, res),
+  );
   app.post("/api/thesis", async (req, res) =>
     startThesisRun(warren, runs, runDir, req, res),
   );
   app.post("/api/plan", async (req, res) =>
     startPlanRun(warren, runs, runDir, req, res),
   );
+  app.post("/api/chat", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const messages = normalizeChatMessages(body.messages);
+    if (messages.length === 0 || messages[messages.length - 1].role !== "user") {
+      res.status(400).json({ error: "messages must end with a user message" });
+      return;
+    }
+    const personality =
+      typeof body.personality === "string"
+        ? (body.personality as Personality)
+        : "chipper";
+    const rawMaxOutputTokens = Number(body.maxOutputTokens ?? 900);
+    const maxOutputTokens = Number.isFinite(rawMaxOutputTokens)
+      ? Math.max(64, Math.min(4000, Math.floor(rawMaxOutputTokens)))
+      : 900;
+    const modelSlot =
+      body.modelSlot === "goblin" || body.modelSlot === "ogre"
+        ? body.modelSlot
+        : undefined;
+    try {
+      const result = await runSingleGoblinChat({
+        messages,
+        personality,
+        modelSlot,
+        maxOutputTokens,
+        hoard: warren.hoard,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
   app.get("/api/rite/:runId/stream", (req, res) =>
     streamRiteRun(runs, req, res),
   );
@@ -449,6 +568,114 @@ export async function serve(opts: ServeOptions): Promise<void> {
     const all = (await warren.hoard.allArtifacts()).sort((a, b) => b.timestamp - a.timestamp);
     res.json(all.slice(0, Math.max(1, Math.min(500, limit))));
   });
+  app.post("/api/context/ingest", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const inputPath = typeof body.path === "string" ? body.path.trim() : "";
+    if (!inputPath) {
+      res.status(400).json({ error: "path is required" });
+      return;
+    }
+    try {
+      const result = await ingestContextPath({
+        root: warren.root,
+        hoard: warren.hoard,
+        inputPath,
+        limit: apiLimit(body.limit, 80, 1, 500),
+      });
+      res.json({
+        artifacts: result.artifacts.map(contextArtifactPayload),
+        skipped: result.skipped,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/context/search", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const query = typeof body.query === "string" ? body.query.trim() : "";
+    if (!query) {
+      res.status(400).json({ error: "query is required" });
+      return;
+    }
+    try {
+      const all = await warren.hoard.allArtifacts();
+      const matches = await findRelevantArtifactsEmbedded({
+        artifacts: all,
+        queryText: query,
+        limit: apiLimit(body.limit, 10, 1, 100),
+        hoard: warren.hoard,
+      });
+      res.json({
+        artifacts: matches.map(contextArtifactPayload),
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/context/chats/scan", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      const result = await scanChatImports({
+        source: apiChatSource(body.source),
+        path: typeof body.path === "string" && body.path.trim() ? body.path.trim() : undefined,
+        query: typeof body.query === "string" && body.query.trim() ? body.query.trim() : undefined,
+        since: typeof body.since === "string" && body.since.trim() ? body.since.trim() : undefined,
+        limit: apiLimit(body.limit, 50, 1, 500),
+      });
+      res.json({
+        records: result.records.map(chatRecordPreview),
+        skipped: result.skipped,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/context/chats/import", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const ids = apiStringArray(body.ids);
+    const importAll = body.all === true || body.all === "true";
+    if (!importAll && ids.length === 0) {
+      res.status(400).json({ error: "all=true or ids is required" });
+      return;
+    }
+    try {
+      const scan = await scanChatImports({
+        source: apiChatSource(body.source),
+        path: typeof body.path === "string" && body.path.trim() ? body.path.trim() : undefined,
+        query: typeof body.query === "string" && body.query.trim() ? body.query.trim() : undefined,
+        since: typeof body.since === "string" && body.since.trim() ? body.since.trim() : undefined,
+        limit: apiLimit(body.limit, 50, 1, 500),
+      });
+      const result = await importChatRecords({
+        hoard: warren.hoard,
+        records: scan.records,
+        ids: importAll ? undefined : ids,
+        vectorize: body.noVectorize !== true && body.noVectorize !== "true",
+        summarize: body.summarize === true || body.summarize === "true",
+      });
+      res.json({
+        records: result.records.map(chatRecordPreview),
+        artifacts: result.artifacts.map(contextArtifactPayload),
+        vectorized: result.vectorized,
+        skipped: [...scan.skipped, ...result.skipped.map((item) => ({ path: item.id, reason: item.reason }))],
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post("/api/context/vectorize", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      const result = await vectorizeStoredArtifacts({
+        hoard: warren.hoard,
+        missingOnly: body.missingOnly === true || body.missingOnly === "true",
+        limit: body.limit === undefined ? undefined : apiLimit(body.limit, 100, 1, 500),
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
   app.get("/api/warren/stats", async (_req, res) => {
     const [loot, rites] = await Promise.all([
       warren.hoard.allLoot(),
@@ -479,6 +706,52 @@ export async function serve(opts: ServeOptions): Promise<void> {
   });
   app.get("/api/provider", (_req, res) => {
     res.json(providerPayload(warren));
+  });
+  app.get("/api/voice", (_req, res) => {
+    res.json(voicePayload(warren));
+  });
+  app.post("/api/voice", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const config = normalizeVoiceConfig(body);
+    warren.manifest.voice = config;
+    const apiKeyEnv = voiceApiKeyEnv(config);
+    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : undefined;
+    if (apiKey !== undefined) {
+      if (apiKey.length > 0) await setVoiceSecretForRoot(warren.root, apiKeyEnv, apiKey);
+      else await clearVoiceSecretForRoot(warren.root, apiKeyEnv);
+    } else if (body.clearApiKey === true) {
+      await clearVoiceSecretForRoot(warren.root, apiKeyEnv);
+    }
+    await saveWarrenManifest(warren);
+    res.json(voicePayload(warren));
+  });
+  app.post("/api/voice/transcribe", async (req, res) => {
+    const config = normalizeVoiceConfig(warren.manifest.voice);
+    if (!voiceProviderNeedsServer(config)) {
+      res.status(400).json({ error: "browser voice runs locally in the browser" });
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const audioBase64 = typeof body.audioBase64 === "string" ? body.audioBase64 : "";
+    const mimeType = typeof body.mimeType === "string" ? body.mimeType : "audio/webm";
+    const apiKeyEnv = voiceApiKeyEnv(config);
+    const storedSecrets = readVoiceSecretsForRootSync(warren.root);
+    const apiKey = process.env[apiKeyEnv]?.trim() || storedSecrets[apiKeyEnv] || "";
+    if ((config.provider === "openai" || config.provider === "deepgram" || config.provider === "custom") && !apiKey) {
+      res.status(400).json({ error: `${apiKeyEnv} is not set for voice transcription` });
+      return;
+    }
+    try {
+      const transcript = await transcribeVoiceAudio({
+        config,
+        apiKey,
+        audioBase64,
+        mimeType,
+      });
+      res.json({ transcript });
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
   app.get("/api/addons", (_req, res) => {
     res.json(addonStatusPayload(warren.manifest));
@@ -1265,15 +1538,94 @@ export async function serve(opts: ServeOptions): Promise<void> {
       .send(layout("Not Found", "<h1>404</h1><p>The Hoard does not contain that.</p>")),
   );
 
-  await new Promise<void>((resolve) => {
-    app.listen(opts.port, () => {
+  const server = await new Promise<Server>((resolve) => {
+    const listening = app.listen(opts.port, () => {
+      const address = listening.address();
+      const actualPort =
+        typeof address === "object" && address ? address.port : opts.port;
       process.stdout.write(
-        `Hoard UI listening on http://localhost:${opts.port}/\n` +
+        `Hoard UI listening on http://localhost:${actualPort}/\n` +
           `Warren: ${warren.manifest.name}  (${warren.root})\n`,
       );
-      resolve();
+      resolve(listening);
     });
   });
+  const address = server.address();
+  const actualPort =
+    typeof address === "object" && address ? address.port : opts.port;
+  return {
+    url: `http://localhost:${actualPort}/`,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      }),
+  };
+}
+
+async function startSingleGoblinRun(
+  warren: Warren,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const body = (req.body ?? {}) as {
+    task?: unknown;
+    remember?: unknown;
+    outputFormat?: unknown;
+    maxOutputTokens?: unknown;
+  };
+  if (typeof body.task !== "string" || body.task.trim().length === 0) {
+    res.status(400).json({ error: "task is required" });
+    return;
+  }
+  const task = body.task.trim();
+  const remember = body.remember !== false;
+  const outputFormat = normalizeOutputFormat(
+    body.outputFormat ?? warren.manifest.provider?.outputFormat,
+  );
+  const maxOutputTokens =
+    typeof body.maxOutputTokens === "number" && body.maxOutputTokens > 0
+      ? body.maxOutputTokens
+      : undefined;
+  const parentArtifacts = remember
+    ? await findRelevantArtifactsEmbedded({
+        artifacts: await warren.hoard.allArtifacts(),
+        queryText: task,
+        limit: 3,
+        hoard: warren.hoard,
+      })
+    : [];
+  const prompt = parentArtifacts.length
+    ? `${parentArtifacts.map(renderArtifactContext).join("\n\n")}\n\nTask:\n${task}`
+    : task;
+  try {
+    const creature = makeGoblin();
+    const { text, usage } = await callCreature(creature, prompt, {
+      outputFormat,
+      maxOutputTokens,
+    });
+    const drift = measureDrift(text);
+    const loot: Loot = {
+      id: "",
+      creatureKind: "goblin",
+      personality: creature.personality,
+      model: creature.model,
+      prompt,
+      output: text,
+      timestamp: Date.now(),
+      drift,
+      usage,
+    };
+    const lootId = await warren.hoard.stash(loot);
+    res.json({
+      mode: "single",
+      output: text,
+      lootId,
+      usage,
+      parentArtifactIds: parentArtifacts.map((a) => a.id),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 async function startRiteRun(
@@ -1418,7 +1770,12 @@ async function startRiteRun(
   }
   if (remember) {
     const all = await warren.hoard.allArtifacts();
-    const auto = findRelevantArtifacts(all, body.task, 3).filter(
+    const auto = (await findRelevantArtifactsEmbedded({
+      artifacts: all,
+      queryText: body.task,
+      limit: 3,
+      hoard: warren.hoard,
+    })).filter(
       (a) => !parentArtifacts.some((p) => p.id === a.id),
     );
     parentArtifacts.push(...auto);
@@ -1602,7 +1959,12 @@ async function startPlanRun(
   }
   if (remember) {
     const all = await warren.hoard.allArtifacts();
-    const auto = findRelevantArtifacts(all, body.task, 3).filter(
+    const auto = (await findRelevantArtifactsEmbedded({
+      artifacts: all,
+      queryText: body.task,
+      limit: 3,
+      hoard: warren.hoard,
+    })).filter(
       (a) => !parents.some((p) => p.id === a.id),
     );
     parents.push(...auto);
@@ -1840,6 +2202,30 @@ function providerPayload(warren: Warren): {
       missingApiKey: runtime.missingApiKey,
       outputFormat: runtime.outputFormat,
       models: runtime.models,
+    },
+  };
+}
+
+function voicePayload(warren: Warren): {
+  config: VoiceConfig;
+  runtime: {
+    apiKeyEnv: string;
+    hasStoredApiKey: boolean;
+    hasApiKey: boolean;
+    needsServer: boolean;
+  };
+} {
+  const config = normalizeVoiceConfig(warren.manifest.voice);
+  const apiKeyEnv = voiceApiKeyEnv(config);
+  const storedSecrets = readVoiceSecretsForRootSync(warren.root);
+  const envKey = process.env[apiKeyEnv]?.trim() ?? "";
+  return {
+    config,
+    runtime: {
+      apiKeyEnv,
+      hasStoredApiKey: !!storedSecrets[apiKeyEnv],
+      hasApiKey: !voiceProviderNeedsServer(config) || !!envKey || !!storedSecrets[apiKeyEnv],
+      needsServer: voiceProviderNeedsServer(config),
     },
   };
 }
@@ -2389,7 +2775,7 @@ async function runCliLine(
 
 async function renderHome(
   warren: Warren,
-  _runs: Map<string, RunState>,
+  runs: Map<string, RunState>,
   res: Response,
 ): Promise<void> {
   const [rites, loot] = await Promise.all([
@@ -2398,7 +2784,31 @@ async function renderHome(
   ]);
   const driftSum = loot.reduce((s, l) => s + l.drift.driftRate, 0);
   const drift = loot.length ? driftSum / loot.length : 0;
-  res.send(tankHtml(warren.manifest.name, loot.length, rites.length, drift));
+  res.send(tankHtml(warren.manifest.name, warren.manifest.country, loot.length, rites.length, drift, runs));
+}
+
+async function renderGoblinMode(
+  warren: Warren,
+  runs: Map<string, RunState>,
+  res: Response,
+): Promise<void> {
+  const [rites, loot, artifacts] = await Promise.all([
+    warren.hoard.allRites(),
+    warren.hoard.allLoot(),
+    warren.hoard.allArtifacts(),
+  ]);
+  const driftSum = loot.reduce((s, l) => s + l.drift.driftRate, 0);
+  const drift = loot.length ? driftSum / loot.length : 0;
+  res.send(
+    goblinModeHtml({
+      warrenName: warren.manifest.name,
+      lootCount: loot.length,
+      riteCount: rites.length,
+      artifactCount: artifacts.length,
+      runCount: runs.size,
+      drift,
+    }),
+  );
 }
 
 async function renderRite(
@@ -2720,6 +3130,7 @@ function newRiteForm(): string {
              <option value="chipper">chipper</option>
              <option value="stoic">stoic</option>
              <option value="feral">feral</option>
+             <option value="goblin_mode">goblin_mode</option>
            </select>
          </label>
          &nbsp;<label><input type="checkbox" name="noFallback"> skip Ogre fallback</label>
@@ -2773,18 +3184,1020 @@ function newRiteForm(): string {
   `;
 }
 
+function chatPage(): string {
+  return `
+    <p><a href="/">&larr; Tank</a> · <a href="/runs">Runs</a></p>
+    <h1>Single Goblin Chat</h1>
+    <style>
+      .chat-shell { display: grid; gap: .85rem; max-width: 860px; }
+      .chat-toolbar { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+      .chat-toolbar label { display: inline-flex; align-items: center; gap: .4rem; }
+      .chat-log { min-height: 360px; max-height: 58vh; overflow-y: auto; background: #0a0e08; border: 1px solid #1f2d18; padding: .9rem; }
+      .chat-msg { margin: 0 0 .85rem; padding: .7rem .8rem; border-left: 3px solid #2a3d22; background: rgba(20, 32, 26, .55); white-space: pre-wrap; word-break: break-word; }
+      .chat-msg.user { border-left-color: #8fcf52; }
+      .chat-msg.assistant { border-left-color: #5a7042; }
+      .chat-role { display: block; color: #5a7042; font-size: 11px; text-transform: uppercase; margin-bottom: .25rem; }
+      .chat-compose { display: grid; gap: .5rem; }
+      .chat-compose textarea, .chat-toolbar select, .chat-toolbar input { background: #0a0e08; color: #d8efb6; border: 1px solid #2a3d22; border-radius: 3px; padding: .55rem; font: inherit; }
+      .chat-actions { display: flex; gap: .5rem; align-items: center; }
+      .chat-actions button { background: #1f3a14; color: #d8efb6; border: 1px solid #416b26; border-radius: 3px; padding: .5rem .8rem; font: inherit; cursor: pointer; }
+      .chat-actions button.secondary { background: #14201a; border-color: #2a3d22; }
+      .chat-actions button:disabled { opacity: .55; cursor: wait; }
+      .chat-offer { display: none; border: 1px solid #2a3d22; background: #101a12; padding: .75rem; }
+      .chat-offer.open { display: flex; gap: .75rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+      .chat-offer button { background: #1f3a14; color: #d8efb6; border: 1px solid #416b26; border-radius: 3px; padding: .45rem .7rem; font: inherit; cursor: pointer; }
+      .chat-status { color: #5a7042; }
+    </style>
+    <div class="chat-shell">
+      <div class="chat-toolbar">
+        <label>Personality
+          <select id="chat-personality">
+            <option value="chipper">chipper</option>
+            <option value="nerdy">nerdy</option>
+            <option value="stoic">stoic</option>
+            <option value="cynical">cynical</option>
+            <option value="feral">feral</option>
+            <option value="goblin_mode">goblin_mode</option>
+          </select>
+        </label>
+        <input id="chat-max" type="hidden" value="900">
+        <span class="chat-status" id="chat-status">ready</span>
+      </div>
+      <div class="chat-log" id="chat-log" aria-live="polite"></div>
+      <div class="chat-offer" id="chat-offer">
+        <span id="chat-offer-text"></span>
+        <button id="chat-offer-run" type="button">Run Goblintown</button>
+      </div>
+      <form class="chat-compose" id="chat-form">
+        <textarea id="chat-input" rows="4" placeholder="Ask the single Goblin anything..." required></textarea>
+        <div class="chat-actions">
+          <button id="chat-send" type="submit" title="Send (Enter or Cmd/Ctrl+Enter)">Send</button>
+          <button class="secondary" id="chat-clear" type="button">Clear</button>
+        </div>
+      </form>
+    </div>
+    <script>
+      const messages = [];
+      const log = document.getElementById("chat-log");
+      const form = document.getElementById("chat-form");
+      const input = document.getElementById("chat-input");
+      const send = document.getElementById("chat-send");
+      const clear = document.getElementById("chat-clear");
+      const status = document.getElementById("chat-status");
+      const personality = document.getElementById("chat-personality");
+      const maxTokens = document.getElementById("chat-max");
+      const offer = document.getElementById("chat-offer");
+      const offerText = document.getElementById("chat-offer-text");
+      const offerRun = document.getElementById("chat-offer-run");
+      let offeredTask = "";
+
+      function escHtml(value) {
+        return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+      }
+
+      function renderMessage(message, lootId) {
+        const node = document.createElement("div");
+        node.className = "chat-msg " + message.role;
+        const loot = lootId ? ' <a href="/loot/' + encodeURIComponent(lootId) + '">loot</a>' : "";
+        node.innerHTML = '<span class="chat-role">' + message.role + loot + '</span>' + escHtml(message.content);
+        log.appendChild(node);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function renderGoblintownOffer(nextOffer) {
+        if (!nextOffer || !nextOffer.task) {
+          offer.classList.remove("open");
+          offeredTask = "";
+          return;
+        }
+        offeredTask = nextOffer.task;
+        offerText.textContent = nextOffer.requested
+          ? "Goblintown requested. Start a full pack rite for this prompt?"
+          : "This looks complex enough for the full Goblintown pack.";
+        offer.classList.add("open");
+      }
+
+      function submitChatForm() {
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+          return;
+        }
+        send.click();
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const content = input.value.trim();
+        if (!content) return;
+        const userMessage = { role: "user", content };
+        messages.push(userMessage);
+        renderMessage(userMessage);
+        input.value = "";
+        send.disabled = true;
+        status.textContent = "thinking";
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messages,
+              personality: personality.value,
+              maxOutputTokens: Number(maxTokens.value || 900),
+            }),
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || response.statusText);
+          messages.push(body.message);
+          renderMessage(body.message, body.lootId);
+          renderGoblintownOffer(body.goblintownOffer);
+          if (body.goblintownOffer && body.goblintownOffer.requested) {
+            await startOfferedRite(body.goblintownOffer.task);
+          } else {
+            status.textContent = body.lootId ? "saved " + body.lootId : "ready";
+          }
+        } catch (err) {
+          status.textContent = err instanceof Error ? err.message : String(err);
+        } finally {
+          send.disabled = false;
+          input.focus();
+        }
+      });
+
+      clear.addEventListener("click", () => {
+        messages.splice(0, messages.length);
+        log.innerHTML = "";
+        status.textContent = "ready";
+        renderGoblintownOffer(null);
+        input.focus();
+      });
+
+      input.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.shiftKey) return;
+        if (event.metaKey || event.ctrlKey || !event.altKey) {
+          event.preventDefault();
+          submitChatForm();
+        }
+      });
+
+      async function startOfferedRite(taskValue) {
+        const task = (taskValue || offeredTask).trim();
+        if (!task) return;
+        offerRun.disabled = true;
+        status.textContent = "starting Goblintown";
+        try {
+          const response = await fetch("/api/rite", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              task,
+              packSize: 3,
+              personality: personality.value,
+              remember: true,
+            }),
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || response.statusText);
+          status.innerHTML = 'Goblintown running: <a href="/?run=' + encodeURIComponent(body.runId) + '">open run</a>';
+          offer.classList.remove("open");
+        } catch (err) {
+          status.textContent = err instanceof Error ? err.message : String(err);
+        } finally {
+          offerRun.disabled = false;
+        }
+      }
+
+      offerRun.addEventListener("click", () => startOfferedRite(offeredTask));
+    </script>
+  `;
+}
+
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
+function goblinModeHtml(stats: {
+  warrenName: string;
+  lootCount: number;
+  riteCount: number;
+  artifactCount: number;
+  runCount: number;
+  drift: number;
+}): string {
+  const initial = JSON.stringify(stats);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goblin Mode · ${esc(stats.warrenName)}</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --mud: #120f08;
+    --peat: #1b160b;
+    --rot: #261d0c;
+    --moss: #8ba34a;
+    --moss-hot: #c4e86a;
+    --bog: #4e5f2a;
+    --bone: #e7dfbd;
+    --ash: #9b8f62;
+    --line: #4b3a16;
+    --bad: #d96f42;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background:
+      radial-gradient(circle at 50% 42%, rgba(139, 163, 74, 0.09), transparent 34%),
+      linear-gradient(180deg, #15130d 0%, var(--mud) 100%);
+    color: var(--bone);
+    font: 14px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  }
+  .goblin-mode-shell {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 32px 18px;
+  }
+  .goblin-mode-core {
+    width: min(880px, 94vw);
+  }
+  h1 {
+    margin: 0 0 28px;
+    text-align: center;
+    font-size: clamp(24px, 4vw, 36px);
+    line-height: 1.1;
+    font-weight: 500;
+    color: var(--bone);
+    letter-spacing: 0;
+    text-transform: lowercase;
+  }
+  .composer {
+    background: rgba(31, 26, 14, 0.92);
+    border: 1px solid rgba(139, 163, 74, 0.22);
+    border-radius: 10px;
+    box-shadow: 0 22px 80px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(231, 223, 189, 0.05);
+    overflow: hidden;
+  }
+  .modebar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    border-bottom: 1px solid rgba(139, 163, 74, 0.18);
+    background: rgba(18, 15, 8, 0.52);
+  }
+  .segment {
+    display: inline-grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid rgba(139, 163, 74, 0.32);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .segment button,
+  .send {
+    border: 0;
+    background: transparent;
+    color: var(--ash);
+    font: inherit;
+    padding: 8px 11px;
+    cursor: pointer;
+  }
+  .segment button[aria-pressed="true"] {
+    background: rgba(139, 163, 74, 0.18);
+    color: var(--moss-hot);
+  }
+  .composer-field {
+    position: relative;
+  }
+  .tank-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--ash);
+    user-select: none;
+  }
+  .tank-toggle input { accent-color: var(--moss); }
+  .send {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    border: 1px solid rgba(196, 232, 106, 0.34);
+    border-radius: 8px;
+    color: var(--moss-hot);
+    background: rgba(139, 163, 74, 0.12);
+    min-width: 48px;
+  }
+  textarea {
+    width: 100%;
+    min-height: 142px;
+    resize: vertical;
+    border: 0;
+    outline: 0;
+    padding: 18px 78px 50px 18px;
+    background: transparent;
+    color: var(--bone);
+    font: 16px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  }
+  textarea::placeholder { color: rgba(155, 143, 98, 0.72); }
+  .status-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    border-top: 1px solid rgba(139, 163, 74, 0.16);
+    color: var(--ash);
+    font-size: 12px;
+  }
+  .status-row b { color: var(--moss-hot); font-weight: 500; }
+  .output, .old-tank-box {
+    margin-top: 14px;
+    background: rgba(18, 15, 8, 0.82);
+    border: 1px solid rgba(139, 163, 74, 0.22);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .output[hidden], .old-tank-box[hidden] { display: none; }
+  .panel-title {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 11px;
+    color: var(--moss-hot);
+    border-bottom: 1px solid rgba(139, 163, 74, 0.18);
+    background: rgba(38, 29, 12, 0.7);
+    font-size: 12px;
+    text-transform: lowercase;
+  }
+  .import-controls {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr) minmax(0, 0.9fr) auto auto auto;
+    gap: 8px;
+    padding: 10px;
+    border-bottom: 1px solid rgba(139, 163, 74, 0.18);
+  }
+  .import-controls select,
+  .import-controls input[type="text"],
+  .import-controls button {
+    min-width: 0;
+    border: 1px solid rgba(139, 163, 74, 0.28);
+    border-radius: 7px;
+    background: rgba(31, 26, 14, 0.88);
+    color: var(--bone);
+    font: inherit;
+    padding: 7px 9px;
+  }
+  .import-controls button {
+    cursor: pointer;
+    color: var(--moss-hot);
+    background: rgba(139, 163, 74, 0.12);
+  }
+  .import-controls label {
+    grid-column: 1 / -1;
+    color: var(--ash);
+    font-size: 12px;
+  }
+  .chat-import-results {
+    max-height: 190px;
+    overflow: auto;
+    padding: 8px 10px;
+  }
+  .chat-import-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 5px 0;
+    color: var(--bone);
+  }
+  .chat-import-row input { margin-top: 3px; accent-color: var(--moss); }
+  .chat-import-empty {
+    margin: 0;
+    color: var(--ash);
+    white-space: pre-wrap;
+  }
+  pre {
+    margin: 0;
+    padding: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--bone);
+    max-height: 46vh;
+    overflow: auto;
+  }
+  .tank-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    min-height: 210px;
+  }
+  .town-field {
+    position: relative;
+    min-height: 210px;
+    border-right: 1px solid rgba(139, 163, 74, 0.18);
+    background:
+      linear-gradient(180deg, rgba(78, 95, 42, 0.14), transparent 56%),
+      radial-gradient(circle at 50% 72%, rgba(139, 163, 74, 0.16), transparent 42%);
+  }
+  .town-title {
+    position: absolute;
+    left: 16px;
+    top: 14px;
+    color: rgba(231, 223, 189, 0.42);
+    font-size: 12px;
+  }
+  .node-dot {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--bog);
+    border: 1px solid var(--moss-hot);
+    box-shadow: 0 0 22px rgba(196, 232, 106, 0.12);
+  }
+  .node-dot:nth-child(2) { left: 35%; top: 34%; }
+  .node-dot:nth-child(3) { left: 52%; top: 52%; }
+  .node-dot:nth-child(4) { left: 66%; top: 38%; }
+  .node-dot.running { background: var(--moss-hot); }
+  .node-dot.done { background: #58752e; }
+  .node-dot.failed { background: var(--bad); }
+  .tank-log { max-height: 210px; }
+  .footer-links {
+    margin-top: 12px;
+    text-align: center;
+    color: var(--ash);
+    font-size: 12px;
+  }
+  .footer-links a { color: var(--moss-hot); }
+  @media (max-width: 720px) {
+    .import-controls { grid-template-columns: 1fr; }
+    .tank-grid { grid-template-columns: 1fr; }
+    .town-field { border-right: 0; border-bottom: 1px solid rgba(139, 163, 74, 0.18); }
+  }
+</style>
+</head>
+<body>
+<main class="goblin-mode-shell">
+  <section class="goblin-mode-core">
+    <h1>single goblin fallback</h1>
+    <form class="composer" id="goblin-form">
+      <div class="modebar">
+        <div class="segment" role="group" aria-label="Run mode">
+          <button id="mode-single" type="button" aria-pressed="true">Single Goblin</button>
+          <button id="mode-town" type="button" aria-pressed="false">Goblintown</button>
+        </div>
+        <label class="tank-toggle" title="Open the full Tank for Goblintown runs">
+          <input id="old-tank-enabled" type="checkbox" disabled>
+          Tank
+        </label>
+      </div>
+      <div class="composer-field">
+        <textarea id="goblin-input" autocomplete="off" spellcheck="true" placeholder="Do anything"></textarea>
+        <button class="send" id="goblin-send" type="submit" title="Send (Cmd/Ctrl+Enter)" aria-label="Send prompt">run</button>
+      </div>
+      <div class="status-row">
+        <span>${esc(stats.warrenName)}</span>
+        <span>loot <b>${stats.lootCount}</b></span>
+        <span>rites <b>${stats.riteCount}</b></span>
+        <span>artifacts <b>${stats.artifactCount}</b></span>
+        <span>runs <b>${stats.runCount}</b></span>
+        <span>drift <b>${stats.drift.toFixed(4)}</b></span>
+      </div>
+    </form>
+
+    <section class="old-tank-box" id="old-tank-box" hidden>
+      <div class="panel-title"><span>tank</span><span id="tank-state">idle</span></div>
+      <div class="tank-grid">
+        <div class="town-field" aria-hidden="true">
+          <div class="town-title">goblintown</div>
+          <span class="node-dot" id="dot-planner"></span>
+          <span class="node-dot" id="dot-worker"></span>
+          <span class="node-dot" id="dot-scribe"></span>
+        </div>
+        <pre class="tank-log" id="tank-log">(waiting)</pre>
+      </div>
+    </section>
+
+    <section class="output" id="output-panel" hidden>
+      <div class="panel-title"><span id="output-title">output</span><span id="output-meta"></span></div>
+      <pre id="output-text"></pre>
+    </section>
+
+    <section class="output chat-import-panel" id="chat-import-panel">
+      <div class="panel-title"><span>chat hoard import</span><span id="chat-import-count">0 selected</span></div>
+      <div class="import-controls">
+        <select id="chat-source" aria-label="Chat source">
+          <option value="codex">Codex</option>
+          <option value="chatgpt">ChatGPT export</option>
+          <option value="folder">Folder</option>
+        </select>
+        <input id="chat-path" type="text" placeholder="optional path or export zip">
+        <input id="chat-query" type="text" placeholder="filter shiny words">
+        <button id="chat-scan" type="button">Scan</button>
+        <button id="chat-import-selected" type="button">Import Selected</button>
+        <button id="chat-import-all" type="button">Import All</button>
+        <label><input id="chat-summarize" type="checkbox"> AI summarize during import</label>
+      </div>
+      <div class="chat-import-results" id="chat-import-results">
+        <p class="chat-import-empty">Scan previous chats, then import selected or import the whole pile.</p>
+      </div>
+    </section>
+
+    <p class="footer-links">
+      slash commands: /ask, /run, /town, /tank, /plan, /context ingest, /context search, /context scan chats, /context import chats, /history, /help ·
+      <a href="/tank">legacy Tank</a> · <a href="/runs">runs</a>
+    </p>
+  </section>
+</main>
+<script>
+const INITIAL = ${initial};
+const $ = (id) => document.getElementById(id);
+let selectedMode = "single";
+let activeStream = null;
+let lastChatScan = [];
+
+function setMode(mode) {
+  selectedMode = mode === "town" ? "town" : "single";
+  $("mode-single").setAttribute("aria-pressed", selectedMode === "single" ? "true" : "false");
+  $("mode-town").setAttribute("aria-pressed", selectedMode === "town" ? "true" : "false");
+  $("old-tank-enabled").disabled = selectedMode !== "town";
+  if (selectedMode !== "town") $("old-tank-enabled").checked = false;
+}
+
+function showOutput(title, text, meta) {
+  $("output-panel").hidden = false;
+  $("output-title").textContent = title;
+  $("output-meta").textContent = meta || "";
+  $("output-text").textContent = text || "";
+}
+
+function appendTank(text) {
+  const log = $("tank-log");
+  log.textContent = log.textContent === "(waiting)" ? text : log.textContent + "\\n" + text;
+  log.scrollTop = log.scrollHeight;
+}
+
+function parseLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("/")) {
+    return { kind: "run", mode: selectedMode, tank: selectedMode === "town" && $("old-tank-enabled").checked, task: trimmed, args: trimmed ? [trimmed] : [] };
+  }
+  const parts = trimmed.match(/"[^"]*"|'[^']*'|\\S+/g) || [];
+  const command = (parts.shift() || "/run").slice(1).toLowerCase();
+  const tank = parts.includes("--tank") || command === "tank";
+  const args = parts.filter((p) => p !== "--tank").map((p) => p.replace(/^["']|["']$/g, ""));
+  const task = args.join(" ").trim();
+  if (command === "ask" || command === "single" || command === "goblin") return { kind: "ask", mode: "single", tank: false, task, args };
+  if (command === "town" || command === "goblintown" || command === "tank" || command === "plan") return { kind: command, mode: "town", tank, task, args };
+  return { kind: command, mode: selectedMode, tank: selectedMode === "town" && ($("old-tank-enabled").checked || tank), task, args };
+}
+
+async function showHistory() {
+  const res = await fetch("/api/runs");
+  if (!res.ok) throw new Error(await res.text());
+  const runs = await res.json();
+  const lines = runs.slice(0, 10).map((r) => r.runId + " · " + (r.mode || "rite") + " · " + (r.status || (r.done ? "done" : "running")) + " · " + r.task);
+  showOutput("history", lines.length ? lines.join("\\n") : "(no runs yet)", "");
+}
+
+function showHelp() {
+  showOutput("help", [
+    "/ask <task>        Single Goblin",
+    "/run <task>        current selected mode",
+    "/town <task>       Goblintown planner DAG",
+    "/tank <task>       Goblintown with live Tank box",
+    "/context ingest <path>    import old conversations/projects",
+    "/context search <query>   search imported context",
+    "/context scan chats       scan Codex or ChatGPT chat hoard",
+    "/context import chats --all    import scanned chats as DAG memory",
+    "/context vectorize --missing-only    precompute missing embeddings",
+    "/history           recent runs",
+    "/help              this list",
+  ].join("\\n"), "");
+}
+
+function commandPositionals(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg.startsWith("--")) {
+      if (args[i + 1] && !args[i + 1].startsWith("--")) i++;
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
+}
+
+function commandLimit(args, fallback) {
+  const idx = args.indexOf("--limit");
+  if (idx < 0 || !args[idx + 1]) return fallback;
+  const n = Number(args[idx + 1]);
+  return Number.isFinite(n) ? Math.max(1, Math.min(500, Math.floor(n))) : fallback;
+}
+
+function commandFlag(args, name) {
+  const idx = args.indexOf("--" + name);
+  return idx >= 0 && args[idx + 1] && !args[idx + 1].startsWith("--") ? args[idx + 1] : "";
+}
+
+function commandHasFlag(args, name) {
+  return args.includes("--" + name);
+}
+
+function contextChatPayloadFromArgs(args) {
+  return {
+    source: commandFlag(args, "source") || "codex",
+    path: commandFlag(args, "path") || undefined,
+    query: commandFlag(args, "query") || undefined,
+    since: commandFlag(args, "since") || undefined,
+    limit: commandLimit(args, 50),
+  };
+}
+
+function chatImportPayload() {
+  const path = $("chat-path").value.trim();
+  const query = $("chat-query").value.trim();
+  return {
+    source: $("chat-source").value,
+    path: path || undefined,
+    query: query || undefined,
+    limit: 50,
+  };
+}
+
+function selectedChatIds() {
+  return Array.from(document.querySelectorAll(".chat-import-choice:checked")).map((input) => input.value);
+}
+
+function updateChatSelectedCount() {
+  $("chat-import-count").textContent = selectedChatIds().length + " selected";
+}
+
+function setChatImportText(text) {
+  const box = $("chat-import-results");
+  box.innerHTML = "";
+  const p = document.createElement("p");
+  p.className = "chat-import-empty";
+  p.textContent = text;
+  box.appendChild(p);
+  updateChatSelectedCount();
+}
+
+function renderChatScan(records, skipped) {
+  lastChatScan = records || [];
+  const box = $("chat-import-results");
+  box.innerHTML = "";
+  if (!lastChatScan.length) {
+    setChatImportText(skipped && skipped.length ? "No visible chats found. Skipped " + skipped.length + " path(s)." : "No visible chats found.");
+    return;
+  }
+  for (const record of lastChatScan) {
+    const row = document.createElement("label");
+    row.className = "chat-import-row";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "chat-import-choice";
+    checkbox.value = record.id;
+    checkbox.checked = true;
+    checkbox.onchange = updateChatSelectedCount;
+    const text = document.createElement("span");
+    text.textContent = record.source + " · " + (record.updatedAt || record.createdAt || "unknown") + " · " + record.title + " · " + record.messageCount + " messages";
+    row.appendChild(checkbox);
+    row.appendChild(text);
+    box.appendChild(row);
+  }
+  if (skipped && skipped.length) {
+    const note = document.createElement("p");
+    note.className = "chat-import-empty";
+    note.textContent = "Skipped " + skipped.length + " path(s).";
+    box.appendChild(note);
+  }
+  updateChatSelectedCount();
+}
+
+async function scanChats() {
+  setChatImportText("sniffing previous chats...");
+  const res = await fetch("/api/context/chats/scan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(chatImportPayload()),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const body = await res.json();
+  renderChatScan(body.records || [], body.skipped || []);
+}
+
+async function importChats(all) {
+  const ids = all ? [] : selectedChatIds();
+  if (!all && ids.length === 0) {
+    setChatImportText("Pick at least one chat, or use Import All.");
+    return;
+  }
+  setChatImportText(all ? "importing the whole pile..." : "importing selected chats...");
+  const res = await fetch("/api/context/chats/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...chatImportPayload(),
+      all,
+      ids,
+      summarize: $("chat-summarize").checked,
+    }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const body = await res.json();
+  const lines = [
+    "Imported " + (body.records || []).length + " chat(s).",
+    "Created " + (body.artifacts || []).length + " artifact(s).",
+    "Vectorized " + (body.vectorized || 0) + " artifact(s).",
+  ];
+  if (body.warning) lines.push(body.warning);
+  if (body.skipped && body.skipped.length) lines.push("Skipped " + body.skipped.length + " item(s).");
+  setChatImportText(lines.join("\\n"));
+}
+
+async function handleContextCommand(command) {
+  const positionals = commandPositionals(command.args || []);
+  const action = positionals[0];
+  if (action === "scan" && positionals[1] === "chats") {
+    const res = await fetch("/api/context/chats/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(contextChatPayloadFromArgs(command.args || [])),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    const lines = (body.records || []).map((record) => record.id + " · " + record.source + " · " + record.title);
+    showOutput("context scan chats", lines.length ? lines.join("\\n") : "No visible chats found.", "");
+    renderChatScan(body.records || [], body.skipped || []);
+    return;
+  }
+  if (action === "import" && positionals[1] === "chats") {
+    const args = command.args || [];
+    const ids = (commandFlag(args, "ids") || "").split(",").map((part) => part.trim()).filter(Boolean);
+    const all = commandHasFlag(args, "all");
+    if (!all && ids.length === 0) {
+      showOutput("context import chats", "usage: /context import chats --all or --ids <id,...>", "");
+      return;
+    }
+    const res = await fetch("/api/context/chats/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...contextChatPayloadFromArgs(args),
+        all,
+        ids,
+        noVectorize: commandHasFlag(args, "no-vectorize"),
+        summarize: commandHasFlag(args, "summarize"),
+      }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    showOutput(
+      "context import chats",
+      "Imported " + (body.records || []).length + " chat(s), " +
+        (body.artifacts || []).length + " artifact(s), vectorized " +
+        (body.vectorized || 0) + ".",
+      "",
+    );
+    return;
+  }
+  if (action === "vectorize") {
+    const args = command.args || [];
+    const res = await fetch("/api/context/vectorize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        missingOnly: commandHasFlag(args, "missing-only"),
+        limit: commandLimit(args, 100),
+      }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    showOutput("context vectorize", "Scanned " + body.scanned + ", vectorized " + body.vectorized + ".", "");
+    return;
+  }
+  if (action === "ingest") {
+    const path = positionals[1];
+    if (!path) {
+      showOutput("context", "usage: /context ingest <path> [--limit N]", "");
+      return;
+    }
+    showOutput("context ingest", "importing...", path);
+    const res = await fetch("/api/context/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, limit: commandLimit(command.args || [], 80) }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    const lines = (body.artifacts || []).map((artifact) => artifact.id + " · " + artifact.ref);
+    const skipped = body.skipped && body.skipped.length ? "\\nskipped " + body.skipped.length + " file(s)" : "";
+    showOutput("context ingest", (lines.length ? lines.join("\\n") : "No files imported.") + skipped, path);
+    return;
+  }
+  if (action === "search") {
+    const query = positionals.slice(1).join(" ").trim();
+    if (!query) {
+      showOutput("context", "usage: /context search <query> [--limit N]", "");
+      return;
+    }
+    const res = await fetch("/api/context/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, limit: commandLimit(command.args || [], 10) }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    const lines = (body.artifacts || []).map((artifact) => artifact.id + " · " + artifact.ref + "\\n  " + artifact.claim);
+    showOutput("context search", lines.length ? lines.join("\\n") : "No matching context artifacts found.", query);
+    return;
+  }
+  showOutput("context", "usage: /context ingest <path> or /context search <query>", "");
+}
+
+function resetDots() {
+  ["dot-planner", "dot-worker", "dot-scribe"].forEach((id) => {
+    $(id).className = "node-dot";
+  });
+}
+
+function openTownStream(runId, showTank) {
+  if (activeStream) activeStream.close();
+  if (showTank) {
+    $("old-tank-box").hidden = false;
+    $("tank-log").textContent = "(waiting)";
+    $("tank-state").textContent = "running";
+    resetDots();
+  }
+  const es = new EventSource("/api/rite/" + runId + "/stream");
+  activeStream = es;
+  es.addEventListener("plan:planning", () => {
+    if (!showTank) return;
+    $("dot-planner").classList.add("running");
+    appendTank("planner thinking");
+  });
+  es.addEventListener("plan:built", (ev) => {
+    if (!showTank) return;
+    const data = JSON.parse(ev.data);
+    $("dot-planner").className = "node-dot done";
+    appendTank("DAG built: " + data.plan.nodes.length + " node(s)");
+  });
+  es.addEventListener("plan:node:start", (ev) => {
+    if (!showTank) return;
+    const data = JSON.parse(ev.data);
+    $("dot-worker").className = "node-dot running";
+    appendTank("node " + data.nodeId + " start");
+  });
+  es.addEventListener("plan:node:done", (ev) => {
+    if (!showTank) return;
+    const data = JSON.parse(ev.data);
+    $("dot-worker").className = "node-dot done";
+    appendTank("node " + data.nodeId + " done");
+  });
+  es.addEventListener("done", async (ev) => {
+    const data = JSON.parse(ev.data);
+    if (showTank) {
+      $("dot-scribe").className = "node-dot done";
+      $("tank-state").textContent = "done";
+      appendTank("done: " + data.outcome);
+    }
+    es.close();
+    activeStream = null;
+    if (data.finalArtifactId) {
+      const art = await fetch("/api/artifact/" + data.finalArtifactId).then((r) => r.ok ? r.json() : null);
+      const claims = art && Array.isArray(art.claims) ? art.claims.map((c) => "- " + c.text).join("\\n") : "";
+      showOutput("goblintown result", claims || "Run finished. Open /runs for full details.", data.riteId || runId);
+    } else {
+      showOutput("goblintown result", "Run finished. Open /runs for full details.", data.riteId || runId);
+    }
+  });
+  es.addEventListener("error", () => {
+    if (showTank) $("tank-state").textContent = "stream ended";
+  });
+}
+
+$("mode-single").onclick = () => setMode("single");
+$("mode-town").onclick = () => setMode("town");
+$("chat-scan").onclick = () => scanChats().catch((err) => setChatImportText(err.message || String(err)));
+$("chat-import-selected").onclick = () => importChats(false).catch((err) => setChatImportText(err.message || String(err)));
+$("chat-import-all").onclick = () => importChats(true).catch((err) => setChatImportText(err.message || String(err)));
+
+$("goblin-input").addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    event.preventDefault();
+    $("goblin-form").requestSubmit($("goblin-send"));
+  }
+});
+
+$("goblin-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const command = parseLine($("goblin-input").value);
+  if (!command.task && !["history", "help"].includes(command.kind)) {
+    showOutput("error", "Give the goblin a task.", "");
+    return;
+  }
+  if (command.kind === "help") return showHelp();
+  if (command.kind === "history") return showHistory().catch((err) => showOutput("error", err.message || String(err), ""));
+  if (command.kind === "context") return handleContextCommand(command).catch((err) => showOutput("error", err.message || String(err), ""));
+
+  setMode(command.mode);
+  $("old-tank-enabled").checked = command.mode === "town" && command.tank;
+  showOutput(command.mode === "town" ? "goblintown" : "single goblin", "running...", "");
+
+  try {
+    if (command.mode === "town") {
+      const res = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: command.task,
+          maxNodes: 6,
+          maxReplan: 2,
+          remember: true,
+          outputFormat: "markdown",
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const body = await res.json();
+      showOutput("goblintown", "run " + body.runId + " started", body.runId);
+      openTownStream(body.runId, command.tank);
+      return;
+    }
+    const res = await fetch("/api/goblin/single", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: command.task, remember: true, outputFormat: "markdown" }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const body = await res.json();
+    showOutput("single goblin", body.output, body.lootId ? "loot " + body.lootId : "");
+  } catch (err) {
+    showOutput("error", err.message || String(err), "");
+  }
+});
+</script>
+</body>
+</html>`;
+}
+
+function sidebarRiteButtons(runs: Map<string, RunState>): string {
+  const recentRuns = [...runs.values()]
+    .sort((a, b) => b.record.startedAt - a.record.startedAt)
+    .slice(0, 6);
+  if (!recentRuns.length) {
+    return `
+          <button class="sidebar-item active" type="button" data-surface-kind="rite" data-run-id="sample-bounty-72" title="Bounty issue #72"><strong>Bounty issue #72</strong>${sidebarStatusGlyph("running")}</button>
+          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-provider-setup-audit" title="Provider setup audit"><strong>Provider setup audit</strong>${sidebarStatusGlyph("ready")}</button>
+          <button class="sidebar-item" type="button" data-surface-kind="rite" data-run-id="sample-tank-ui-simplification" title="Tank UI simplification"><strong>Tank UI simplification</strong>${sidebarStatusGlyph("ready")}</button>`;
+  }
+  return recentRuns
+    .map((state, index) => {
+      const record = state.record;
+      const status = record.status || (record.done ? "done" : "running");
+      const active = index === 0 ? " active" : "";
+      return `<button class="sidebar-item${active}" type="button" data-surface-kind="rite" data-run-id="${esc(record.runId)}" title="${esc(record.task || record.runId)}"><strong>${esc(record.task || record.runId)}</strong>${sidebarStatusGlyph(status)}</button>`;
+    })
+    .join("\n          ");
+}
+
+function sidebarStatusGlyph(status: string): string {
+  switch (status) {
+    case "done":
+      return `<span class="sidebar-status sidebar-status-done" title="done" aria-label="done">✔︎</span>`;
+    case "error":
+    case "failed":
+    case "all_failed":
+      return `<span class="sidebar-status sidebar-status-failed" title="failed" aria-label="failed">∅</span>`;
+    case "running":
+    case "pending":
+    case "ready":
+    case "queued":
+    case "interrupted":
+    default:
+      return `<span class="sidebar-status sidebar-status-running" title="${esc(status || "in progress")}" aria-label="${esc(status || "in progress")}">⏲</span>`;
+  }
+}
+
+function townIdentityLabel(warrenName: string, countryConfig: CountryConfig | undefined): string {
+  const country = normalizeCountryConfig(countryConfig);
+  const id = country.countryId ? country.countryId.slice(0, 6).toUpperCase() : warrenName;
+  const code = country.countryCode || "LOCAL";
+  return `${id} · ${code}`;
+}
+
 function tankHtml(
   warrenName: string,
+  countryConfig: CountryConfig | undefined,
   lootCount: number,
   riteCount: number,
   drift: number,
+  runs: Map<string, RunState>,
 ): string {
+  const townIdentity = townIdentityLabel(warrenName, countryConfig);
   const initial = JSON.stringify({
     warren: warrenName,
+    townIdentity,
     loot: lootCount,
     rites: riteCount,
     drift,
@@ -2844,28 +4257,9 @@ function tankHtml(
     color: var(--muted); font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase;
   }
   .strip .name { color: var(--fg-bright); font-weight: 600; }
-  .strip .stat { color: var(--fg); }
-  .strip .stat b { color: var(--accent); font-weight: 600; }
   .strip .grow { flex: 1; }
   .strip .clock { color: var(--muted); }
   .strip .tier { color: var(--warn); }
-  .settings-chip {
-    border: 1px solid var(--line);
-    background: var(--bg-deep);
-    color: var(--fg-bright);
-    border-radius: 999px;
-    padding: 0.3rem 0.65rem;
-    font: inherit;
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    cursor: pointer;
-  }
-  .settings-chip:hover,
-  .settings-chip[aria-expanded="true"] {
-    border-color: var(--accent);
-    color: var(--accent-hot);
-  }
   .settings-popover {
     position: absolute;
     right: 1rem;
@@ -3258,6 +4652,27 @@ function tankHtml(
     line-height: 1.25;
     margin: 0.25rem 0 0.22rem;
   }
+  .provider-workflow {
+    margin: 0.5rem 0 0.6rem;
+    border: 1px solid rgba(143,207,82,0.22);
+    border-radius: 6px;
+    background: rgba(3, 6, 3, 0.48);
+    color: var(--muted);
+    font-size: 0.68rem;
+    line-height: 1.35;
+    padding: 0.5rem 0.58rem;
+  }
+  .provider-workflow strong {
+    display: block;
+    color: var(--fg-bright);
+    font-size: 0.72rem;
+    margin-bottom: 0.16rem;
+  }
+  .provider-workflow code {
+    color: var(--accent-hot);
+    font-family: var(--mono);
+    font-size: 0.66rem;
+  }
   .provider-status {
     flex: 0 0 auto;
     margin: 0.48rem 0 0;
@@ -3369,6 +4784,47 @@ function tankHtml(
     .provider-route-extra { grid-column: auto; }
     .provider-route-row > div:nth-child(4) { grid-column: auto; }
     .provider-route-slot { padding-bottom: 0; }
+    body { padding: 0; }
+    .warren {
+      width: 100vw;
+      height: 100vh;
+      border-radius: 0;
+      border-left: 0;
+      border-right: 0;
+    }
+    .strip {
+      gap: 0.55rem;
+      padding: 0.48rem 0.55rem;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .strip .stat,
+    .strip .tier {
+      display: none;
+    }
+    .workarea {
+      grid-template-columns: 96px 1fr;
+    }
+    .ops-sidebar {
+      padding: 0.45rem 0.28rem;
+    }
+    .ops-actions .btn {
+      min-height: 2rem;
+      font-size: 0.5rem;
+      padding: 0.32rem 0.14rem;
+    }
+    .chat-thread {
+      padding: 0.85rem;
+    }
+    .chat-input-row {
+      grid-template-columns: 1fr;
+    }
+    .chat-input-row button {
+      width: 100%;
+    }
+    .chat-offer-inline.open {
+      display: grid;
+    }
   }
   .country-chip {
     border: 1px solid var(--line);
@@ -3716,19 +5172,22 @@ function tankHtml(
 
   .workarea {
     display: grid;
-    grid-template-columns: 290px 1fr;
+    grid-template-columns: 300px 1fr;
     min-height: 0;
     border-bottom: 1px solid var(--line);
+    background: #0d0f0c;
   }
-  .workarea.sidebar-collapsed { grid-template-columns: 44px 1fr; }
+  .workarea.sidebar-collapsed { grid-template-columns: 52px 1fr; }
   .ops-sidebar {
     border-right: 1px solid var(--line);
-    background: rgba(8, 12, 8, 0.95);
-    padding: 0.7rem;
+    background:
+      linear-gradient(180deg, rgba(124,255,91,0.045), transparent 34%),
+      #151a14;
+    padding: 1rem 0.9rem;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    gap: 0.6rem;
+    gap: 1rem;
     overflow: auto;
   }
   .ops-head {
@@ -3739,10 +5198,10 @@ function tankHtml(
   }
   .ops-sidebar h3 {
     margin: 0;
-    font-size: 0.74rem;
-    color: var(--fg-bright);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-size: 1.2rem;
+    color: #e6e2d3;
+    letter-spacing: 0;
+    text-transform: none;
   }
   .ops-toggle {
     padding: 0.2rem 0.42rem;
@@ -3758,88 +5217,298 @@ function tankHtml(
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.6rem;
+    gap: 1rem;
+    flex: 1 1 auto;
   }
   .ops-quick {
+    display: flex;
+    flex-direction: column;
+    gap: 0.78rem;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.15rem;
+  }
+  .ops-actions {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.3rem;
-  }
-  .ops-quick .btn {
-    padding: 0.45rem 0.4rem;
-    font-size: 0.66rem;
-    letter-spacing: 0.07em;
-  }
-  .ops-subtle {
-    color: var(--muted);
-    font-size: 0.7rem;
-    line-height: 1.35;
-  }
-  .ops-danger {
-    width: 100%;
+    gap: 0.34rem;
     flex: 0 0 auto;
-    padding: 0.52rem 0.65rem;
-    font-size: 0.68rem;
   }
-  .ops-row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 0.4rem;
-  }
-  .ops-input, .ops-select {
+  .ops-actions .btn {
     width: 100%;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 0.42rem 0.5rem;
-    font-family: inherit;
-    font-size: 0.76rem;
+    min-height: 1.45rem;
+    padding: 0.12rem 0.16rem;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #e6e2d3;
+    font-size: 0.86rem;
+    letter-spacing: 0;
+    text-align: left;
+    text-transform: none;
+    transform: none;
   }
-  .ops-input:focus, .ops-select:focus { outline: none; border-color: var(--accent); }
-  .ops-presets {
+  .ops-actions .btn:hover,
+  .ops-actions .btn.primary:hover {
+    background: transparent;
+    color: #7cff5b;
+    transform: none;
+  }
+  .ops-actions .btn.primary {
+    background: transparent;
+    border: 0;
+    color: #e6e2d3;
+    font-weight: 600;
+  }
+  .sidebar-list {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.3rem;
+    gap: 0.34rem;
   }
-  .ops-presets button {
-    font-size: 0.66rem;
-    letter-spacing: 0.05em;
+  .sidebar-list.collapsed .sidebar-items {
+    display: none;
+  }
+  .sidebar-label {
+    margin: 0.45rem 0 0.15rem;
+    color: #a8b09a;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    padding: 0.35rem 0.4rem;
-    border: 1px solid var(--line);
-    color: var(--fg);
-    background: var(--bg-deep);
+  }
+  .sidebar-section-toggle {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: #a8b09a;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0;
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-align: left;
+    text-transform: uppercase;
+  }
+  .sidebar-section-toggle::after {
+    content: "⌄";
+    color: #7cff5b;
+    font-size: 0.72rem;
+  }
+  .sidebar-list.collapsed .sidebar-section-toggle::after {
+    content: "›";
+  }
+  .sidebar-item {
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #e6e2d3;
+    padding: 0.36rem 0.16rem;
+    font: inherit;
+    text-align: left;
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.45rem;
   }
-  .ops-presets button:hover { border-color: var(--accent); color: var(--accent-hot); }
-  .ops-examples summary {
+  .sidebar-item:hover {
+    background: transparent;
+    border-color: transparent;
+    color: #7cff5b;
+  }
+  .sidebar-item.active {
+    background: transparent;
+    border-color: transparent;
+    color: #e6e2d3;
+  }
+  .sidebar-item strong,
+  .sidebar-item span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sidebar-item strong {
+    min-width: 0;
+  }
+  .sidebar-status {
+    justify-self: end;
+    font-size: 0.78rem;
+    font-weight: 750;
+    line-height: 1;
+  }
+  .sidebar-status-done {
+    color: #6dffb3;
+  }
+  .sidebar-status-failed {
+    color: #ff5d73;
+  }
+  .sidebar-status-running {
+    color: #ffb347;
+  }
+  .sidebar-settings {
+    position: relative;
+    margin-top: auto;
+    flex: 0 0 auto;
+    display: grid;
+    gap: 0.6rem;
+  }
+  .sidebar-settings-card {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 0.75rem);
+    z-index: 18;
+    border: 1px solid rgba(124,255,91,0.18);
+    border-radius: 14px;
+    background: #1d241b;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.36);
+    padding: 0.75rem;
+  }
+  .sidebar-settings.open .sidebar-settings-card {
+    display: grid;
+    gap: 0.62rem;
+  }
+  .settings-card-head {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    color: #e6e2d3;
+    font-weight: 750;
+  }
+  .settings-icon {
+    width: 1.9rem;
+    aspect-ratio: 210 / 246;
+    height: auto;
+    object-fit: contain;
+    filter: brightness(0) saturate(100%) invert(91%) sepia(12%) saturate(401%) hue-rotate(26deg) brightness(101%) contrast(92%) drop-shadow(0 0 7px rgba(124,255,91,0.18));
+    transition: filter 0.16s ease, opacity 0.16s ease;
+  }
+  .settings-country {
+    border: 1px solid rgba(168,176,154,0.18);
+    border-radius: 10px;
+    background: rgba(13,15,12,0.68);
+    padding: 0.7rem;
+  }
+  .settings-country span,
+  .settings-joke {
+    display: block;
+    color: #a8b09a;
+    font-size: 0.72rem;
+  }
+  .settings-country strong {
+    display: block;
+    margin: 0.18rem 0;
+    color: #e6e2d3;
+    font-size: 0.95rem;
+  }
+  .settings-link {
+    border: 0;
+    background: transparent;
+    color: #e6e2d3;
+    font: inherit;
+    font-weight: 650;
+    padding: 0.28rem 0;
+    text-align: left;
     cursor: pointer;
-    color: var(--accent);
-    font-size: 0.72rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-bottom: 0.5rem;
   }
-  .ops-examples[open] summary { margin-bottom: 0.55rem; }
-  .ops-output {
+  .settings-link:hover,
+  .settings-trigger:hover {
+    color: #7cff5b;
+  }
+  .settings-trigger:hover .settings-icon,
+  .settings-card-head .settings-icon {
+    filter: brightness(0) saturate(100%) invert(86%) sepia(62%) saturate(724%) hue-rotate(43deg) brightness(108%) contrast(105%) drop-shadow(0 0 9px rgba(124,255,91,0.34));
+  }
+  .settings-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    border: 0;
+    background: transparent;
+    color: #e6e2d3;
+    font: inherit;
+    font-weight: 650;
+    padding: 0.2rem 0;
+    text-align: left;
+    cursor: pointer;
+  }
+  .sidebar-settings.open #settings-icon-closed { display: none; }
+  .sidebar-settings:not(.open) #settings-icon-open { display: none; }
+  .settings-sidebar-panel[hidden] {
+    display: none;
+  }
+  .settings-sidebar-panel {
+    flex: 1 1 auto;
     min-height: 0;
-    flex: 1;
-    border: 1px solid var(--line);
-    background: rgba(5,8,5,0.85);
-    padding: 0.5rem;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-size: 0.72rem;
-    line-height: 1.35;
-    color: var(--fg);
+    overflow-y: auto;
+    display: grid;
+    align-content: start;
+    gap: 0.72rem;
   }
-  .ops-output .err { color: var(--fail); }
-  .ops-output .ok { color: var(--pass); }
+  .settings-sidebar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .settings-sidebar-head strong {
+    color: #e6e2d3;
+    font-size: 1rem;
+  }
+  .settings-back {
+    border: 0;
+    background: transparent;
+    color: #a8b09a;
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+  }
+  .settings-back:hover {
+    color: #7cff5b;
+  }
+  .settings-sidebar-menu {
+    display: grid;
+    gap: 0.35rem;
+  }
+  .settings-sidebar-menu button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: #e6e2d3;
+    cursor: pointer;
+    font: inherit;
+    padding: 0.34rem 0;
+    text-align: left;
+  }
+  .settings-sidebar-menu button:hover,
+  .settings-sidebar-menu button.active {
+    color: #7cff5b;
+  }
+  .chat-main.settings-active .chat-composer {
+    display: none;
+  }
+  .ops-sidebar.settings-mode .ops-main,
+  .ops-sidebar.settings-mode .ops-head .ops-toggle {
+    display: none;
+  }
+  .sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
   .workarea.sidebar-collapsed .ops-main { display: none; }
   .workarea.sidebar-collapsed .ops-sidebar { padding: 0.7rem 0.35rem; }
   .workarea.sidebar-collapsed .ops-head {
@@ -3858,6 +5527,553 @@ function tankHtml(
   .tank {
     position: relative; overflow: hidden;
     background: linear-gradient(180deg, var(--sky) 0%, #0c1310 65%, #0a0e08 100%);
+  }
+  .codex-chat-surface {
+    background: #0d0f0c;
+  }
+  .tank.chat-mode {
+    background:
+      radial-gradient(circle at 12% 0%, rgba(124,255,91,0.08), transparent 30rem),
+      #0d0f0c;
+    overflow: hidden;
+  }
+  .tank:not(.chat-mode) .chat-main { display: none; }
+  .tank.chat-mode .tank-logo-mark,
+  .tank.chat-mode .star,
+  .tank.chat-mode .mountains,
+  .tank.chat-mode .skyline,
+  .tank.chat-mode .smoke,
+  .tank.chat-mode .banner,
+  .tank.chat-mode .trees,
+  .tank.chat-mode .lantern,
+  .tank.chat-mode .ground,
+  .tank.chat-mode .ground-shadow,
+  .tank.chat-mode .pigeon-wire,
+  .tank.chat-mode .gremlin-perch,
+  .tank.chat-mode .ogre-cave,
+  .tank.chat-mode .ogre-cave-label,
+  .tank.chat-mode .workshop,
+  .tank.chat-mode .troll-bridge,
+  .tank.chat-mode .raccoon-dump,
+  .tank.chat-mode .hoard,
+  .tank.chat-mode .creature,
+  .tank.chat-mode .pos-goblins,
+  .tank.chat-mode .goblin-pile,
+  .tank.chat-mode .bubble-layer,
+  .tank.chat-mode .dag-panel,
+  .tank.chat-mode .result-panel {
+    display: none !important;
+  }
+  .chat-main {
+    position: absolute;
+    inset: 0;
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+  }
+  .chat-thread {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: clamp(1rem, 3vw, 2.2rem);
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+  .chat-thread.surface-hidden,
+  .rite-surface[hidden] {
+    display: none;
+  }
+  .settings-surface[hidden] {
+    display: none;
+  }
+  .rite-surface {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: clamp(1rem, 3vw, 2.2rem);
+  }
+  .settings-surface {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: clamp(1rem, 3vw, 2.2rem);
+  }
+  .settings-surface-inner {
+    width: min(980px, 100%);
+  }
+  .settings-surface-panel {
+    min-height: 22rem;
+    border: 1px solid rgba(124,255,91,0.16);
+    border-radius: 8px;
+    background: rgba(13,15,12,0.5);
+    padding: 1rem;
+  }
+  .settings-surface-panel h2 {
+    margin: 0 0 0.45rem;
+    color: #e6e2d3;
+    font-size: 1.1rem;
+  }
+  .settings-surface-panel p {
+    margin: 0;
+    color: #a8b09a;
+  }
+  .settings-surface-actions,
+  .settings-surface-form {
+    display: grid;
+    gap: 0.55rem;
+    margin-top: 0.85rem;
+  }
+  .settings-surface-actions {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .settings-surface-panel button,
+  .settings-surface-panel input,
+  .settings-surface-panel select {
+    width: 100%;
+    border: 1px solid rgba(124,255,91,0.22);
+    border-radius: 4px;
+    background: rgba(6,10,6,0.72);
+    color: #e6e2d3;
+    font: inherit;
+    padding: 0.48rem 0.55rem;
+  }
+  .settings-surface-panel button {
+    cursor: pointer;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .settings-surface-panel button:hover {
+    border-color: #7cff5b;
+    color: #7cff5b;
+  }
+  .settings-surface-panel .settings-embedded {
+    position: static;
+    inset: auto;
+    width: 100%;
+    max-height: none;
+    box-shadow: none;
+    margin: 0;
+  }
+  .settings-surface-panel .auth-popover.settings-embedded,
+  .settings-surface-panel .country-popover.settings-embedded,
+  .settings-surface-panel .mail-popover.settings-embedded,
+  .settings-surface-panel .settings-reset-panel.settings-embedded {
+    display: block;
+  }
+  .settings-surface-panel .provider-popover.settings-embedded {
+    display: flex;
+  }
+  .settings-surface-panel .addon-popover.settings-embedded {
+    display: block;
+  }
+  .settings-surface-panel .onchain-popover.settings-embedded,
+  .settings-surface-panel .sentiment-popover.settings-embedded {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .settings-surface-panel .settings-danger-action {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.45rem;
+    align-items: center;
+    text-align: left;
+  }
+  .settings-surface-panel .settings-danger-action span {
+    color: #ffb347;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .settings-surface-panel .settings-danger-action strong {
+    color: #ff5d73;
+  }
+  .settings-import-results {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 0.75rem;
+    color: #a8b09a;
+    font-size: 0.76rem;
+  }
+  .settings-import-results code {
+    color: #7cff5b;
+    font-size: 0.7rem;
+  }
+  .rite-inline-inner {
+    width: min(980px, 100%);
+    margin: 0 auto;
+    display: grid;
+    gap: 1rem;
+  }
+  .rite-inline-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid rgba(124,255,91,0.18);
+    padding-bottom: 0.85rem;
+  }
+  .rite-inline-kicker {
+    display: block;
+    color: #7cff5b;
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .rite-inline-head h2 {
+    margin: 0.18rem 0 0;
+    color: #e6e2d3;
+    font-size: clamp(1.25rem, 2vw, 1.85rem);
+    letter-spacing: 0;
+  }
+  .rite-inline-meta {
+    margin-top: 0.2rem;
+    color: #a8b09a;
+  }
+  .rite-inline-actions {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .rite-inline-actions a,
+  .rite-inline-actions button {
+    border: 1px solid rgba(124,255,91,0.3);
+    border-radius: 8px;
+    background: rgba(124,255,91,0.08);
+    color: #e6e2d3;
+    font: inherit;
+    font-weight: 650;
+    text-decoration: none;
+    padding: 0.48rem 0.68rem;
+    cursor: pointer;
+  }
+  .rite-inline-actions a:hover,
+  .rite-inline-actions button:hover {
+    border-color: rgba(124,255,91,0.58);
+    color: #7cff5b;
+  }
+  .rite-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+  .rite-stat {
+    border: 1px solid rgba(124,255,91,0.16);
+    border-radius: 8px;
+    background: rgba(29,36,27,0.72);
+    padding: 0.75rem;
+  }
+  .rite-stat span {
+    display: block;
+    color: #7cff5b;
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .rite-stat strong {
+    display: block;
+    margin-top: 0.22rem;
+    color: #e6e2d3;
+    font-size: 0.95rem;
+    font-weight: 650;
+    word-break: break-word;
+  }
+  .inline-run-display,
+  .rite-event {
+    border: 1px solid rgba(124,255,91,0.16);
+    border-radius: 8px;
+    background: rgba(21,26,20,0.72);
+  }
+  .inline-run-display {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.9rem;
+  }
+  .inline-run-display strong,
+  .rite-discussion h3 {
+    color: #e6e2d3;
+  }
+  .inline-run-display p {
+    margin: 0;
+    color: #a8b09a;
+  }
+  .rite-discussion {
+    display: grid;
+    gap: 0.72rem;
+  }
+  .rite-discussion h3 {
+    margin: 0.2rem 0 0;
+    font-size: 1.25rem;
+  }
+  .rite-event {
+    border-left: 3px solid rgba(124,255,91,0.5);
+    padding: 0.75rem 0.9rem;
+  }
+  .rite-event-title {
+    display: block;
+    color: #e6e2d3;
+    font-weight: 750;
+    margin-bottom: 0.22rem;
+  }
+  .rite-event-body {
+    color: #a8b09a;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .rite-empty {
+    color: #a8b09a;
+    border-left-color: rgba(168,176,154,0.45);
+  }
+  .chat-message {
+    width: min(840px, 100%);
+    white-space: pre-wrap;
+    word-break: break-word;
+    border: 0;
+    border-left: 3px solid rgba(124,255,91,0.35);
+    border-radius: 0;
+    padding: 0.35rem 0 0.35rem 0.95rem;
+    background: transparent;
+    color: #e6e2d3;
+  }
+  .chat-message.user {
+    align-self: flex-end;
+    border-left-color: rgba(198,140,255,0.5);
+    background: transparent;
+  }
+  .chat-message.assistant,
+  .chat-message.system {
+    align-self: flex-start;
+  }
+  .chat-role {
+    display: block;
+    margin-bottom: 0.32rem;
+    color: var(--muted);
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .chat-composer {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--line);
+    padding: 0.9rem clamp(0.8rem, 2vw, 1.4rem) 1.2rem;
+    background: rgba(13,15,12,0.94);
+  }
+  .chat-composer-inner {
+    width: min(920px, 100%);
+    margin: 0 auto;
+    display: grid;
+    gap: 0.5rem;
+    border: 1px solid rgba(168,176,154,0.18);
+    border-radius: 18px;
+    background: rgba(21,26,20,0.72);
+    padding: 0.85rem 0.95rem;
+  }
+  .chat-offer-inline {
+    display: none;
+    border: 1px solid rgba(143,207,82,0.28);
+    border-radius: 8px;
+    background: rgba(16,26,18,0.92);
+    padding: 0.62rem 0.7rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    color: var(--fg);
+  }
+  .chat-offer-inline.open { display: flex; }
+  .chat-input-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .chat-input-row textarea {
+    min-height: 3.2rem;
+    max-height: 12rem;
+    resize: vertical;
+    width: 100%;
+    background: transparent;
+    color: #e6e2d3;
+    border: 0;
+    border-bottom: 1px solid rgba(168,176,154,0.22);
+    border-radius: 0;
+    padding: 0.55rem 0;
+    font: inherit;
+  }
+  .chat-input-row textarea:focus {
+    outline: none;
+    border-color: #7cff5b;
+  }
+  .chat-input-row button:not(.sr-only),
+  .chat-offer-inline button {
+    min-height: 2.6rem;
+    border: 1px solid rgba(124,255,91,0.42);
+    background: rgba(124,255,91,0.12);
+    color: #e6e2d3;
+    border-radius: 999px;
+    padding: 0.52rem 0.85rem;
+    font: inherit;
+    cursor: pointer;
+  }
+  .chat-input-row button[aria-pressed="true"] {
+    border-color: var(--accent-hot);
+    background: #4d5b1f;
+    color: #fff7c2;
+  }
+  .rite-choice-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.55rem;
+    white-space: normal;
+  }
+  .rite-choice {
+    border: 1px solid rgba(124,255,91,0.28);
+    border-radius: 999px;
+    background: rgba(124,255,91,0.08);
+    color: #e6e2d3;
+    font: inherit;
+    padding: 0.38rem 0.68rem;
+    cursor: pointer;
+  }
+  .rite-choice:hover {
+    border-color: rgba(124,255,91,0.58);
+    background: rgba(124,255,91,0.16);
+    color: #7cff5b;
+  }
+  .chat-input-row button:disabled,
+  .chat-offer-inline button:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
+  .voice-picker,
+  .personality-picker {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .voice-trigger {
+    width: 2.6rem;
+    height: 2.6rem;
+    padding: 0 !important;
+    display: inline-grid;
+    place-items: center;
+  }
+  .voice-trigger img {
+    width: 1.85rem;
+    height: 1.85rem;
+    object-fit: contain;
+  }
+  .send-button {
+    width: 2.8rem;
+    height: 2.8rem;
+    padding: 0 !important;
+    background: #39ff14 !important;
+    color: #0d0f0c !important;
+    border-color: #39ff14 !important;
+    font-size: 1.35rem !important;
+    font-weight: 850 !important;
+  }
+  .voice-menu,
+  .personality-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 0.55rem);
+    min-width: 15rem;
+    z-index: 24;
+    border: 1px solid rgba(124,255,91,0.26);
+    border-radius: 14px;
+    background: rgba(21,26,20,0.98);
+    box-shadow: 0 18px 55px rgba(0,0,0,0.5);
+    padding: 0.42rem;
+  }
+  .personality-menu {
+    left: 0;
+    right: auto;
+    min-width: 11rem;
+  }
+  .voice-picker:hover .voice-menu,
+  .voice-picker:focus-within .voice-menu,
+  .voice-picker.open .voice-menu,
+  .personality-picker:hover .personality-menu,
+  .personality-picker:focus-within .personality-menu,
+  .personality-picker.open .personality-menu {
+    display: grid;
+    gap: 0.08rem;
+  }
+  .voice-choice,
+  .personality-choice {
+    display: grid;
+    grid-template-columns: 2rem 1fr;
+    align-items: center;
+    gap: 0.65rem;
+    border: 0;
+    background: transparent;
+    color: #e6e2d3;
+    border-radius: 0;
+    padding: 0.42rem 0.5rem;
+    font: inherit;
+    font-weight: 650;
+    text-align: left;
+  }
+  .personality-choice {
+    grid-template-columns: 1fr;
+  }
+  .voice-menu .voice-choice {
+    min-height: 0;
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .voice-choice:hover,
+  .voice-choice.active,
+  .personality-choice:hover,
+  .personality-choice.active {
+    color: #7cff5b;
+    text-shadow: 0 0 12px rgba(124,255,91,0.22);
+  }
+  .voice-choice img {
+    width: 1.75rem;
+    height: 1.75rem;
+    object-fit: contain;
+  }
+  .personality-label {
+    border: 0;
+    background: transparent;
+    color: #a8b09a;
+    font: inherit;
+    padding: 0;
+    cursor: pointer;
+  }
+  .personality-label::after {
+    content: " ^";
+    color: transparent;
+  }
+  .personality-picker:hover .personality-label::after,
+  .personality-picker:focus-within .personality-label::after {
+    color: #7cff5b;
+  }
+  .chat-meta-row {
+    display: flex;
+    gap: 0.65rem;
+    align-items: center;
+    flex-wrap: wrap;
+    color: var(--muted);
+    font-size: 0.68rem;
+  }
+  .chat-meta-row select,
+  .chat-meta-row input {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 0.28rem 0.38rem;
+    font: inherit;
+    font-size: 0.68rem;
   }
   .tank-logo-mark {
     position: absolute; top: 50%; left: 50%; z-index: 0;
@@ -4539,9 +6755,11 @@ function tankHtml(
     align-items: center;
     justify-content: center;
     padding: 1rem;
+    pointer-events: none;
   }
   .onboard-overlay.open { display: flex; }
   .onboard-card {
+    pointer-events: auto;
     width: min(560px, calc(100% - 1.2rem));
     background: rgba(10,14,8,0.98);
     border: 1px solid var(--accent);
@@ -4576,6 +6794,7 @@ function tankHtml(
   .onboard-cloud-actions {
     display: none;
     gap: 0.55rem;
+    flex-wrap: wrap;
     margin-top: 0.85rem;
   }
   .onboard-cloud-actions.open {
@@ -4657,14 +6876,10 @@ function tankHtml(
 <div class="warren" id="warren" data-tier="0">
 
   <div class="strip">
-    <span class="name">WARREN · ${esc(warrenName)}</span>
-    <span class="stat"><b id="stat-loot">${lootCount}</b> loot</span>
-    <span class="stat"><b id="stat-rites">${riteCount}</b> rites</span>
-    <span class="stat">drift <b id="stat-drift">${drift.toFixed(3)}</b></span>
+    <span class="name" id="town-identity">Goblintown · ${esc(townIdentity)}</span>
     <span class="grow"></span>
-    <span class="tier" id="tier-display">tier 0 · empty plot</span>
-    <span class="clock" id="clock">idle</span>
-    <button class="settings-chip" id="settings-chip" type="button" aria-expanded="false">Settings ▾</button>
+    <span class="tier" id="tier-display">tier 1 · unincorporated</span>
+    <span class="clock" id="surface-mode">chat</span>
   </div>
 
   <div class="settings-popover" id="settings-popover">
@@ -4679,8 +6894,8 @@ function tankHtml(
       <button class="country-chip" id="country-chip" type="button" data-settings-label="Country">
         <span>Country</span><strong>Country ▾</strong>
       </button>
-      <button class="mail-chip" id="mail-chip" type="button" data-settings-label="Mail">
-        <span>Mail</span><strong>Mail ▾</strong>
+      <button class="mail-chip" id="mail-chip" type="button" data-settings-label="Group Chats">
+        <span>Groups</span><strong>Groups ▾</strong>
       </button>
       <button class="addon-chip" id="addon-chip" type="button" data-settings-label="Add-ons">
         <span>Add-ons</span><strong>Add-ons ▾</strong>
@@ -4693,6 +6908,9 @@ function tankHtml(
       </button>
       <button class="provider-chip" id="provider-chip" type="button" data-settings-label="API">
         <span>API</span><strong>API ▾</strong>
+      </button>
+      <button class="provider-chip" id="voice-chip" type="button" data-settings-label="Voice">
+        <span>Voice</span><strong>Browser ▾</strong>
       </button>
       <button class="reset-chip" id="reset-chip" type="button" aria-expanded="false" data-settings-label="Reset">
         <span>Reset</span><strong>Reset ▸</strong>
@@ -4759,6 +6977,13 @@ function tankHtml(
     <div class="provider-scroll">
     <label for="provider-preset">Preset</label>
     <select id="provider-preset"></select>
+    <div class="provider-workflow" id="provider-custom-workflow">
+      <strong>Adding a non-standard AI provider?</strong>
+      Use the installed repo skill <code>add-provider-package</code> at
+      <code>.agents/skills/add-provider-package/SKILL.md</code>. Reinstall/update with
+      <code>npx skills add https://github.com/vercel/ai --skill add-provider-package</code>;
+      simple OpenAI-compatible APIs only need the Custom preset, base URL, key env, and model slots below.
+    </div>
     <label for="provider-baseurl">Base URL</label>
     <input id="provider-baseurl" placeholder="https://api.example.com/v1">
     <div class="provider-grid">
@@ -4803,6 +7028,56 @@ function tankHtml(
     </div>
   </div>
 
+  <div class="provider-popover voice-popover" id="voice-popover">
+    <h3>Voice API</h3>
+    <div class="provider-scroll">
+      <label for="voice-provider">Provider</label>
+      <select id="voice-provider">
+        <option value="browser">Browser Speech (no key)</option>
+        <option value="openai">OpenAI Transcription</option>
+        <option value="deepgram">Deepgram</option>
+        <option value="local">Local OpenAI-compatible STT</option>
+        <option value="custom">Custom Endpoint</option>
+      </select>
+      <div class="provider-workflow" id="voice-custom-workflow">
+        <strong>Adding a new voice/text provider surface?</strong>
+        Use the installed <code>add-provider-package</code> skill at
+        <code>.agents/skills/add-provider-package/SKILL.md</code> for provider-package structure,
+        schema validation, examples, docs, and tests. Existing STT-compatible endpoints can stay in this panel.
+      </div>
+      <label for="voice-baseurl">Base URL</label>
+      <input id="voice-baseurl" placeholder="http://localhost:8000/v1/audio/transcriptions">
+      <div class="provider-grid">
+        <div>
+          <label for="voice-keyenv">Key env var</label>
+          <input id="voice-keyenv" placeholder="VOICE_API_KEY">
+        </div>
+        <div>
+          <label for="voice-apikey">API key (saved locally)</label>
+          <input id="voice-apikey" type="password" autocomplete="off" placeholder="optional server-side key">
+        </div>
+      </div>
+      <div class="provider-grid">
+        <div>
+          <label for="voice-model">Model</label>
+          <input id="voice-model" placeholder="gpt-4o-mini-transcribe, nova-3, whisper-large-v3">
+        </div>
+        <div>
+          <label for="voice-language">Language</label>
+          <input id="voice-language" placeholder="en-US">
+        </div>
+      </div>
+      <label for="voice-prompt">Transcript prompt / vocabulary</label>
+      <input id="voice-prompt" placeholder="Goblintown terms: rite, Tank, Hoard, loot">
+    </div>
+    <p class="provider-status" id="voice-status">Loading voice settings...</p>
+    <div class="provider-actions">
+      <button class="btn primary" type="button" id="voice-save">Save</button>
+      <button class="btn" type="button" id="voice-clear-key">Clear Saved Key</button>
+      <button class="btn" type="button" id="voice-cancel">Close</button>
+    </div>
+  </div>
+
   <div class="auth-popover" id="auth-popover">
     <h3>Sign-in & Cloud Collab</h3>
     <div class="cloud-mode-panel">
@@ -4844,7 +7119,7 @@ function tankHtml(
         <div class="country-pane">
           <h4>Overview</h4>
           <p class="country-subtle">Your country: <strong id="country-name">-</strong> · ID code: <strong id="country-code">-</strong></p>
-          <h4 style="margin-top:0.75rem;">Online & Mail</h4>
+          <h4 style="margin-top:0.75rem;">Online & Groups</h4>
           <div class="country-list" id="country-members"></div>
           <h4 style="margin-top:0.75rem;">Queue</h4>
           <div class="country-list" id="country-queue"></div>
@@ -4881,7 +7156,7 @@ function tankHtml(
   </div>
 
   <div class="mail-popover" id="mail-popover">
-    <h3>Friends & Mail</h3>
+    <h3>Friends & Group Chats</h3>
     <p class="mail-subtle" id="mail-summary">Loading friends...</p>
     <div class="mail-grid">
       <div class="mail-pane">
@@ -4897,7 +7172,7 @@ function tankHtml(
         <div class="mail-list" id="friends-list"></div>
       </div>
       <div class="mail-pane">
-        <h4>Threads</h4>
+        <h4>Group Chats</h4>
         <div class="mail-list" id="dm-threads-list"></div>
         <h4 style="margin-top:0.75rem;">Messages</h4>
         <div class="mail-list" id="dm-messages-list" style="max-height:240px;"></div>
@@ -4911,45 +7186,177 @@ function tankHtml(
       </div>
     </div>
   </div>
+  <div id="settings-panel-dock" hidden></div>
 
-  <div class="workarea" id="workarea">
-  <aside class="ops-sidebar" id="ops-sidebar">
+  <div class="workarea goblin-shell" id="workarea">
+  <aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">
     <div class="ops-head">
-      <h3>Command Sidebar</h3>
-      <button class="ops-toggle" id="ops-toggle" type="button" aria-expanded="true">◀</button>
+      <h3>Goblintown</h3>
+      <button class="ops-toggle" id="ops-toggle" type="button" aria-expanded="true" title="Collapse sidebar">◀</button>
     </div>
     <div class="ops-main" id="ops-main">
       <div class="ops-quick">
-        <button class="btn primary" id="btn-rite" type="button">NEW RITE</button>
-        <button class="btn" id="btn-thesis" type="button">THESIS</button>
-        <button class="btn" id="btn-sentiment" type="button">SENTIMENT</button>
-        <button class="btn" id="btn-plan" type="button">PLAN</button>
-        <a class="btn" href="/runs">RUNS</a>
-      </div>
-      <div class="ops-subtle">Run any Goblintown CLI command in-app. Use full syntax in the input line.</div>
-      <div class="ops-row">
-        <input class="ops-input" id="ops-line" placeholder='e.g. rite "Refactor planner" --pack 3 --remember'>
-        <button class="btn primary" id="ops-run" type="button">Run</button>
-      </div>
-      <details class="ops-examples" id="ops-examples">
-        <summary>Command Examples</summary>
-        <div class="ops-presets" id="ops-presets">
-          <button type="button" data-line='summon goblin --task "Quick analysis"'>summon</button>
-          <button type="button" data-line='scavenge --task "What changed?" --scan "src/**/*.ts"'>scavenge</button>
-          <button type="button" data-line='quest "Investigate bug" --pack 3'>quest</button>
-          <button type="button" data-line='thesis "Jito" --solana ADDRESS --remember'>thesis</button>
-          <button type="button" data-line='hoard --limit 20'>hoard</button>
-          <button type="button" data-line='drift'>drift</button>
-          <button type="button" data-line='route'>route</button>
-          <button type="button" data-line='country run --task "Cross-check this plan" --all'>country run</button>
-          <button type="button" data-line='fold --threshold 30'>fold</button>
+        <div class="ops-actions" aria-label="New work">
+          <button class="btn primary" id="btn-chat" type="button" title="Start a fresh single-goblin chat">+ New chat</button>
+          <button class="btn" id="btn-rite" type="button" title="Start a new full rite">+ New rite</button>
+          <button class="sr-only" id="btn-regular-rite" type="button" title="Start a regular rite">Regular</button>
+          <button class="sr-only" id="btn-thesis" type="button" title="Build a thesis rite">Thesis</button>
+          <button class="sr-only" id="btn-sentiment" type="button" title="Run sentiment tools">Sentiment</button>
+          <button class="sr-only" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
         </div>
-      </details>
-      <div class="ops-output" id="ops-output">ready</div>
+        <section class="sidebar-list" data-sidebar-section="chats" aria-label="Chats">
+          <button class="sidebar-section-toggle" type="button" data-sidebar-toggle="chats" aria-expanded="true">CHATS</button>
+          <div class="sidebar-items">
+            <button class="sidebar-item active" type="button" data-surface-kind="chat" data-chat-id="bounty-72-chat" title="Bounty issue #72 chat">Bounty issue #72 chat</button>
+            <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="solana-wallet-question" title="Solana wallet question">Solana wallet question</button>
+            <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="readme-cleanup-chat" title="README cleanup chat">README cleanup chat</button>
+          </div>
+        </section>
+        <section class="sidebar-list" data-sidebar-section="rites" aria-label="Rites">
+          <button class="sidebar-section-toggle" type="button" data-sidebar-toggle="rites" aria-expanded="true">RITES</button>
+          <div class="sidebar-items">
+            ${sidebarRiteButtons(runs)}
+          </div>
+        </section>
+      </div>
+        <div class="sidebar-settings" id="sidebar-settings">
+          <div class="sidebar-settings-card" id="sidebar-settings-card">
+            <div class="settings-card-head">
+              <img class="settings-icon" src="/assets/settingsopen.svg" alt="" aria-hidden="true" decoding="async">
+              <span>Settings</span>
+            </div>
+            <div class="settings-country">
+              <span>Goblin Country</span>
+              <strong>Moss Ledger</strong>
+              <span>Code: MOSS7 · Signed in</span>
+            </div>
+            <button class="settings-link" id="btn-sidebar-full-settings" type="button">Settings</button>
+            <a class="settings-link" href="/runs">Hoard</a>
+            <span class="settings-joke">"Never trust a clean cache."</span>
+          </div>
+          <button class="settings-trigger" id="btn-sidebar-settings" type="button" aria-expanded="false" title="Open Settings">
+            <img class="settings-icon" id="settings-icon-closed" src="/assets/settingsclosed.svg" alt="" aria-hidden="true" decoding="async">
+            <img class="settings-icon" id="settings-icon-open" src="/assets/settingsopen.svg" alt="" aria-hidden="true" decoding="async">
+            <span>Settings</span>
+          </button>
+        </div>
+    </div>
+    <div class="settings-sidebar-panel" id="settings-sidebar-panel" hidden>
+      <div class="settings-sidebar-head">
+        <strong>Settings</strong>
+        <button class="settings-back" id="settings-sidebar-back" type="button">Back</button>
+      </div>
+      <nav class="settings-sidebar-menu" id="settings-sidebar-menu" aria-label="Settings sections">
+        <button class="active" type="button" data-settings-section="account">Account</button>
+        <button type="button" data-settings-section="country">Country</button>
+        <button type="button" data-settings-section="groups">Group Chats</button>
+        <button type="button" data-settings-section="addons">Add-ons</button>
+        <button type="button" data-settings-section="api">API</button>
+        <button type="button" data-settings-section="voice">Voice</button>
+        <button type="button" data-settings-section="solana">Solana Tools</button>
+        <button type="button" data-settings-section="context">Context APIs</button>
+        <button type="button" data-settings-section="imports">Import Records</button>
+        <button type="button" data-settings-section="reset">Reset</button>
+      </nav>
     </div>
   </aside>
 
-  <div class="tank" id="tank">
+  <div class="tank chat-mode codex-chat-surface" id="tank">
+    <section class="chat-main" id="chat-main" aria-label="Single Goblin chat">
+      <div class="chat-thread" id="chat-thread" aria-live="polite">
+        <div class="chat-message assistant">
+          <span class="chat-role">single goblin</span>
+          ${CHAT_PERSONA_UI.intro}
+        </div>
+      </div>
+      <div class="rite-surface" id="root-rite-surface" hidden aria-live="polite">
+        <div class="rite-inline-inner">
+          <header class="rite-inline-head">
+            <div>
+              <span class="rite-inline-kicker" id="root-rite-kicker">Rite</span>
+              <h2 id="root-rite-title">Bounty issue #72</h2>
+              <div class="rite-inline-meta" id="root-rite-meta">Selected from Rites</div>
+            </div>
+            <div class="rite-inline-actions">
+              <a id="root-rite-export" href="/runs">Export</a>
+              <button id="root-rite-resume" type="button">Resume</button>
+            </div>
+          </header>
+          <div class="rite-stats" id="root-rite-stats"></div>
+          <section class="inline-run-display" id="root-rite-live">
+            <strong>Inline run display</strong>
+            <p>Tool calls, tank activity, and run output appear here as the rite produces them.</p>
+          </section>
+          <section class="rite-discussion" id="root-rite-discussion">
+            <h3>Discussion</h3>
+          </section>
+        </div>
+      </div>
+      <section class="settings-surface" id="settings-surface" hidden aria-live="polite">
+        <div class="settings-surface-inner">
+          <article class="settings-surface-panel" id="settings-surface-panel">
+            <h2>Account</h2>
+            <p>Choose a section from the Settings sidebar. Existing settings controls stay connected while this becomes the full settings workbench.</p>
+          </article>
+        </div>
+      </section>
+      <form class="chat-composer" id="root-chat-form">
+        <div class="chat-composer-inner">
+          <div class="chat-offer-inline" id="root-chat-offer">
+            <span id="root-chat-offer-text">This looks complex enough for the full Goblintown pack.</span>
+            <button id="root-chat-offer-run" type="button">Run Goblintown</button>
+          </div>
+          <div class="chat-input-row">
+            <textarea id="root-chat-input" rows="3" placeholder="Message the single Goblin..." required></textarea>
+            <div class="voice-picker" id="voice-picker">
+              <button id="root-chat-voice" type="button" class="voice-trigger" title="Voice mode" aria-haspopup="menu">
+                <img src="/assets/textgoblinchat.svg" alt="" aria-hidden="true" decoding="async">
+              </button>
+              <div class="voice-menu" role="menu" aria-label="Voice">
+                <button class="voice-choice active" type="button" role="menuitem" data-voice-mode="text"><img src="/assets/textgoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Text</span></button>
+                <button class="voice-choice" type="button" role="menuitem" data-voice-mode="full"><img src="/assets/fullgoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Chat Live</span></button>
+                <button class="voice-choice" type="button" role="menuitem" data-voice-mode="stt"><img src="/assets/sttgoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Speak Only</span></button>
+                <button class="voice-choice" type="button" role="menuitem" data-voice-mode="tts"><img src="/assets/ttsonlygoblinchat.svg" alt="" aria-hidden="true" decoding="async"><span>Listen Only</span></button>
+              </div>
+            </div>
+            <button id="root-chat-speak" type="button" class="sr-only" title="Speak replies" aria-label="Speak replies" aria-pressed="false"></button>
+            <button id="root-chat-send" class="send-button" type="submit" title="Send (Enter)">↑</button>
+          </div>
+          <div class="chat-meta-row">
+            <div class="personality-picker" id="personality-picker">
+              <button id="root-chat-personality-label" class="personality-label" type="button" aria-haspopup="menu">goblin_mode</button>
+              <div class="personality-menu" role="menu" aria-label="Personality">
+                <button class="personality-choice" type="button" role="menuitem" data-personality="chipper">chipper</button>
+                <button class="personality-choice" type="button" role="menuitem" data-personality="nerdy">nerdy</button>
+                <button class="personality-choice" type="button" role="menuitem" data-personality="stoic">stoic</button>
+                <button class="personality-choice" type="button" role="menuitem" data-personality="cynical">cynical</button>
+                <button class="personality-choice" type="button" role="menuitem" data-personality="feral">feral</button>
+                <button class="personality-choice active" type="button" role="menuitem" data-personality="goblin_mode">goblin_mode</button>
+              </div>
+            </div>
+            <label class="sr-only">Model
+              <select id="root-chat-model" title="Choose the chat model slot">
+                <option value="inherit">provider default</option>
+                <option value="goblin">goblin slot</option>
+                <option value="ogre">ogre slot</option>
+              </select>
+            </label>
+            <label class="sr-only">Personality
+              <select id="root-chat-personality" title="Choose the single-goblin personality">
+                <option value="chipper">chipper</option>
+                <option value="nerdy">nerdy</option>
+                <option value="stoic">stoic</option>
+                <option value="cynical">cynical</option>
+                <option value="feral">feral</option>
+                <option value="goblin_mode" selected>goblin_mode</option>
+              </select>
+            </label>
+            <input id="root-chat-max" class="sr-only" type="number" min="64" max="4000" value="900" title="Response length">
+            <span id="root-chat-status">ready</span>
+          </div>
+        </div>
+      </form>
+    </section>
     <img class="tank-logo-mark" src="/assets/gtowntextmark.png" alt="" aria-hidden="true" decoding="async">
 
     <span class="star" style="top: 5%; left: 18%;">✦</span>
@@ -5128,6 +7535,7 @@ function tankHtml(
               <option value="chipper">chipper</option>
               <option value="stoic">stoic</option>
               <option value="feral">feral</option>
+              <option value="goblin_mode">goblin_mode</option>
             </select>
           </div>
         </div>
@@ -5196,6 +7604,14 @@ function tankHtml(
         <h4 class="onboard-title" id="onboard-title">Welcome to Goblintown</h4>
         <p class="onboard-body" id="onboard-body"></p>
         <p class="onboard-progress" id="onboard-progress">Step 1</p>
+        <div class="onboard-cloud-actions" id="onboard-provider-actions">
+          <button class="btn primary" type="button" data-onboard-provider="openai">OpenAI</button>
+          <button class="btn" type="button" data-onboard-provider="deepseek">DeepSeek</button>
+          <button class="btn" type="button" data-onboard-provider="lmstudio">LM Studio</button>
+          <button class="btn" type="button" data-onboard-provider="ollama">Ollama</button>
+          <button class="btn" type="button" data-onboard-provider="anthropic">Anthropic</button>
+          <button class="btn" type="button" data-onboard-provider="custom">Add New</button>
+        </div>
         <div class="onboard-cloud-actions" id="onboard-cloud-actions">
           <button class="btn" type="button" id="onboard-local-mode">Stay Local</button>
           <button class="btn primary" type="button" id="onboard-cloud-mode">Use Goblintown Cloud</button>
@@ -5212,6 +7628,9 @@ function tankHtml(
 
   <div class="ticker" id="ticker">
     <span class="dot">●</span> <span id="ticker-text">idle</span>
+    <span class="status-stats" id="status-stats">
+      <b id="stat-loot">${lootCount}</b> loot · <b id="stat-rites">${riteCount}</b> rites · drift <b id="stat-drift">${drift.toFixed(3)}</b>
+    </span>
   </div>
 
 </div>
@@ -5224,6 +7643,17 @@ const $ = (id) => document.getElementById(id);
 const tank = $("tank");
 const ticker = $("ticker");
 const tickerText = $("ticker-text");
+const rootChatMessages = [];
+let rootChatOfferedTask = "";
+let rootChatSpeakEnabled = false;
+let rootChatSpeaking = false;
+let rootChatSpeechGeneration = 0;
+let rootChatVoiceMode = "text";
+let browserRecognition = null;
+let voiceRestartTimer = 0;
+let voiceCaptureTimer = 0;
+let voiceSessionGeneration = 0;
+const CHAT_PERSONA = ${JSON.stringify(CHAT_PERSONA_UI)};
 const goblinPile = $("goblin-pile");
 const goblinExplosion = $("goblin-explosion");
 const goblinExplosionCtx = goblinExplosion ? goblinExplosion.getContext("2d") : null;
@@ -5231,10 +7661,11 @@ const bubbleLayer = $("bubble-layer");
 const warren = $("warren");
 const workarea = $("workarea");
 const opsToggle = $("ops-toggle");
-const opsLine = $("ops-line");
-const opsRun = $("ops-run");
-const opsOutput = $("ops-output");
-const settingsChip = $("settings-chip");
+const settingsTrigger = $("btn-sidebar-settings");
+const sidebarSettings = $("sidebar-settings");
+const sidebarFullSettings = $("btn-sidebar-full-settings");
+const settingsSidebarPanel = $("settings-sidebar-panel");
+const settingsSidebarBack = $("settings-sidebar-back");
 const settingsPopover = $("settings-popover");
 const resetChip = $("reset-chip");
 const settingsResetPanel = $("settings-reset-panel");
@@ -5273,7 +7704,11 @@ const pick  = (arr)    => arr[Math.floor(Math.random() * arr.length)];
 
 function setSettingsOpen(open) {
   settingsPopover.classList.toggle("open", !!open);
-  settingsChip.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function setSidebarSettingsOpen(open) {
+  sidebarSettings.classList.toggle("open", !!open);
+  settingsTrigger.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function setResetMenuOpen(open) {
@@ -5291,8 +7726,32 @@ function closeSettingsPopover() {
   closeResetMenu();
 }
 
+function setSurfaceMode(mode) {
+  $("surface-mode").textContent = mode;
+}
+
+function setSidebarSectionCollapsed(section, collapsed) {
+  const root = document.querySelector('[data-sidebar-section="' + section + '"]');
+  const toggle = document.querySelector('[data-sidebar-toggle="' + section + '"]');
+  if (!root || !toggle) return;
+  root.classList.toggle("collapsed", !!collapsed);
+  toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+}
+
+document.querySelectorAll("[data-sidebar-toggle]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const section = button.getAttribute("data-sidebar-toggle") || "";
+    const root = document.querySelector('[data-sidebar-section="' + section + '"]');
+    setSidebarSectionCollapsed(section, !(root && root.classList.contains("collapsed")));
+  });
+});
+
+document.querySelectorAll("[data-settings-section]").forEach((button) => {
+  button.addEventListener("click", () => showSettingsSection(button.getAttribute("data-settings-section") || "account"));
+});
+
 function closeTopPopovers(exceptId) {
-  ["auth-popover", "country-popover", "mail-popover", "addon-popover", "onchain-popover", "sentiment-tool-popover", "sentiment-config-popover", "provider-popover"].forEach((id) => {
+  ["auth-popover", "country-popover", "mail-popover", "addon-popover", "onchain-popover", "sentiment-tool-popover", "sentiment-config-popover", "provider-popover", "voice-popover"].forEach((id) => {
     if (id === exceptId) return;
     const panel = $(id);
     if (panel) panel.classList.remove("open");
@@ -5316,11 +7775,13 @@ function settingsActionValue(button) {
   return (valueEl ? valueEl.textContent : button.textContent) || "";
 }
 
-settingsChip.onclick = () => {
-  const willOpen = !settingsPopover.classList.contains("open");
+settingsTrigger.onclick = () => {
+  setSidebarSettingsOpen(!sidebarSettings.classList.contains("open"));
+};
+
+sidebarFullSettings.onclick = () => {
   closeTopPopovers("");
-  setSettingsOpen(willOpen);
-  if (!willOpen) closeResetMenu();
+  showSettingsSurface();
 };
 
 resetChip.onclick = () => {
@@ -5329,13 +7790,17 @@ resetChip.onclick = () => {
 
 document.addEventListener("click", (ev) => {
   if (!(ev.target instanceof Element)) return;
-  if (ev.target === settingsChip || settingsChip.contains(ev.target)) return;
+  if (ev.target === settingsTrigger || settingsTrigger.contains(ev.target) || sidebarSettings.contains(ev.target)) return;
   if (settingsPopover.contains(ev.target)) return;
   closeSettingsPopover();
+  setSidebarSettingsOpen(false);
 });
 
 document.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") closeSettingsPopover();
+  if (ev.key === "Escape") {
+    closeSettingsPopover();
+    setSidebarSettingsOpen(false);
+  }
 });
 
 const RACCOON_SPRITE_CONFIG = {
@@ -6352,9 +8817,8 @@ window.addEventListener("resize", () => {
 /* Static tooltip copy */
 [
   ["auth-chip", "Sign in with Firebase for cloud collaboration mode."],
-  ["settings-chip", "Open account, country, mail, add-on, onchain, sentiment, API, and reset controls."],
   ["country-chip", "Open Goblin-Country settings and collaboration panels."],
-  ["mail-chip", "Open friends, requests, and direct-message threads."],
+  ["mail-chip", "Open friends, requests, and group chats."],
   ["addon-chip", "Enable local Goblintown add-ons and verifier tool packs."],
   ["onchain-chip", "Look up Solana addresses and send findings into a rite."],
   ["onchain-address", "Enter a Solana wallet, token account, mint, or program address."],
@@ -6372,14 +8836,25 @@ window.addEventListener("resize", () => {
   ["sentiment-save-secret", "Save the optional sentiment key in the local secret file."],
   ["sentiment-clear-secret", "Delete the selected locally stored sentiment key."],
   ["provider-chip", "Configure local provider, model slots, and API key storage."],
+  ["voice-chip", "Configure browser, OpenAI, Deepgram, local, or custom speech input."],
   ["reset-chip", "Open reset controls."],
-  ["btn-rite", "Start a new rite run immediately."],
+  ["btn-chat", "Start a fresh single-goblin chat."],
+  ["btn-sidebar-settings", "Open the settings menu."],
+  ["ops-rites", "Open rite shortcuts and run history."],
+  ["ops-chats", "Open chat shortcuts."],
+  ["root-chat-input", "Write a chat message. Shift+Enter inserts a line break; Enter sends."],
+  ["root-chat-send", "Send this chat message."],
+  ["root-chat-voice", "Speak into the chat box. Browser voice stays local; configured APIs use the voice connector."],
+  ["root-chat-speak", "Read single-goblin replies aloud with browser text-to-speech."],
+  ["root-chat-model", "Choose which model slot this chat should use."],
+  ["root-chat-personality", "Choose the personality for single-goblin replies."],
+  ["root-chat-offer-run", "Launch this prompt in the full Tank."],
+  ["btn-rite", "Start a new full Tank rite."],
+  ["btn-regular-rite", "Start a regular full Tank rite."],
   ["btn-thesis", "Build a quality thesis about a project, team, product, or protocol."],
   ["btn-plan", "Create a planned multi-step rite."],
   ["btn-asteroid", "Open the destructive full reset flow."],
   ["ops-toggle", "Collapse or expand the command sidebar."],
-  ["ops-line", "Type a Goblintown CLI command here."],
-  ["ops-run", "Run the command currently entered in the sidebar."],
   ["thesis-subject", "Name the project, protocol, team, product, repository, market, or decision to evaluate."],
   ["thesis-horizon", "Set the evaluation horizon for the thesis memo."],
   ["thesis-solana", "Optional Solana wallet, token account, mint, or program address for read-only evidence."],
@@ -6410,6 +8885,15 @@ window.addEventListener("resize", () => {
   ["provider-save", "Save provider settings to local config."],
   ["provider-cancel", "Close provider settings without applying changes now."],
   ["provider-clear-key", "Delete the locally stored provider API key."],
+  ["voice-provider", "Choose the speech-to-text connector for chat voice input."],
+  ["voice-baseurl", "Optional voice API endpoint for local or custom connectors."],
+  ["voice-keyenv", "Environment variable name used for this voice API key."],
+  ["voice-apikey", "Optional voice key saved locally in the voice secret file."],
+  ["voice-model", "Optional speech-to-text model name."],
+  ["voice-language", "Speech recognition language hint."],
+  ["voice-prompt", "Vocabulary and cleanup hint for Goblintown-specific transcript terms."],
+  ["voice-save", "Save voice connector settings."],
+  ["voice-clear-key", "Delete the locally stored voice API key."],
   ["rf-task", "Describe the task for this rite."],
   ["rf-pack", "How many goblins should run in the pack."],
   ["rf-personality", "Lead goblin personality style for the run."],
@@ -6428,85 +8912,29 @@ window.addEventListener("resize", () => {
   ["onboard-next", "Advance to the next onboarding step."],
 ].forEach((entry) => setTip(entry[0], entry[1]));
 document.querySelectorAll("[data-country-tab]").forEach((btn) => setTipIfMissing(btn, "Switch country panel."));
-document.querySelectorAll("#ops-presets button[data-line]").forEach((btn) => setTipIfMissing(btn, "Run this example command."));
 applyFallbackTips();
-
-function renderOpsResult(result) {
-  const ok = result.ok ? "ok" : "error";
-  const header = "[" + ok + "] " + result.command + " (exit " + result.code + ")";
-  const stdout = (result.stdout || "").trim();
-  const stderr = (result.stderr || "").trim();
-  let text = header;
-  if (stdout) text += "\\n\\n" + stdout;
-  if (stderr) text += "\\n\\n[stderr]\\n" + stderr;
-  opsOutput.textContent = text;
-  opsOutput.classList.toggle("err", !result.ok);
-  opsOutput.classList.toggle("ok", !!result.ok);
-}
-
-async function runOpsLine() {
-  const line = (opsLine.value || "").trim();
-  if (!line) return;
-  opsOutput.textContent = "running: " + line;
-  opsRun.disabled = true;
-  try {
-    const r = await fetch("/api/cli", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ line }),
-    });
-    const payload = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      opsOutput.textContent = "error: " + (payload.error || "command failed");
-      opsOutput.classList.add("err");
-      opsOutput.classList.remove("ok");
-      return;
-    }
-    renderOpsResult(payload);
-    setTicker("command: " + line, true);
-    setTimeout(() => { refreshStats(); }, 350);
-  } catch (err) {
-    opsOutput.textContent = "error: " + (err.message || err);
-    opsOutput.classList.add("err");
-    opsOutput.classList.remove("ok");
-  } finally {
-    opsRun.disabled = false;
-  }
-}
-
-opsRun.onclick = runOpsLine;
-opsLine.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    runOpsLine();
-  }
-});
-$("ops-presets").querySelectorAll("button[data-line]").forEach((btn) => {
-  btn.onclick = () => {
-    opsLine.value = btn.getAttribute("data-line") || "";
-    runOpsLine();
-  };
-});
 
 /* Town tier from real warren stats */
 function tierOf(rites) {
+  if (rites >= 80) return 7;
+  if (rites >= 48) return 6;
+  if (rites >= 24) return 5;
   if (rites >= 12) return 4;
   if (rites >= 6)  return 3;
   if (rites >= 2)  return 2;
-  if (rites >= 1)  return 1;
-  return 0;
+  return 1;
 }
-const tierName = ["empty plot","settlement","camp","village","town"];
+const tierName = ["unincorporated","hamlet","village","town","city","metropolis","city-state","goblin empire"];
 function applyStats(stats) {
   const t = tierOf(stats.rites);
   warren.dataset.tier = t;
   $("stat-loot").textContent = stats.loot;
   $("stat-rites").textContent = stats.rites;
   $("stat-drift").textContent = (stats.drift ?? 0).toFixed(3);
-  $("tier-display").textContent = "tier " + t + " · " + tierName[t];
+  $("tier-display").textContent = "tier " + t + " · " + tierName[t - 1];
   const piles = ["", "💰", "💰💰", "💰💰💰", "💰💰💰💰💎"];
   $("hoard").textContent = piles[t] || "";
-  if (stats.rites === 0) setTicker("idle — empty plot, awaiting first rite");
+  if (stats.rites === 0) setTicker("idle — unincorporated, awaiting first rite");
   else if (!ticker.classList.contains("live")) setTicker("idle — " + stats.rites + " rites in this town");
 }
 applyStats(INITIAL);
@@ -7009,6 +9437,16 @@ const providerFormat = $("provider-format");
 const providerModels = $("provider-models");
 const providerRoutes = $("provider-routes");
 const providerStatus = $("provider-status");
+const voiceChip = $("voice-chip");
+const voicePopover = $("voice-popover");
+const voiceProvider = $("voice-provider");
+const voiceBaseUrl = $("voice-baseurl");
+const voiceKeyEnv = $("voice-keyenv");
+const voiceApiKey = $("voice-apikey");
+const voiceModel = $("voice-model");
+const voiceLanguage = $("voice-language");
+const voicePrompt = $("voice-prompt");
+const voiceStatus = $("voice-status");
 let countryPopover = null;
 
 function providerById(id) {
@@ -7277,6 +9715,112 @@ $("provider-clear-key").onclick = async () => {
 };
 loadProviderMenu();
 
+/* Voice connector menu */
+let voiceConfig = { provider: "browser", language: "en-US", prompt: CHAT_PERSONA.intro };
+let voiceRecorder = null;
+let voiceChunks = [];
+function defaultVoiceKeyEnv(provider) {
+  if (provider === "openai") return "OPENAI_API_KEY";
+  if (provider === "deepgram") return "DEEPGRAM_API_KEY";
+  return "VOICE_API_KEY";
+}
+function applyVoicePayload(payload) {
+  const config = payload.config || {};
+  const runtime = payload.runtime || {};
+  voiceConfig = config;
+  voiceProvider.value = config.provider || "browser";
+  voiceBaseUrl.value = config.baseURL || "";
+  voiceKeyEnv.value = config.apiKeyEnv || runtime.apiKeyEnv || defaultVoiceKeyEnv(voiceProvider.value);
+  voiceModel.value = config.model || "";
+  voiceLanguage.value = config.language || "en-US";
+  voicePrompt.value = config.prompt || "";
+  voiceApiKey.value = "";
+  const label = voiceProvider.options[voiceProvider.selectedIndex]?.textContent || "Voice";
+  setSettingsActionText(voiceChip, "Voice", label.replace(/ \\(.+\\)/, "") + " ▾");
+  if (runtime.needsServer && !runtime.hasApiKey) {
+    voiceStatus.textContent = "Missing key: set " + runtime.apiKeyEnv + " in env or save locally.";
+  } else if (runtime.needsServer) {
+    voiceStatus.textContent = "Voice API ready. Transcripts still get Goblintown cleanup before sending.";
+  } else {
+    voiceStatus.textContent = "Browser voice ready when supported. Goblintown cleanup runs after recognition.";
+  }
+}
+async function loadVoiceMenu() {
+  try {
+    const r = await fetch("/api/voice");
+    if (!r.ok) throw new Error("voice unavailable");
+    applyVoicePayload(await r.json());
+  } catch (err) {
+    voiceStatus.textContent = "Voice menu unavailable: " + (err.message || err);
+  }
+}
+voiceProvider.onchange = () => {
+  if (!voiceKeyEnv.value || ["OPENAI_API_KEY", "DEEPGRAM_API_KEY", "VOICE_API_KEY"].includes(voiceKeyEnv.value)) {
+    voiceKeyEnv.value = defaultVoiceKeyEnv(voiceProvider.value);
+  }
+  if (voiceProvider.value === "local" && !voiceBaseUrl.value) {
+    voiceBaseUrl.value = "http://localhost:8000/v1/audio/transcriptions";
+  }
+};
+voiceChip.onclick = () => {
+  closeSettingsPopover();
+  closeTopPopovers("voice-popover");
+  voicePopover.classList.toggle("open");
+  if (voicePopover.classList.contains("open")) void loadVoiceMenu();
+};
+$("voice-cancel").onclick = () => voicePopover.classList.remove("open");
+$("voice-save").onclick = async () => {
+  const payload = {
+    provider: voiceProvider.value,
+    baseURL: voiceBaseUrl.value.trim(),
+    apiKeyEnv: voiceKeyEnv.value.trim(),
+    model: voiceModel.value.trim(),
+    language: voiceLanguage.value.trim(),
+    prompt: voicePrompt.value.trim(),
+  };
+  const key = voiceApiKey.value.trim();
+  if (key) payload.apiKey = key;
+  voiceStatus.textContent = "Saving voice connector...";
+  try {
+    const r = await fetch("/api/voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || "voice save failed");
+    applyVoicePayload(body);
+    voicePopover.classList.remove("open");
+    setTicker("voice connector saved", true);
+  } catch (err) {
+    voiceStatus.textContent = "Voice save failed: " + (err.message || err);
+  }
+};
+$("voice-clear-key").onclick = async () => {
+  voiceStatus.textContent = "Clearing voice key...";
+  try {
+    const r = await fetch("/api/voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: voiceProvider.value,
+        baseURL: voiceBaseUrl.value.trim(),
+        apiKeyEnv: voiceKeyEnv.value.trim(),
+        model: voiceModel.value.trim(),
+        language: voiceLanguage.value.trim(),
+        prompt: voicePrompt.value.trim(),
+        clearApiKey: true,
+      }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || "voice key clear failed");
+    applyVoicePayload(body);
+  } catch (err) {
+    voiceStatus.textContent = "Voice key clear failed: " + (err.message || err);
+  }
+};
+loadVoiceMenu();
+
 /* Auth + Firebase collab */
 const authChip = $("auth-chip");
 const authPopover = $("auth-popover");
@@ -7439,8 +9983,8 @@ function updateAuthUi() {
   const cloudOn = isCloudModeEnabled();
   const enabled = !!firebaseState.enabled;
   cloudModeStatus.textContent = cloudOn
-    ? "Goblintown Cloud is on. SSO, friend codes, discovery, mail, and country metadata use the shared cloud backend."
-    : "Local Only is on. Your town memory stays on this machine, and cloud sign-in/discovery/mail stay off.";
+    ? "Goblintown Cloud is on. SSO, friend codes, discovery, group chats, and country metadata use the shared cloud backend."
+    : "Local Only is on. Your town memory stays on this machine, and cloud sign-in/discovery/group chats stay off.";
   cloudLocalModeBtn.disabled = !cloudOn;
   cloudEnableModeBtn.disabled = cloudOn;
   cloudLocalModeBtn.classList.toggle("primary", !cloudOn);
@@ -7452,7 +9996,7 @@ function updateAuthUi() {
   if (!cloudOn) {
     setSettingsActionText(authChip, "Account", "Local Only ▾");
     authStatus.textContent = "Cloud mode is off.";
-    authNote.textContent = "Turn on Goblintown Cloud here when you want SSO, friend codes, discovery, and mail.";
+    authNote.textContent = "Turn on Goblintown Cloud here when you want SSO, friend codes, discovery, and group chats.";
     return;
   }
   if (!firebaseState.bootPromise && !firebaseState.initialized && !enabled) {
@@ -7483,7 +10027,7 @@ function updateAuthUi() {
   const stateText = state ? " · " + state : "";
   setSettingsActionText(authChip, "Account", display + " ▾");
   authStatus.textContent = "Signed in as " + display + code + stateText;
-  authNote.textContent = "Cloud mode stores usernames, membership/discovery metadata, and encrypted DM payloads.";
+  authNote.textContent = "Cloud mode stores usernames, membership/discovery metadata, and encrypted group chat payloads.";
 }
 
 async function loadFirebaseSdk() {
@@ -7934,7 +10478,7 @@ function renderCountryMembers() {
     const row = document.createElement("div");
     row.className = "country-member";
     const dot = '<span class="country-dot ' + (m.online ? "online" : "") + " " + (m.hasMail ? "mail" : "") + '"></span>';
-    const badge = (m.online ? "online" : "offline") + (m.hasMail ? " • mail" : "");
+    const badge = (m.online ? "online" : "offline") + (m.hasMail ? " • groups" : "");
     row.innerHTML =
       '<span>' + dot + escHtml(m.name) + (m.url ? ' <span class="muted">(' + escHtml(m.url) + ')</span>' : "") + "</span>" +
       '<span class="lead">' + (m.lead ? "lead" : badge) + "</span><span></span>";
@@ -8778,7 +11322,7 @@ loadCountryMenu();
   console.error("country-ui-init-failed", err);
 }
 
-/* Friends + Mail */
+/* Friends + Group Chats */
 try {
 let socialState = { friends: [], pendingRequests: [], threads: [] };
 let activeThreadId = "";
@@ -8827,7 +11371,7 @@ async function loadMailStateFirebase(silent) {
   const ready = await ensureFirebaseReady();
   if (!ready) throw new Error("Firebase is not configured.");
   if (!firebaseState.user || !firebaseState.sdk || !firebaseState.db) {
-    throw new Error("Sign in to use cloud friends and mail.");
+    throw new Error("Sign in to use cloud friends and group chats.");
   }
   const store = firebaseState.sdk.store;
   const db = firebaseState.db;
@@ -9143,7 +11687,7 @@ function renderFriends() {
     '<div class="mail-item">' +
       '<span><strong>' + socialEsc(f.name) + '</strong> <span class="meta">[' + socialEsc(f.id) + ']</span></span>' +
       '<span>' +
-        '<button class="btn" type="button" data-dm-friend="' + socialEsc(f.id) + '" data-tip="Open composer for this friend">DM</button> ' +
+        '<button class="btn" type="button" data-dm-friend="' + socialEsc(f.id) + '" data-tip="Open group chat composer for this friend">Chat</button> ' +
         '<button class="btn" type="button" data-rm-friend="' + socialEsc(f.id) + '" data-tip="Remove this friend connection">Remove</button>' +
       "</span>" +
     "</div>"
@@ -9154,7 +11698,7 @@ function renderFriends() {
       activeFriendId = btn.getAttribute("data-dm-friend") || "";
       const friend = (socialState.friends || []).find((f) => f.id === activeFriendId);
       activeThreadFriendName = friend ? friend.name : "";
-      setMailStatus(activeThreadFriendName ? ("Composing to " + activeThreadFriendName) : "Compose message");
+      setMailStatus(activeThreadFriendName ? ("Composing group chat with " + activeThreadFriendName) : "Compose group chat");
     };
   });
   friendsListEl.querySelectorAll("button[data-rm-friend]").forEach((btn) => {
@@ -9235,7 +11779,7 @@ function renderThreads() {
       "</div>"
     );
   }).join("");
-  threadsListEl.innerHTML = rows || '<div class="mail-item"><span class="meta">No threads yet.</span><span></span></div>';
+  threadsListEl.innerHTML = rows || '<div class="mail-item"><span class="meta">No group chats yet.</span><span></span></div>';
   threadsListEl.querySelectorAll("button[data-open-thread]").forEach((btn) => {
     btn.onclick = async () => {
       activeThreadId = btn.getAttribute("data-open-thread") || "";
@@ -9274,7 +11818,7 @@ async function loadThreadMessages(threadId) {
       const rows = await r.json();
       renderMessages(rows);
     }
-    setMailStatus(activeThreadFriendName ? ("Thread: " + activeThreadFriendName) : "Thread loaded.");
+    setMailStatus(activeThreadFriendName ? ("Group chat: " + activeThreadFriendName) : "Group chat loaded.");
   } catch (err) {
     setMailStatus("Load messages failed: " + (err.message || err));
   }
@@ -9300,7 +11844,7 @@ async function markThreadRead(threadId, silent) {
 function applyMailState(payload) {
   socialState = payload || { friends: [], pendingRequests: [], threads: [] };
   const unread = (socialState.threads || []).reduce((n, t) => n + (t.unread || 0), 0);
-  setSettingsActionText(mailChip, "Mail", unread > 0 ? ("Unread " + unread + " ▾") : "No unread ▾");
+  setSettingsActionText(mailChip, "Groups", unread > 0 ? ("Unread " + unread + " ▾") : "No unread ▾");
   if (unread > 0) mailChip.setAttribute("data-unread", "true");
   else mailChip.removeAttribute("data-unread");
   mailSummary.textContent =
@@ -9320,7 +11864,7 @@ async function loadMailState(silent) {
       await loadMailStateLocal(silent);
     }
   } catch (err) {
-    setMailStatus("Mail unavailable: " + (err.message || err));
+    setMailStatus("Group chats unavailable: " + (err.message || err));
   }
 }
 
@@ -9418,19 +11962,26 @@ const onboardProgress = $("onboard-progress");
 const onboardBack = $("onboard-back");
 const onboardSkip = $("onboard-skip");
 const onboardNext = $("onboard-next");
+const onboardProviderActions = $("onboard-provider-actions");
 const onboardCloudActions = $("onboard-cloud-actions");
 const onboardLocalMode = $("onboard-local-mode");
 const onboardCloudMode = $("onboard-cloud-mode");
-const onboardingStorageKey = "goblintown.onboarding.v2";
+const onboardingStorageKey = "goblintown.onboarding.v3";
 const onboardingSteps = [
   {
+    title: "Power the Chat",
+    body: "Choose the API or local model that should answer first. You can save a key now from API settings, or keep moving and fill it in later.",
+    providerChoice: true,
+    targetId: "root-chat-form",
+  },
+  {
     title: "Choose Your Town",
-    body: "Stay Local keeps this Goblintown on your machine. Goblintown Cloud adds SSO, friend codes, discovery, mail, and shared country metadata through the official cloud backend.",
+    body: "Stay Local keeps this Goblintown on your machine. Goblintown Cloud adds SSO, friend codes, discovery, group chats, and shared country metadata through the official cloud backend.",
     cloudChoice: true,
   },
   {
-    title: "Command Sidebar",
-    body: "This sidebar runs Goblintown CLI commands directly in-app, including examples and quick rite controls.",
+    title: "Navigation Sidebar",
+    body: "This sidebar keeps the main paths close: new chats, new rites, rite shortcuts, chat history, and settings.",
     targetId: "ops-sidebar",
   },
   {
@@ -9441,25 +11992,25 @@ const onboardingSteps = [
   {
     title: "Goblin-Country",
     body: "Country mode handles team membership, join discovery, and per-role assignment across collaborators.",
-    targetId: "settings-chip",
+    targetId: "btn-sidebar-settings",
     popover: "country",
   },
   {
-    title: "Friends and Mail",
-    body: "Friend requests and DM threads are here. Opening a thread auto-marks unread messages as read.",
-    targetId: "settings-chip",
+    title: "Friends and Group Chats",
+    body: "Friend requests and group chat threads are here. Opening a thread auto-marks unread messages as read.",
+    targetId: "btn-sidebar-settings",
     popover: "mail",
   },
   {
     title: "Provider Settings",
     body: "Choose your local provider, set model slots, and store an API key in the local secret file.",
-    targetId: "settings-chip",
+    targetId: "btn-sidebar-settings",
     popover: "provider",
   },
   {
     title: "You are ready",
-    body: "Run rites from the sidebar and use country + mail to coordinate distributed compute with teammates.",
-    targetId: "ops-run",
+    body: "Use chat first, start rites from the sidebar, and keep deeper configuration inside Settings.",
+    targetId: "btn-chat",
   },
 ];
 let onboardingIndex = 0;
@@ -9482,6 +12033,7 @@ function clearOnboardingFocus() {
 function renderOnboardingStep() {
   const step = onboardingSteps[onboardingIndex];
   if (!step) return;
+  const isProviderChoice = step.providerChoice === true;
   const isCloudChoice = step.cloudChoice === true;
   setTopPopover(step.popover || "");
   clearOnboardingFocus();
@@ -9495,10 +12047,13 @@ function renderOnboardingStep() {
   onboardBody.textContent = step.body;
   onboardProgress.textContent = isCloudChoice
     ? "First run choice"
-    : "Step " + onboardingIndex + " of " + (onboardingSteps.length - 1);
+    : isProviderChoice
+      ? "Choose an API"
+      : "Step " + onboardingIndex + " of " + (onboardingSteps.length - 1);
+  onboardProviderActions.classList.toggle("open", isProviderChoice);
   onboardCloudActions.classList.toggle("open", isCloudChoice);
   onboardBack.parentElement.style.display = isCloudChoice ? "none" : "flex";
-  onboardBack.disabled = onboardingIndex <= 1 && readCloudModeChoice() !== "";
+  onboardBack.disabled = onboardingIndex <= 0 || (onboardingIndex <= 2 && readCloudModeChoice() !== "");
   onboardNext.textContent = onboardingIndex === onboardingSteps.length - 1 ? "Finish" : "Next";
 }
 function closeOnboarding(markDone) {
@@ -9515,13 +12070,13 @@ function maybeStartOnboarding() {
   const params = new URLSearchParams(window.location.search);
   const forced = params.get("onboarding") === "1";
   if (done && !forced) return;
-  onboardingIndex = readCloudModeChoice() ? 1 : 0;
+  onboardingIndex = 0;
   onboardOverlay.classList.add("open");
   renderOnboardingStep();
 }
 onboardBack.onclick = () => {
   if (onboardingIndex <= 0) return;
-  if (onboardingIndex <= 1 && readCloudModeChoice() !== "") return;
+  if (onboardingIndex <= 2 && readCloudModeChoice() !== "") return;
   onboardingIndex -= 1;
   renderOnboardingStep();
 };
@@ -9534,14 +12089,45 @@ onboardNext.onclick = () => {
   renderOnboardingStep();
 };
 onboardSkip.onclick = () => closeOnboarding(true);
+async function chooseOnboardingProvider(preset) {
+  if (preset === "custom") {
+    closeOnboarding(false);
+    showSettingsSurface();
+    showSettingsSection("api");
+    setTimeout(() => providerPreset.focus(), 30);
+    return;
+  }
+  await loadProviderMenu();
+  providerPreset.value = preset;
+  providerPreset.onchange();
+  providerStatus.textContent = "Saving " + (providerById(preset)?.label || preset) + "...";
+  try {
+    const r = await fetch("/api/provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildProviderPayload()),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    applyProviderPayload(await r.json());
+    onboardingIndex = readCloudModeChoice() ? 2 : 1;
+    renderOnboardingStep();
+  } catch (err) {
+    providerStatus.textContent = "Provider save failed: " + (err.message || err);
+    showSettingsSurface();
+    showSettingsSection("api");
+  }
+}
+onboardProviderActions.querySelectorAll("[data-onboard-provider]").forEach((button) => {
+  button.addEventListener("click", () => chooseOnboardingProvider(button.getAttribute("data-onboard-provider") || "openai"));
+});
 onboardLocalMode.onclick = () => {
   setCloudModeChoice("local");
-  onboardingIndex = 1;
+  onboardingIndex = 2;
   renderOnboardingStep();
 };
 onboardCloudMode.onclick = () => {
   setCloudModeChoice("cloud");
-  onboardingIndex = 1;
+  onboardingIndex = 2;
   renderOnboardingStep();
 };
 setTimeout(maybeStartOnboarding, 120);
@@ -9761,6 +12347,1010 @@ function setTicker(text, live) {
   tickerText.textContent = text;
   ticker.classList.toggle("live", !!live);
 }
+
+const sampleInlineRites = {
+  "sample-bounty-72": {
+    runId: "sample-bounty-72",
+    task: "GitHub issue #72",
+    status: "running",
+    verdict: "pending",
+    lootCount: 4,
+    events: [
+      { type: "context", agent: "Context", content: "Fetched GitHub issue #72 and extracted README mismatch, manifest values, failing validation path, and open questions." },
+      { type: "proposal", agent: "Goblin proposal 1", content: "Patch manifest defaults or README contract, then add a validation error that names the exact stale slot conflict." },
+      { type: "critique", agent: "Review", content: "Do not only update docs. The CLI should explain why all markets fail and preserve compatibility for existing configs." },
+      { type: "transcript", agent: "Full transcript continues", content: "Every event, model answer, critique, verdict, and final artifact remains readable here. No snippet-only run view." },
+    ],
+  },
+  "sample-provider-setup-audit": {
+    runId: "sample-provider-setup-audit",
+    task: "Provider setup audit",
+    status: "ready",
+    verdict: "queued",
+    lootCount: 0,
+    events: [
+      { type: "setup", agent: "Setup", content: "Audit OpenAI, DeepSeek, LM Studio, Ollama, Anthropic, and Add New provider routes from the walkthrough." },
+    ],
+  },
+  "sample-tank-ui-simplification": {
+    runId: "sample-tank-ui-simplification",
+    task: "Tank UI simplification",
+    status: "ready",
+    verdict: "queued",
+    lootCount: 0,
+    events: [
+      { type: "design", agent: "UI", content: "Keep the Tank inline inside the selected rite. No separate right utility panel." },
+    ],
+  },
+};
+
+function eventText(event) {
+  if (!event) return "";
+  if (typeof event === "string") return event;
+  return event.content || event.text || event.message || event.output || event.error || JSON.stringify(event, null, 2);
+}
+
+function eventTitle(event, index) {
+  if (!event || typeof event === "string") return "Event " + (index + 1);
+  return event.agent || event.creature || event.role || event.type || event.kind || ("Event " + (index + 1));
+}
+
+function setSidebarSelection(kind, id) {
+  document.querySelectorAll("[data-surface-kind]").forEach((button) => {
+    const matchesKind = button.getAttribute("data-surface-kind") === kind;
+    const matchesId = kind === "chat"
+      ? button.getAttribute("data-chat-id") === id
+      : button.getAttribute("data-run-id") === id;
+    button.classList.toggle("active", matchesKind && matchesId);
+  });
+}
+
+function showChatThreadSurface() {
+  setSidebarSettingsMode(false);
+  $("chat-main").classList.remove("settings-active");
+  $("chat-thread").classList.remove("surface-hidden");
+  $("root-rite-surface").hidden = true;
+  $("settings-surface").hidden = true;
+}
+
+function showRiteSurface() {
+  setSidebarSettingsMode(false);
+  $("chat-main").classList.remove("settings-active");
+  $("chat-thread").classList.add("surface-hidden");
+  $("root-rite-surface").hidden = false;
+  $("settings-surface").hidden = true;
+}
+
+function setSidebarSettingsMode(open) {
+  $("ops-sidebar").classList.toggle("settings-mode", !!open);
+  settingsSidebarPanel.hidden = !open;
+}
+
+let settingsImportRecords = [];
+const settingsEmbeddedPanelIds = {
+  account: "auth-popover",
+  country: "country-popover",
+  groups: "mail-popover",
+  addons: "addon-popover",
+  api: "provider-popover",
+  voice: "voice-popover",
+  solana: "onchain-popover",
+  context: "sentiment-config-popover",
+  reset: "settings-reset-panel",
+};
+
+function clearSettingsEmbeddedPanel() {
+  const dock = $("settings-panel-dock");
+  document.querySelectorAll(".settings-embedded").forEach((panel) => {
+    panel.classList.remove("settings-embedded", "open");
+    panel.removeAttribute("data-settings-embedded");
+    panel.setAttribute("aria-hidden", "true");
+    dock.appendChild(panel);
+  });
+  if (resetChip) resetChip.setAttribute("aria-expanded", "false");
+}
+
+function settingsSectionHtml(section) {
+  const labels = {
+    account: ["Account", "Sign in, cloud mode, and collaboration identity."],
+    country: ["Country", "Town name, code, members, and role assignment."],
+    groups: ["Group Chats", "Friend group chats, shared threads, and collaboration rooms."],
+    addons: ["Add-ons", "Installed tools, optional packages, and local extensions."],
+    api: ["API", "LLM providers, model routing, and custom provider workflows."],
+    solana: ["Solana Tools", "Read-only wallet, token, program, and transaction inspection."],
+    context: ["Context APIs", "Sentiment, market, and research connectors with local secrets."],
+    reset: ["Reset", "Asteroid Mode and local/cloud cleanup controls."],
+  };
+  if (section === "voice") {
+    return [
+      "<h2>Voice</h2>",
+      "<p>Start live chat, choose speech-only capture, or open connector settings for browser, OpenAI, Deepgram, local, or custom voice APIs.</p>",
+      "<div class=\\"settings-surface-actions\\">",
+      "<button id=\\"settings-live-voice\\" type=\\"button\\">Chat Live</button>",
+      "<button id=\\"settings-speak-only\\" type=\\"button\\">Speak Only</button>",
+      "<button id=\\"settings-listen-only\\" type=\\"button\\">Listen Only</button>",
+      "<button id=\\"settings-voice-config\\" type=\\"button\\">Voice API</button>",
+      "</div>",
+    ].join("");
+  }
+  if (section === "imports") {
+    return [
+      "<h2>Import Records</h2>",
+      "<p>Scan Codex sessions, ChatGPT exports, or a folder of chat records, then import them into searchable Hoard memory.</p>",
+      "<div class=\\"settings-surface-form\\">",
+      "<select id=\\"settings-import-source\\"><option value=\\"codex\\">Codex sessions</option><option value=\\"chatgpt\\">ChatGPT export</option><option value=\\"folder\\">Folder</option></select>",
+      "<input id=\\"settings-import-path\\" placeholder=\\"Optional path for export or folder\\" />",
+      "<input id=\\"settings-import-query\\" placeholder=\\"Optional filter text\\" />",
+      "<div class=\\"settings-surface-actions\\">",
+      "<button id=\\"settings-import-scan\\" type=\\"button\\">Scan</button>",
+      "<button id=\\"settings-import-all\\" type=\\"button\\">Import All</button>",
+      "</div>",
+      "<div class=\\"settings-import-results\\" id=\\"settings-import-results\\">Ready to scan previous chats.</div>",
+      "</div>",
+    ].join("");
+  }
+  const [title, body] = labels[section] || labels.account;
+  return "<h2>" + title + "</h2><p>" + body + "</p>";
+}
+
+function wireSettingsPanel(section) {
+  const embeddedId = settingsEmbeddedPanelIds[section];
+  if (embeddedId) {
+    const panel = $(embeddedId);
+    if (panel) {
+      const target = $("settings-surface-panel");
+      target.innerHTML = "";
+      target.appendChild(panel);
+      panel.classList.add("settings-embedded", "open");
+      panel.dataset.settingsEmbedded = "true";
+      panel.setAttribute("aria-hidden", "false");
+      if (section === "account" && typeof updateAuthUi === "function") updateAuthUi();
+      if (section === "country") {
+        if (typeof setCountryTab === "function") setCountryTab("overview");
+        if (typeof loadCountryMenu === "function") loadCountryMenu().catch(() => {});
+      }
+      if (section === "groups" && mailMenuReload) {
+        mailMenuReload(true).catch(() => {});
+      }
+      if (section === "api" && typeof loadProviderMenu === "function") void loadProviderMenu();
+      if (section === "voice" && typeof loadVoiceMenu === "function") void loadVoiceMenu();
+      if (section === "addons" && typeof loadAddonMenu === "function") void loadAddonMenu();
+      if (section === "solana" && typeof onchainAddress !== "undefined") {
+        setTimeout(() => onchainAddress.focus(), 30);
+      }
+      if (section === "context" && typeof loadSentimentSources === "function") {
+        void loadSentimentSources();
+      }
+      if (section === "reset") {
+        panel.classList.add("open");
+        resetChip.setAttribute("aria-expanded", "true");
+      }
+    }
+    return;
+  }
+  if (section === "voice") {
+    $("settings-live-voice").onclick = () => {
+      showChatMode();
+      showChatThreadSurface();
+      setRootChatSpeakEnabled(true);
+      beginSpeechInput();
+    };
+    $("settings-speak-only").onclick = () => {
+      showChatMode();
+      showChatThreadSurface();
+      setRootChatSpeakEnabled(false);
+      beginSpeechInput();
+    };
+    $("settings-listen-only").onclick = () => {
+      showChatMode();
+      showChatThreadSurface();
+      setRootChatSpeakEnabled(true);
+      setRootChatStatus("voicePending", "listening for goblin replies");
+    };
+    $("settings-voice-config").onclick = () => {
+      closeSettingsPopover();
+      voiceChip.click();
+    };
+  }
+  if (section === "imports") {
+    $("settings-import-scan").onclick = () => scanSettingsImports();
+    $("settings-import-all").onclick = () => importSettingsRecords(true);
+  }
+}
+
+function settingsImportPayload() {
+  return {
+    source: $("settings-import-source").value,
+    path: $("settings-import-path").value.trim(),
+    query: $("settings-import-query").value.trim(),
+    limit: 50,
+  };
+}
+
+function renderSettingsImportRecords(records) {
+  const target = $("settings-import-results");
+  if (!records.length) {
+    target.textContent = "No matching records found.";
+    return;
+  }
+  target.innerHTML = records.slice(0, 10).map((record) =>
+    "<div><code>" + record.id + "</code> " + (record.title || "Untitled chat") + "</div>"
+  ).join("");
+}
+
+async function scanSettingsImports() {
+  const target = $("settings-import-results");
+  target.textContent = "Scanning previous chats...";
+  const r = await fetch("/api/context/chats/scan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settingsImportPayload()),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || "chat import scan failed");
+  settingsImportRecords = Array.isArray(body.records) ? body.records : [];
+  renderSettingsImportRecords(settingsImportRecords);
+}
+
+async function importSettingsRecords(all) {
+  const target = $("settings-import-results");
+  target.textContent = "Importing records...";
+  const payload = settingsImportPayload();
+  payload.all = !!all;
+  if (!all) payload.ids = settingsImportRecords.map((record) => record.id);
+  const r = await fetch("/api/context/chats/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || "chat import failed");
+  const count = Array.isArray(body.records) ? body.records.length : 0;
+  const artifacts = Array.isArray(body.artifacts) ? body.artifacts.length : 0;
+  target.textContent = "Imported " + count + " record(s), " + artifacts + " artifact(s).";
+}
+
+function showSettingsSection(section) {
+  document.querySelectorAll("[data-settings-section]").forEach((button) => {
+    button.classList.toggle("active", button.getAttribute("data-settings-section") === section);
+  });
+  clearSettingsEmbeddedPanel();
+  $("settings-surface-panel").innerHTML = settingsSectionHtml(section);
+  wireSettingsPanel(section);
+}
+
+function showSettingsSurface() {
+  settingsPopover.classList.toggle("open", false);
+  closeResetMenu();
+  setSidebarSettingsOpen(false);
+  setSidebarSettingsMode(true);
+  showChatMode();
+  $("chat-main").classList.add("settings-active");
+  $("chat-thread").classList.add("surface-hidden");
+  $("root-rite-surface").hidden = true;
+  $("settings-surface").hidden = false;
+  setSurfaceMode("settings");
+  showSettingsSection("account");
+}
+
+settingsSidebarBack.onclick = () => {
+  setSidebarSettingsMode(false);
+  $("chat-main").classList.remove("settings-active");
+  showChatMode();
+  showChatThreadSurface();
+  setSurfaceMode("chat");
+};
+
+function renderInlineRite(record) {
+  const events = Array.isArray(record.events) ? record.events : [];
+  $("root-rite-title").textContent = record.task || record.runId || "Selected rite";
+  $("root-rite-kicker").textContent = record.done ? "Completed rite" : "Rite";
+  $("root-rite-meta").textContent = record.runId ? "Run " + record.runId : "Selected from Rites";
+  $("root-rite-export").href = record.runId ? "/runs#" + encodeURIComponent(record.runId) : "/runs";
+  $("root-rite-resume").dataset.runId = record.runId || "";
+
+  const stats = $("root-rite-stats");
+  stats.innerHTML = "";
+  [
+    ["Status", record.status || (record.done ? "done" : "running")],
+    ["Task", record.task || "selected rite"],
+    ["Loot", String(record.lootCount || (Array.isArray(record.lootIds) ? record.lootIds.length : 0)) + " drops"],
+    ["Verdict", record.verdict || (record.done ? "complete" : "pending")],
+  ].forEach(([label, value]) => {
+    const stat = document.createElement("div");
+    stat.className = "rite-stat";
+    const labelNode = document.createElement("span");
+    labelNode.textContent = label;
+    const valueNode = document.createElement("strong");
+    valueNode.textContent = value;
+    stat.append(labelNode, valueNode);
+    stats.appendChild(stat);
+  });
+
+  const live = $("root-rite-live");
+  live.querySelector("p").textContent = record.done
+    ? "This rite is complete. Its full discussion is preserved below."
+    : "This rite is selected. Live tool output and Tank progress stay inline here while it runs.";
+
+  const discussion = $("root-rite-discussion");
+  discussion.innerHTML = "<h3>Discussion</h3>";
+  if (!events.length) {
+    const empty = document.createElement("div");
+    empty.className = "rite-event rite-empty";
+    empty.textContent = "No transcript events are stored for this rite yet.";
+    discussion.appendChild(empty);
+    return;
+  }
+  events.forEach((event, index) => {
+    const item = document.createElement("article");
+    item.className = "rite-event";
+    const title = document.createElement("strong");
+    title.className = "rite-event-title";
+    title.textContent = eventTitle(event, index);
+    const body = document.createElement("div");
+    body.className = "rite-event-body";
+    body.textContent = eventText(event);
+    item.append(title, body);
+    discussion.appendChild(item);
+  });
+}
+
+async function loadInlineRite(runId) {
+  if (sampleInlineRites[runId]) {
+    renderInlineRite(sampleInlineRites[runId]);
+    return;
+  }
+  const response = await fetch("/api/runs/" + encodeURIComponent(runId) + "?full=1");
+  const record = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(record.error || "failed to load rite");
+  renderInlineRite(record);
+}
+
+function selectSidebarSurface(kind, id) {
+  showChatMode();
+  setSidebarSelection(kind, id);
+  if (kind === "rite") {
+    showRiteSurface();
+    setRootChatStatus("ready", "rite selected");
+    loadInlineRite(id).catch((err) => {
+      $("root-rite-discussion").innerHTML = "<h3>Discussion</h3>";
+      const node = document.createElement("div");
+      node.className = "rite-event rite-empty";
+      node.textContent = chatErrorMessage(err);
+      $("root-rite-discussion").appendChild(node);
+    });
+    return;
+  }
+  showChatThreadSurface();
+  setRootChatStatus("ready");
+  setTimeout(() => $("root-chat-input").focus(), 30);
+}
+
+function showChatMode() {
+  tank.classList.add("chat-mode");
+  setSurfaceMode("chat");
+  setLaunchButtonsDisabled(false);
+}
+
+function showTankMode() {
+  tank.classList.remove("chat-mode");
+  setSurfaceMode("rite");
+}
+
+function appendRootChatMessage(role, content, opts) {
+  const thread = $("chat-thread");
+  const node = document.createElement("div");
+  node.className = "chat-message " + role;
+  const label = document.createElement("span");
+  label.className = "chat-role";
+  label.textContent = role === "user" ? "you" : role === "system" ? "goblintown" : "single goblin";
+  node.appendChild(label);
+  node.appendChild(document.createTextNode(content));
+  if (opts && opts.href) {
+    const link = document.createElement("a");
+    link.href = opts.href;
+    link.textContent = " Open";
+    link.style.marginLeft = "0.35rem";
+    node.appendChild(link);
+  }
+  thread.appendChild(node);
+  thread.scrollTop = thread.scrollHeight;
+  return node;
+}
+
+function browserTtsSupported() {
+  return "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+}
+
+function setRootChatSpeakEnabled(enabled) {
+  rootChatSpeakEnabled = !!enabled && browserTtsSupported();
+  const button = $("root-chat-speak");
+  button.setAttribute("aria-pressed", rootChatSpeakEnabled ? "true" : "false");
+  button.textContent = rootChatSpeakEnabled ? "Speaking" : "Speak";
+  if (!rootChatSpeakEnabled) {
+    rootChatSpeechGeneration += 1;
+    rootChatSpeaking = false;
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  }
+  if (enabled && !rootChatSpeakEnabled) setRootChatStatus("voicePending", "browser text-to-speech unavailable");
+}
+
+function goblinTtsText(value) {
+  return (value || "")
+    .replace(new RegExp(String.fromCharCode(96).repeat(3) + "[\\\\s\\\\S]*?" + String.fromCharCode(96).repeat(3), "g"), "code block omitted")
+    .replace(new RegExp(String.fromCharCode(96) + "([^" + String.fromCharCode(96) + "]+)" + String.fromCharCode(96), "g"), "$1")
+    .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, "$1")
+    .replace(/[#*_>~|]/g, "")
+    .replace(/\\s+/g, " ")
+    .trim()
+    .slice(0, 1800);
+}
+
+function pickGoblinVoice() {
+  if (!window.speechSynthesis || !window.speechSynthesis.getVoices) return null;
+  const voices = window.speechSynthesis.getVoices();
+  return (
+    voices.find((voice) => /daniel|fred|ralph|alex|english/i.test(voice.name)) ||
+    voices.find((voice) => /^en[-_]/i.test(voice.lang)) ||
+    voices[0] ||
+    null
+  );
+}
+
+function speakRootChatMessage(content) {
+  if (!rootChatSpeakEnabled || !browserTtsSupported()) return false;
+  const text = goblinTtsText(content);
+  if (!text) return false;
+  stopVoiceInput();
+  const speechGeneration = rootChatSpeechGeneration + 1;
+  rootChatSpeechGeneration = speechGeneration;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  const personality = $("root-chat-personality").value;
+  utterance.voice = pickGoblinVoice();
+  utterance.lang = utterance.voice && utterance.voice.lang ? utterance.voice.lang : "en-US";
+  utterance.pitch = personality === "feral" || personality === "goblin_mode" ? 1.25 : 1.05;
+  utterance.rate = personality === "stoic" ? 0.92 : personality === "feral" ? 1.12 : 1.0;
+  utterance.volume = 1;
+  const finishSpeech = () => {
+    if (rootChatSpeechGeneration !== speechGeneration) return;
+    rootChatSpeaking = false;
+    if (rootChatSpeakEnabled) setRootChatStatus("ready");
+    scheduleLiveVoiceRestart();
+  };
+  rootChatSpeaking = true;
+  utterance.onstart = () => setRootChatStatus("voicePending", "goblin speaking");
+  utterance.onend = finishSpeech;
+  utterance.onerror = () => {
+    setRootChatStatus("voicePending", "speech output failed");
+    finishSpeech();
+  };
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
+
+function chatPersonaPick(kind) {
+  const options = CHAT_PERSONA[kind] || [];
+  if (!options.length) return "";
+  return options[rootChatMessages.length % options.length];
+}
+
+function setRootChatStatus(kind, detail) {
+  const phrase = chatPersonaPick(kind) || kind;
+  $("root-chat-status").textContent = detail ? phrase + " · " + detail : phrase;
+}
+
+function chatErrorMessage(err) {
+  const message = err && err.message ? err.message : String(err);
+  return chatPersonaPick("errorPrefix") + ": " + message;
+}
+
+function voicePermissionRuntimeLabel() {
+  const ua = (navigator.userAgent || "").toLowerCase();
+  if (ua.includes("electron")) return "Goblintown in macOS System Settings > Privacy & Security > Microphone";
+  if (ua.includes("codex")) return "the Codex app or your browser in macOS System Settings > Privacy & Security > Microphone";
+  return "this browser in site settings and macOS System Settings > Privacy & Security > Microphone";
+}
+
+function voiceInputErrorMessage(err) {
+  const name = err && err.name ? String(err.name) : "";
+  const message = err && err.message ? String(err.message) : String(err || "");
+  const combined = (name + " " + message).toLowerCase();
+  if (
+    combined.includes("notallowed") ||
+    combined.includes("not allowed") ||
+    combined.includes("permission") ||
+    combined.includes("denied") ||
+    combined.includes("403") ||
+    combined.includes("service-not-allowed") ||
+    combined.includes("service not allowed")
+  ) {
+    return "microphone permission denied; allow " + voicePermissionRuntimeLabel() + ", then try Speak Only or Chat Live again";
+  }
+  if (combined.includes("network")) {
+    return "browser speech service is blocked; set Voice API to OpenAI, Deepgram, local, or custom in Settings";
+  }
+  if (combined.includes("notfound") || combined.includes("no device") || combined.includes("device not found")) {
+    return "no microphone found; connect or select an input device, then try again";
+  }
+  return message || "microphone capture failed";
+}
+
+function goblinifyVoiceTranscript(value) {
+  return (value || "")
+    .replace(/\\b rights?\\b/gi, " rite")
+    .replace(/\\bwrite\\b/gi, "rite")
+    .replace(/\\btank\\b/gi, "Tank")
+    .replace(/\\bhoard\\b/gi, "Hoard")
+    .replace(/\\bload\\b/gi, "loot")
+    .replace(/\\bmodel slots?\\b/gi, "model slot")
+    .trim();
+}
+
+function appendVoiceTranscript(value) {
+  const input = $("root-chat-input");
+  const clean = goblinifyVoiceTranscript(value);
+  if (!clean) return;
+  const prefix = input.value.trim() ? input.value.trim() + " " : "";
+  input.value = prefix + clean;
+  input.focus();
+}
+
+function clearVoiceRestart() {
+  if (voiceRestartTimer) clearTimeout(voiceRestartTimer);
+  voiceRestartTimer = 0;
+  if (voiceCaptureTimer) clearTimeout(voiceCaptureTimer);
+  voiceCaptureTimer = 0;
+}
+
+function stopVoiceInput(invalidate) {
+  if (invalidate !== false) voiceSessionGeneration += 1;
+  clearVoiceRestart();
+  if (browserRecognition) {
+    const recognition = browserRecognition;
+    browserRecognition = null;
+    recognition.onend = null;
+    recognition.onerror = null;
+    try { recognition.stop(); } catch {}
+  }
+  if (voiceRecorder && voiceRecorder.state === "recording") {
+    try { voiceRecorder.stop(); } catch {}
+  }
+}
+
+function scheduleLiveVoiceRestart(generation) {
+  clearVoiceRestart();
+  if (rootChatVoiceMode !== "full") return;
+  if (rootChatSpeaking) return;
+  const expectedGeneration = generation === undefined ? voiceSessionGeneration : generation;
+  voiceRestartTimer = setTimeout(() => {
+    if (rootChatVoiceMode !== "full" || rootChatSpeaking || voiceSessionGeneration !== expectedGeneration) return;
+    beginSpeechInput(expectedGeneration);
+  }, 450);
+}
+
+function submitLiveVoiceInput() {
+  const input = $("root-chat-input");
+  if (rootChatVoiceMode !== "full" || !input.value.trim()) return false;
+  stopVoiceInput();
+  $("root-chat-form").requestSubmit();
+  return true;
+}
+
+function startBrowserVoice(generation) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    setRootChatStatus("voicePending", "browser speech unavailable; configure OpenAI, Deepgram, local, or custom voice in Settings");
+    return;
+  }
+  stopVoiceInput(false);
+  const activeGeneration = generation === undefined ? voiceSessionGeneration : generation;
+  voiceSessionGeneration = activeGeneration;
+  const recognition = new SpeechRecognition();
+  browserRecognition = recognition;
+  recognition.lang = voiceConfig.language || "en-US";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.continuous = rootChatVoiceMode === "full";
+  recognition.onstart = () => setRootChatStatus("voicePending", rootChatVoiceMode === "full" ? "live listening" : "listening");
+  recognition.onerror = (event) => setRootChatStatus("voicePending", voiceInputErrorMessage(event));
+  recognition.onresult = (event) => {
+    if (voiceSessionGeneration !== activeGeneration) return;
+    const transcript = event.results && event.results[0] && event.results[0][0]
+      ? event.results[0][0].transcript
+      : "";
+    appendVoiceTranscript(transcript);
+    setRootChatStatus("ready", "voice captured");
+    submitLiveVoiceInput();
+  };
+  recognition.onend = () => {
+    if (voiceSessionGeneration !== activeGeneration) return;
+    if (browserRecognition === recognition) browserRecognition = null;
+    if (!$("root-chat-input").value.trim()) setRootChatStatus("ready");
+    scheduleLiveVoiceRestart(activeGeneration);
+  };
+  recognition.start();
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      resolve(value.includes(",") ? value.split(",").pop() : value);
+    };
+    reader.onerror = () => reject(reader.error || new Error("failed to read audio"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function transcribeVoiceBlob(blob) {
+  setRootChatStatus("voicePending", "transcribing");
+  const r = await fetch("/api/voice/transcribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      audioBase64: await blobToBase64(blob),
+      mimeType: blob.type || "audio/webm",
+    }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || "voice transcription failed");
+  appendVoiceTranscript(body.transcript || "");
+  setRootChatStatus("ready", "voice captured");
+}
+
+async function toggleServerVoice(generation) {
+  if (voiceRecorder && voiceRecorder.state === "recording") {
+    voiceRecorder.stop();
+    setRootChatStatus("voicePending", "processing");
+    return;
+  }
+  const activeGeneration = generation === undefined ? voiceSessionGeneration : generation;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    setRootChatStatus("voicePending", "microphone capture unavailable");
+    return;
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  voiceChunks = [];
+  const recorder = new MediaRecorder(stream);
+  voiceRecorder = recorder;
+  recorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) voiceChunks.push(event.data);
+  };
+  recorder.onstop = () => {
+    if (voiceSessionGeneration !== activeGeneration) {
+      stream.getTracks().forEach((track) => track.stop());
+      voiceChunks = [];
+      if (voiceRecorder === recorder) voiceRecorder = null;
+      return;
+    }
+    stream.getTracks().forEach((track) => track.stop());
+    const blob = new Blob(voiceChunks, { type: recorder.mimeType || "audio/webm" });
+    voiceChunks = [];
+    if (voiceRecorder === recorder) voiceRecorder = null;
+    transcribeVoiceBlob(blob).catch((err) => {
+      setRootChatStatus("voicePending", voiceInputErrorMessage(err));
+    }).finally(() => {
+      if (voiceSessionGeneration !== activeGeneration) return;
+      if (!submitLiveVoiceInput()) scheduleLiveVoiceRestart(activeGeneration);
+    });
+  };
+  recorder.start();
+  if (rootChatVoiceMode === "full") {
+    setRootChatStatus("voicePending", "live listening");
+    voiceCaptureTimer = setTimeout(() => {
+      if (voiceSessionGeneration === activeGeneration && recorder.state === "recording") recorder.stop();
+    }, 4200);
+  } else {
+    setRootChatStatus("voicePending", "recording");
+  }
+}
+
+function resetRootChat() {
+  const thread = $("chat-thread");
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  stopVoiceInput();
+  showChatThreadSurface();
+  rootChatMessages.splice(0, rootChatMessages.length);
+  thread.innerHTML = "";
+  appendRootChatMessage(
+    "assistant",
+    CHAT_PERSONA.intro,
+  );
+  setRootChatOffer(null);
+  setRootChatStatus("ready");
+  $("root-chat-input").value = "";
+}
+
+function setRootChatOffer(nextOffer) {
+  const offer = $("root-chat-offer");
+  const text = $("root-chat-offer-text");
+  rootChatOfferedTask = nextOffer && nextOffer.task ? nextOffer.task : "";
+  if (!rootChatOfferedTask) {
+    offer.classList.remove("open");
+    return;
+  }
+  text.textContent = nextOffer.requested
+    ? "Goblintown requested. Start the full pack for this prompt?"
+    : "This looks complex enough for the full Goblintown pack.";
+  offer.classList.add("open");
+}
+
+function clearRiteChoiceRows() {
+  document.querySelectorAll(".rite-choice-row").forEach((row) => row.remove());
+}
+
+function startNewRiteChatFlow() {
+  showChatMode();
+  showChatThreadSurface();
+  setRootChatOffer(null);
+  clearRiteChoiceRows();
+  const node = appendRootChatMessage(
+    "system",
+    "What type of rite should we run?",
+  );
+  const row = document.createElement("div");
+  row.className = "rite-choice-row";
+  [
+    ["regular", "Regular"],
+    ["thesis", "Thesis"],
+    ["onchain", "Crypto/onchain"],
+    ["sentiment", "Sentiment"],
+    ["plan", "Plan"],
+  ].forEach(([choice, label]) => {
+    const button = document.createElement("button");
+    button.className = "rite-choice";
+    button.type = "button";
+    button.setAttribute("data-rite-choice", choice);
+    button.textContent = label;
+    button.addEventListener("click", () => handleRiteChoice(choice));
+    row.appendChild(button);
+  });
+  node.appendChild(row);
+  setRootChatStatus("riteType");
+  setTimeout(() => $("root-chat-input").focus(), 30);
+}
+
+function handleRiteChoice(choice) {
+  setRootChatOffer(null);
+  clearRiteChoiceRows();
+  setRootChatStatus("ready");
+  switch (choice) {
+    case "regular":
+      openRiteForm(false);
+      break;
+    case "thesis":
+      openThesisForm();
+      break;
+    case "onchain":
+      closeSettingsPopover();
+      closeTopPopovers("onchain-popover");
+      onchainPopover.classList.add("open");
+      setTimeout(() => onchainAddress.focus(), 30);
+      break;
+    case "sentiment":
+      sentimentToolButton.click();
+      break;
+    case "plan":
+      openRiteForm(true);
+      break;
+    default:
+      startNewRiteChatFlow();
+  }
+}
+
+async function startGoblintownFromChat(task) {
+  const cleanTask = (task || "").trim();
+  if (!cleanTask) return;
+  const runButton = $("root-chat-offer-run");
+  runButton.disabled = true;
+  setRootChatStatus("riteStarting");
+  showTankMode();
+  hideResumePanel();
+  lastTask = cleanTask;
+  setLaunchButtonsDisabled(true);
+  setSurfaceMode("rite running");
+  resetRunStage(false, 3);
+  setTicker("POSTing rite ...", true);
+  try {
+    const startRes = await fetch("/api/rite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task: cleanTask,
+        packSize: 3,
+        personality: $("root-chat-personality").value,
+        remember: true,
+      }),
+    });
+    const body = await startRes.json().catch(() => ({}));
+    if (!startRes.ok) throw new Error(body.error || startRes.statusText);
+    setRootChatOffer(null);
+    setTicker("rite " + body.runId + " started", true);
+    rememberActiveRun(body.runId, false);
+    history.replaceState(null, "", "/?run=" + encodeURIComponent(body.runId));
+    openStream(body.runId, false);
+  } catch (err) {
+    $("root-chat-status").textContent = chatErrorMessage(err);
+    showChatMode();
+  } finally {
+    runButton.disabled = false;
+  }
+}
+
+$("btn-chat").onclick = () => {
+  history.replaceState(null, "", "/");
+  setSidebarSelection("chat", "bounty-72-chat");
+  showChatMode();
+  resetRootChat();
+  setTicker("single goblin chat");
+  setTimeout(() => $("root-chat-input").focus(), 30);
+};
+
+$("btn-regular-rite").onclick = startNewRiteChatFlow;
+
+document.querySelectorAll("[data-surface-kind]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const kind = button.getAttribute("data-surface-kind") || "chat";
+    const id = kind === "chat" ? button.getAttribute("data-chat-id") : button.getAttribute("data-run-id");
+    if (!id) return;
+    history.replaceState(null, "", kind === "rite" ? "/?run=" + encodeURIComponent(id) : "/");
+    selectSidebarSurface(kind, id);
+  });
+});
+
+$("root-rite-resume").onclick = () => {
+  const runId = $("root-rite-resume").dataset.runId || "";
+  if (!runId || sampleInlineRites[runId]) {
+    startNewRiteChatFlow();
+    return;
+  }
+  showTankMode();
+  openStream(runId, false, { attach: true });
+};
+
+function beginSpeechInput(generation) {
+  const activeGeneration = generation === undefined ? voiceSessionGeneration + 1 : generation;
+  voiceSessionGeneration = activeGeneration;
+  if (voiceConfig.provider && voiceConfig.provider !== "browser") {
+    toggleServerVoice(activeGeneration).catch((err) => {
+      if (voiceSessionGeneration !== activeGeneration) return;
+      setRootChatStatus("voicePending", voiceInputErrorMessage(err));
+    });
+  } else {
+    startBrowserVoice(activeGeneration);
+  }
+}
+
+function setVoiceMenuOpen(open) {
+  $("voice-picker").classList.toggle("open", !!open);
+}
+
+function setPersonalityMenuOpen(open) {
+  $("personality-picker").classList.toggle("open", !!open);
+}
+
+function setVoiceTriggerIcon(button) {
+  const triggerIcon = $("root-chat-voice").querySelector("img");
+  const choiceIcon = button.querySelector("img");
+  if (triggerIcon && choiceIcon) triggerIcon.src = choiceIcon.src;
+}
+
+function setRootChatVoiceMode(mode) {
+  rootChatVoiceMode = mode;
+  const button = document.querySelector('[data-voice-mode="' + mode + '"]');
+  document.querySelectorAll(".voice-choice").forEach((choice) => choice.classList.toggle("active", choice === button));
+  if (button) setVoiceTriggerIcon(button);
+  setVoiceMenuOpen(false);
+  $("root-chat-input").focus();
+  if (mode === "text") {
+    stopVoiceInput();
+    setRootChatSpeakEnabled(false);
+    setRootChatStatus("ready");
+    return;
+  }
+  if (mode === "tts") {
+    stopVoiceInput();
+    setRootChatSpeakEnabled(true);
+    setRootChatStatus("ready", "listen only");
+    return;
+  }
+  setRootChatSpeakEnabled(mode === "full");
+  beginSpeechInput();
+}
+
+$("root-chat-voice").onclick = () => {
+  if (rootChatVoiceMode !== "text") {
+    setRootChatVoiceMode("text");
+    return;
+  }
+  setVoiceMenuOpen(!$("voice-picker").classList.contains("open"));
+};
+
+document.querySelectorAll(".voice-choice").forEach((button) => {
+  button.addEventListener("click", () => {
+    setRootChatVoiceMode(button.getAttribute("data-voice-mode") || "full");
+  });
+});
+
+$("root-chat-personality-label").onclick = () => {
+  setPersonalityMenuOpen(!$("personality-picker").classList.contains("open"));
+};
+
+document.querySelectorAll(".personality-choice").forEach((button) => {
+  button.addEventListener("click", () => {
+    const value = button.getAttribute("data-personality") || "goblin_mode";
+    $("root-chat-personality").value = value;
+    $("root-chat-personality-label").textContent = value;
+    document.querySelectorAll(".personality-choice").forEach((choice) => choice.classList.toggle("active", choice === button));
+    setPersonalityMenuOpen(false);
+  });
+});
+
+$("root-chat-speak").onclick = () => {
+  setRootChatSpeakEnabled($("root-chat-speak").getAttribute("aria-pressed") !== "true");
+};
+
+$("root-chat-input").addEventListener("keydown", (event) => {
+  if (event.shiftKey && event.key === "Enter") return;
+  if (event.key === "Enter") {
+    event.preventDefault();
+    $("root-chat-form").requestSubmit();
+  }
+});
+
+$("root-chat-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("root-chat-input");
+  const send = $("root-chat-send");
+  const status = $("root-chat-status");
+  const content = input.value.trim();
+  if (!content) return;
+  const userMessage = { role: "user", content };
+  rootChatMessages.push(userMessage);
+  appendRootChatMessage("user", content);
+  input.value = "";
+  send.disabled = true;
+  setRootChatStatus("thinking");
+  setRootChatOffer(null);
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: rootChatMessages,
+        personality: $("root-chat-personality").value,
+        modelSlot: $("root-chat-model").value === "inherit" ? undefined : $("root-chat-model").value,
+        maxOutputTokens: Number($("root-chat-max").value || 900),
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || response.statusText);
+    if (!body.message || body.message.role !== "assistant" || !body.message.content) {
+      throw new Error(chatPersonaPick("emptyResponse") || "chat returned no assistant message");
+    }
+    rootChatMessages.push(body.message);
+    appendRootChatMessage("assistant", body.message.content);
+    const speakingReply = speakRootChatMessage(body.message.content);
+    if (body.goblintownOffer && body.goblintownOffer.requested) {
+      appendRootChatMessage("system", chatPersonaPick("handoff") + ". " + chatPersonaPick("riteStarting") + "...");
+      await startGoblintownFromChat(body.goblintownOffer.task);
+    } else {
+      setRootChatOffer(body.goblintownOffer);
+    }
+    if (body.lootId) setRootChatStatus("saved", body.lootId);
+    else if (!speakingReply) setRootChatStatus("ready");
+  } catch (err) {
+    status.textContent = chatErrorMessage(err);
+  } finally {
+    send.disabled = false;
+    input.focus();
+    scheduleLiveVoiceRestart();
+  }
+});
+
+$("root-chat-offer-run").onclick = () => startGoblintownFromChat(rootChatOfferedTask);
 
 /* Goblin pile w/ personality labels (set per goblin from pack:goblin event) */
 const goblinByIndex = {};
@@ -10311,7 +13901,7 @@ async function refreshResumePanel(runId, fallbackIsPlan) {
     if (canResumeRecord(record)) {
       showResumePanel(record);
       setLaunchButtonsDisabled(false);
-      $("clock").textContent = (fallbackIsPlan ? "plan" : "rite") + " · " + runStatus(record);
+      setSurfaceMode((fallbackIsPlan ? "plan" : "rite") + " · " + runStatus(record));
     }
   } catch {}
 }
@@ -10753,9 +14343,10 @@ $("resume-start").onclick = async () => {
     hideResumePanel();
     const packSize = resumeRecord && resumeRecord.packSize ? resumeRecord.packSize : 3;
     lastTask = resumeRecord ? resumeRecord.task : lastTask;
+    showTankMode();
     resetRunStage(isPlan, packSize);
     setLaunchButtonsDisabled(true);
-    $("clock").textContent = isPlan ? "plan running" : "rite running";
+    setSurfaceMode(isPlan ? "plan running" : "rite running");
     rememberActiveRun(body.runId, isPlan);
     history.replaceState(null, "", "/?run=" + encodeURIComponent(body.runId));
     setTicker("resumed as " + body.runId, true);
@@ -10861,7 +14452,7 @@ function openThesisForm() {
   setTimeout(() => $("thesis-subject").focus(), 50);
 }
 function closeThesisForm() { $("thesis-overlay").classList.remove("open"); }
-$("btn-rite").onclick = () => openRiteForm(false);
+$("btn-rite").onclick = startNewRiteChatFlow;
 $("btn-thesis").onclick = openThesisForm;
 $("btn-plan").onclick = () => openRiteForm(true);
 $("rf-cancel").onclick = closeRiteForm;
@@ -10897,8 +14488,9 @@ $("rite-form").addEventListener("submit", async (e) => {
   closeRiteForm();
   hideResumePanel();
   lastTask = payload.task;
+  showTankMode();
   setLaunchButtonsDisabled(true);
-  $("clock").textContent = isPlan ? "plan running" : "rite running";
+  setSurfaceMode(isPlan ? "plan running" : "rite running");
   resetRunStage(isPlan, payload.packSize);
   setTicker(isPlan ? "POSTing plan ..." : "POSTing rite ...", true);
 
@@ -10917,7 +14509,7 @@ $("rite-form").addEventListener("submit", async (e) => {
   } catch (err) {
     setTicker("error: " + (err.message || err));
     setLaunchButtonsDisabled(false);
-    $("clock").textContent = "idle";
+    setSurfaceMode("chat");
   }
 });
 
@@ -10938,8 +14530,9 @@ $("thesis-form").addEventListener("submit", async (e) => {
   closeThesisForm();
   hideResumePanel();
   lastTask = "Thesis: " + (payload.subject || "");
+  showTankMode();
   setLaunchButtonsDisabled(true);
-  $("clock").textContent = "thesis running";
+  setSurfaceMode("thesis running");
   resetRunStage(false, 3);
   setTicker("POSTing thesis ...", true);
 
@@ -10958,7 +14551,7 @@ $("thesis-form").addEventListener("submit", async (e) => {
   } catch (err) {
     setTicker("thesis error: " + (err.message || err));
     setLaunchButtonsDisabled(false);
-    $("clock").textContent = "idle";
+    setSurfaceMode("chat");
   }
 });
 
@@ -10968,6 +14561,7 @@ $("thesis-form").addEventListener("submit", async (e) => {
 let replaying = false;
 const replayLatestThinking = {};
 function openStream(runId, isPlan, opts) {
+  showTankMode();
   if (activeStream) { activeStream.close(); activeStream = null; }
   const isAttach = !!(opts && opts.attach);
   const terminalAttach = !!(opts && opts.terminal);
@@ -11047,7 +14641,7 @@ function openStream(runId, isPlan, opts) {
     clearRememberedRun(runId);
     hideResumePanel();
     setLaunchButtonsDisabled(false);
-    $("clock").textContent = "idle";
+    setSurfaceMode("chat");
     setTimeout(refreshStats, 400);
     setTimeout(() => {
       ["c-raccoon","c-gremlin","c-troll","c-pigeon"].forEach(id => setState(id,"idle"));
@@ -11068,7 +14662,13 @@ function openStream(runId, isPlan, opts) {
         } catch {}
       }
       showResultFromIds(d.riteId, lootId, d.outcome, lastTask);
+      appendRootChatMessage(
+        "system",
+        "Goblintown finished: " + d.outcome + (d.riteId ? " (" + d.riteId + ")" : ""),
+        d.riteId ? { href: "/rite/" + d.riteId } : null,
+      );
     }
+    setTimeout(showChatMode, 1200);
   });
   es.addEventListener("error", (ev) => {
     if (terminalAttach && replayEnded) {
@@ -11082,7 +14682,7 @@ function openStream(runId, isPlan, opts) {
     es.close();
     activeStream = null;
     setLaunchButtonsDisabled(false);
-    $("clock").textContent = "idle";
+    setSurfaceMode("chat");
     goHomeAllGoblins(300);
     setTimeout(() => refreshResumePanel(runId, isPlan), 350);
   });
@@ -11340,7 +14940,7 @@ async function attachToRunFromUrl() {
       runId = remembered.runId;
       history.replaceState(null, "", "/?run=" + encodeURIComponent(runId));
     } else {
-      loadLastResult();
+      showChatMode();
       return;
     }
   }
@@ -11349,7 +14949,7 @@ async function attachToRunFromUrl() {
     if (!r.ok) {
       setTicker("run " + runId + " not found");
       clearRememberedRun(runId);
-      loadLastResult();
+      showChatMode();
       return;
     }
     const record = await r.json();
@@ -11364,10 +14964,11 @@ async function attachToRunFromUrl() {
       if (ps && ps.data && typeof ps.data.size === "number") packSize = ps.data.size;
     }
     resetRunStage(isPlan, packSize);
+    showTankMode();
 
     const status = runStatus(record);
     const label = record.done ? status : "watching live";
-    $("clock").textContent = isPlan ? "plan · " + label : "rite · " + label;
+    setSurfaceMode(isPlan ? "plan · " + label : "rite · " + label);
     setTicker((isPlan ? "plan " : "rite ") + runId + " · " + label, true);
     setLaunchButtonsDisabled(!record.done);
     if (canResumeRecord(record)) {
@@ -11379,7 +14980,7 @@ async function attachToRunFromUrl() {
     openStream(runId, isPlan, { attach: true, terminal: !!record.done });
   } catch (e) {
     setTicker("attach failed: " + (e.message || e));
-    loadLastResult();
+    showChatMode();
   }
 }
 attachToRunFromUrl();

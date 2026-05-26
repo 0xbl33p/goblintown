@@ -6,6 +6,7 @@ const PERSONALITY_TAGLINES: Record<Personality, string> = {
   chipper: "Your tone is upbeat, brisk, and forward-leaning.",
   stoic: "Your tone is terse and unemotional. Short sentences.",
   feral: "Your tone is unhinged. You reach for unusual angles.",
+  goblin_mode: "Your tone is chaotic gremlin-coder: punchy, mischievous, and brutally practical.",
 };
 
 function personalityTag(p: Personality): string {

@@ -9,6 +9,10 @@ const cliSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
 const cliHelpSource = readFileSync(join(repoRoot, "src", "cli-help.ts"), "utf8");
 const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
 const siteIndex = readFileSync(join(repoRoot, "site", "index.html"), "utf8");
+const desktopReleaseWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "desktop-release.yml"), "utf8");
+const beta07ReleaseNote = readFileSync(join(repoRoot, "docs", "releases", "0.7.0-beta.1.md"), "utf8");
+const assetReadme = readFileSync(join(repoRoot, "site", "assets", "README.md"), "utf8");
+const packageJson = readFileSync(join(repoRoot, "package.json"), "utf8");
 
 describe("docs and CLI help", () => {
   it("documents the Goblintown Cloud command in CLI help", () => {
@@ -29,6 +33,12 @@ describe("docs and CLI help", () => {
       assert.match(source, /goblintown sentiment key set <source> --value <secret>/);
       assert.match(source, /COINGECKO_API_KEY/);
       assert.match(source, /NEYNAR_API_KEY/);
+      assert.match(source, /goblintown context ingest <path>/);
+      assert.match(source, /goblintown context search "<query>"/);
+      assert.match(source, /goblintown context scan chats/);
+      assert.match(source, /goblintown context import chats/);
+      assert.match(source, /goblintown context vectorize/);
+      assert.match(source, /file-backed Artifacts/);
     }
     assert.match(cliSource, /case "cloud":\s+return cmdCloud/);
     assert.match(cliSource, /async function cmdCloud/);
@@ -37,6 +47,20 @@ describe("docs and CLI help", () => {
   });
 
   it("updates README for local-first cloud, Settings, and reset flows", () => {
+    assert.match(readme, /<img src="site\/assets\/gtownlogo\.svg"/);
+    assert.match(readme, /## Download/);
+    assert.match(readme, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/);
+    assert.match(readme, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe/);
+    assert.match(readme, /release\/parts/);
+    assert.match(readme, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
+    assert.match(readme, /npm run release:ready/);
+    assert.match(readme, /Gatekeeper or SmartScreen puzzle/);
+    assert.match(readme, /\.github\/workflows\/desktop-release\.yml/);
+    assert.match(readme, /water-bear86\/goblintown/);
+    assert.match(readme, /docs\/releases\/0\.7\.0-beta\.1\.md/);
+    assert.match(readme, /MAC_CSC_LINK/);
+    assert.match(readme, /WIN_CSC_LINK/);
+    assert.match(readme, /asks which AI provider should power it/);
     assert.match(readme, /## Goblintown Cloud/);
     assert.match(readme, /Stay Local/);
     assert.match(readme, /Use Goblintown Cloud/);
@@ -44,7 +68,14 @@ describe("docs and CLI help", () => {
     assert.match(readme, /Settings -> Reset -> Asteroid Mode/);
     assert.match(readme, /FIREBASE_API_KEY/);
     assert.match(readme, /optional Firebase overrides/);
-    assert.match(readme, /274 tests/);
+    assert.match(readme, /318 tests/);
+    assert.match(readme, /goblintown context ingest \.\/notes/);
+    assert.match(readme, /goblintown context scan chats/);
+    assert.match(readme, /goblintown context import chats --source chatgpt/);
+    assert.match(readme, /pre-vectorized/);
+    assert.match(readme, /AI summaries are opt-in/);
+    assert.match(readme, /\/context search "desktop app tank"/);
+    assert.match(readme, /local context ingestion/);
     assert.match(readme, /## Add-ons/);
     assert.match(readme, /## Thesis Engine/);
     assert.match(readme, /## Sentiment Sources/);
@@ -66,11 +97,53 @@ describe("docs and CLI help", () => {
     assert.match(readme, /\/api\/onchain\/solana\/lookup/);
   });
 
+  it("ships a signed desktop release workflow for GitHub Release assets", () => {
+    assert.match(desktopReleaseWorkflow, /name: Desktop Release/);
+    assert.match(desktopReleaseWorkflow, /workflow_dispatch/);
+    assert.match(desktopReleaseWorkflow, /npx electron-builder --mac dmg --arm64 --x64 --publish never/);
+    assert.match(desktopReleaseWorkflow, /npx electron-builder --win nsis --x64 --arm64 --publish never/);
+    assert.match(desktopReleaseWorkflow, /npx electron-builder --linux AppImage --x64 --arm64 --publish never/);
+    assert.match(desktopReleaseWorkflow, /MAC_CSC_LINK/);
+    assert.match(desktopReleaseWorkflow, /WIN_CSC_LINK/);
+    assert.match(desktopReleaseWorkflow, /gh release upload/);
+  });
+
+  it("documents the unsigned beta 0.7 package location", () => {
+    assert.match(beta07ReleaseNote, /water-bear86\/goblintown/);
+    assert.match(beta07ReleaseNote, /release\/v0\.7\.0-beta\.1\/release\/parts/);
+    assert.match(beta07ReleaseNote, /Gatekeeper friction/);
+    assert.match(beta07ReleaseNote, /SmartScreen warnings/);
+    assert.match(beta07ReleaseNote, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg\.part-\*/);
+    assert.match(beta07ReleaseNote, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
+  });
+
+  it("documents the mayor app icon as the distribution icon source", () => {
+    assert.match(assetReadme, /mayor-icon\.png/);
+    assert.match(assetReadme, /distribution icon source used to generate `build\/icon\.png`, `build\/icon\.icns`, and `build\/icon\.ico`/);
+    assert.match(packageJson, /"build\/icon\.png"/);
+    assert.match(packageJson, /"build\/icon\.icns"/);
+    assert.match(packageJson, /"build\/icon\.ico"/);
+    assert.doesNotMatch(packageJson, /"build\/icon\.svg"/);
+  });
+
   it("updates the marketing site copy for the Tank and cloud mode", () => {
-    assert.match(siteIndex, /first-run Local Only \/ Goblintown Cloud choice/);
+    assert.match(siteIndex, /local model should power Goblintown/);
+    assert.match(siteIndex, /assets\/mayor-icon\.png/);
+    assert.match(siteIndex, /release\/v0\.7\.0-beta\.1\/release\/parts/);
+    assert.match(siteIndex, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg\.part-\*/);
+    assert.match(siteIndex, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe\.part-\*/);
+    assert.match(siteIndex, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
+    assert.doesNotMatch(siteIndex, /npmjs\.com/);
+    assert.doesNotMatch(siteIndex, /npm install -g goblintown@beta/);
     assert.match(siteIndex, /Settings menu/);
     assert.match(siteIndex, /Asteroid Mode/);
-    assert.match(siteIndex, /274 tests/);
+    assert.match(siteIndex, /318 tests/);
+    assert.match(siteIndex, /goblintown context ingest \.\/notes/);
+    assert.match(siteIndex, /goblintown context scan chats/);
+    assert.match(siteIndex, /goblintown context import chats --source chatgpt/);
+    assert.match(siteIndex, /pre-vectorized/);
+    assert.match(siteIndex, /\/context search "desktop app tank"/);
+    assert.match(siteIndex, /local context ingestion/);
     assert.match(siteIndex, /Solana add-on/);
     assert.match(siteIndex, /Thesis engine/);
     assert.match(siteIndex, /Sentiment sources/);

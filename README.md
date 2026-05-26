@@ -1,15 +1,60 @@
+<p align="center">
+  <img src="site/assets/gtownlogo.svg" alt="Goblintown" width="820">
+</p>
+
 # Goblintown
 
-Goblintown is a local-first multi-agent orchestration protocol with a live
-browser Tank UI, resumable runs, typed memory, provider routing, and optional
-Goblintown Cloud sign-in. It turns "ask the model" into a planning agent with
-memory and self-correction: a small fleet of specialized creatures that
+Goblintown is a local-first AI app with a Goblin Mode GUI, a compact optional
+Tank, resumable runs, typed memory, provider routing, browser speech input and
+output, and optional Goblintown Cloud sign-in. Single Goblin mode keeps "ask the
+model" as one worker and one answer; Goblintown mode turns it into a planning agent with memory and
+self-correction: a small fleet of specialized creatures that
 decompose tasks into a DAG, scavenge context, race against each other, debate,
 attack each other's outputs, spawn focused specialists when the pack fails, and
 hand the surviving answer back as a signed, content-addressed artifact that
 future rites can build on.
 
 Current beta release line: `goblintown@beta`.
+
+## Download
+
+Beta 0.7 has real desktop installer packages: macOS DMGs, Windows one-click
+EXEs, and Linux AppImages. The full installers are built from this branch; the
+public GitHub Release URL below is the target once repository rules allow the
+`v0.7.0-beta.1` tag to be created:
+
+```text
+https://github.com/water-bear86/goblintown/releases/tag/v0.7.0-beta.1
+```
+
+The desktop app opens directly into chat, asks which AI API or local model
+should power the first conversation, then walks through optional features one at
+a time.
+
+| Platform | Installer | Notes |
+| --- | --- | --- |
+| macOS Apple Silicon | `Goblintown-0.7.0-beta.1-mac-arm64.dmg` | Open the DMG, drag Goblintown to Applications, launch. |
+| macOS Intel | `Goblintown-0.7.0-beta.1-mac-x64.dmg` | Open the DMG, drag Goblintown to Applications, launch. |
+| Windows | `Goblintown-0.7.0-beta.1-win-x64.exe` | One-click NSIS installer with Start Menu and Desktop shortcuts. |
+| Windows ARM64 | `Goblintown-0.7.0-beta.1-win-arm64.exe` | Native ARM64 one-click NSIS installer. |
+| Linux | `Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` | Mark executable, launch. |
+| Linux ARM64 | `Goblintown-0.7.0-beta.1-linux-arm64.AppImage` | Mark executable, launch. |
+
+Until that tag is allowed, the canonical public download is the split-parts
+fallback. The same beta 0.7 installer payloads are committed under
+[`release/parts`](release/parts/README.md) on the
+[`release/v0.7.0-beta.1`](https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts)
+branch. Concatenate the matching `*.part-*` files in lexical order, then run
+`shasum -a 256 -c release/parts/SHA256SUMS.txt` to verify the reconstructed
+installer. This split-parts route exists only because normal git blobs over
+100 MB are blocked.
+
+Release-signing status: the beta 0.7 packages are installer candidates until
+Apple Developer ID notarization and Windows Authenticode signing are configured.
+macOS may require right-click Open or a Privacy & Security approval; Windows may
+show SmartScreen warnings. See
+[the beta 0.7 release note](docs/releases/0.7.0-beta.1.md) for
+platform-specific install notes.
 
 ## Background
 
@@ -226,25 +271,24 @@ that future rites can cite.
 
 ## Install
 
-### npm
+Use the desktop installer for your platform from [Download](#download). The app
+opens directly into chat, asks which AI provider should power it, and keeps the
+rest of setup behind short guided choices instead of a settings wall.
+
+The same codebase still includes a CLI for development and automation:
 
 ```bash
-npm install -g goblintown@beta
 goblintown --help
 goblintown serve --port 7777
 ```
 
-You can also run it without a global install:
-
-```bash
-npx goblintown@beta --help
-npx goblintown@beta serve --port 7777
-```
-
-`goblintown serve` opens the Tank UI at `http://localhost:7777/`. On first run
-the Tank asks whether this Warren should stay local-only or use Goblintown
-Cloud. Sprites, the Goblintown wordmark, Matter.js Asteroid Mode, and the CLI
-entrypoint are included in the npm package.
+`goblintown serve` opens Goblin Mode at `http://localhost:7777/`: one chat,
+Chats and Rites in the left sidebar, inline rite output in the main surface,
+and Settings for API, voice, context APIs, Solana tools, group chats, import,
+and reset. On first run the app asks for the chat API preference first, then
+asks whether this Warren should stay local-only or use Goblintown Cloud.
+Sprites, the Goblintown wordmark, Matter.js Asteroid Mode, and the CLI
+entrypoint are included in the desktop package.
 
 Set a provider API key for any command that calls a creature. You can set it in
 your shell, or save it from **Settings -> API Provider** in the Tank. Local
@@ -265,6 +309,14 @@ npm run serve -- --port 7777
 ```bash
 goblintown init
 
+# Goblin Mode slash commands
+goblintown /ask "Write the shortest useful answer"    # Single Goblin
+goblintown /town "Plan and implement the feature"     # planner DAG
+goblintown /tank "Debug this with the visual Tank"    # DAG + compact Tank intent
+goblintown /context ingest "./old-conversations"      # import reference memory
+goblintown /context search "desktop app tank"         # search stored context
+goblintown /history
+
 # one-shots — output streams as it arrives
 goblintown summon raccoon --task "Summarize package.json" --personality stoic
 goblintown summon gremlin --task "Attack this regex: /^\d+$/"
@@ -283,6 +335,11 @@ goblintown rite "Refactor src/quest.ts to share the troll-review helper" \
   --budget 80000 --max-output 4096 --format markdown
 
 # memory: cite a prior rite or auto-load relevant artifacts
+goblintown context ingest ./notes --limit 40
+goblintown context search "rollback paths"
+goblintown context scan chats --source codex --limit 20
+goblintown context import chats --source chatgpt --path ./conversations.json --all
+goblintown context vectorize --missing-only
 goblintown rite "Extend the migration plan with rollback paths" \
   --cite 4f2a-abc12345 --remember
 goblintown ancestry <riteId>             # parents → this → children
@@ -309,7 +366,7 @@ goblintown drift
 goblintown hoard --kind goblin --since 2026-04-30 --limit 20
 goblintown audit <riteId>
 goblintown graph <riteId|lootId>     # now includes artifact lineage
-goblintown serve --port 7777        # Tank UI + first-run Local Only / Cloud choice
+goblintown serve --port 7777        # Goblin Mode GUI + first-run Local Only / Cloud choice
 goblintown cloud                    # bundled Cloud setup + optional Firebase overrides
 goblintown addon ls                 # local tool-pack add-ons
 goblintown addon enable solana      # read-only Solana verifier tools
@@ -349,10 +406,17 @@ goblintown country run --task "Audit this migration plan" --all --pack 2
 # (UI flow: Settings -> Country supports code-based join/discovery + approvals)
 ```
 
+Chat Hoard Import Mode scans previous Codex sessions and ChatGPT exports before
+importing them as root conversation Artifacts plus ordered child chunks. Imported
+chat memory is pre-vectorized when an embedding provider is configured, with
+keyword fallback when embeddings are unavailable. AI summaries are opt-in through
+`--summarize`; default import is local parsing, redaction, chunking, and optional
+embedding only.
+
 ## Goblintown Cloud
 
-Goblintown is download-and-run friendly. On first `goblintown serve`, the Tank
-asks whether this Warren should **Stay Local** or **Use Goblintown Cloud**.
+Goblintown is download-and-run friendly. On first `goblintown serve`, Goblin
+Mode asks whether this Warren should **Stay Local** or **Use Goblintown Cloud**.
 That choice can be changed later from **Settings -> Account**.
 
 - **Stay Local** keeps memory, runs, provider secrets, and reset state on the
@@ -540,6 +604,22 @@ The menu is intentionally an OpenAI-compatible routing layer, not a new
 orchestration engine. Changing providers changes model behavior and quality, but
 the Rite pipeline itself remains the same.
 
+### Adding provider packages
+
+For a plain OpenAI-compatible endpoint, use **Settings -> API Provider -> Custom**
+and fill in the base URL, key env var, and model slots. For a provider that
+needs a real SDK adapter/package, this repo includes the Vercel AI SDK provider
+workflow skill:
+
+```bash
+npx skills add https://github.com/vercel/ai --skill add-provider-package
+```
+
+The installed guide lives at `.agents/skills/add-provider-package/SKILL.md`.
+Use it when adding a custom text, embedding, image, or voice provider surface so
+the implementation includes package structure, response schemas, examples,
+documentation, changeset, and provider tests instead of ad hoc glue.
+
 ### Per-creature provider routes
 
 Provider routes let you run different creatures against different backends:
@@ -687,18 +767,24 @@ unassigned roles can auto-fall back to the lead.
   no manual URL entry required).
 - Opening a thread auto-marks unread messages as read.
 
-## Tank UI and resumable runs
+## Goblin Mode, Tank UI, and resumable runs
 
-`goblintown serve` starts the Tank at `/`, a live diorama for rites, plans,
-Settings, Cloud mode, provider routing, country collaboration, mail, and reset.
-The Tank POSTs to `/api/rite` or `/api/plan`, subscribes to
-`/api/rite/<runId>/stream`, and renders each streamed event as creature state,
-thinking bubbles, DAG progress, and final output.
+`goblintown serve` starts Goblin Mode at `/`: one prompt, a **Single Goblin /
+Goblintown** mode switch, and a Tank checkbox. Single Goblin uses
+`/api/goblin/single` for one worker and one answer. Goblintown mode POSTs to
+`/api/plan`, subscribes to `/api/rite/<runId>/stream`, and can show a compact
+Tank box with DAG progress. The legacy full Tank diorama remains at `/tank` for
+rites, plans, Settings, Cloud mode, provider routing, country collaboration,
+mail, reset, creature state, thinking bubbles, DAG progress, and final output.
+Slash commands include `/context ingest <path>` and `/context search <query>`
+so older conversations and project folders can become local Artifacts before a
+new run starts.
 
 Run state is persisted to `.goblintown/runs/<runId>.json`, so SSE history
 replays after a server restart. In-flight rites are marked interrupted on boot
-and can be resumed from the Tank's run recovery prompt. `/?run=<runId>` attaches
-the Tank to any existing run. `/rite/new` still exists as a plain HTML fallback.
+and can be resumed from the Tank's run recovery prompt. `/tank?run=<runId>`
+attaches the full Tank to any existing run. `/rite/new` still exists as a plain
+HTML fallback.
 
 ### Tank sprite and background assets
 
@@ -751,7 +837,8 @@ Runtime behavior:
 
 | Method | Path                              | Purpose |
 | ---    | ---                               | --- |
-| GET    | `/`                               | The Tank — live diorama UI; takes `?run=<runId>` to attach to an existing run |
+| GET    | `/`                               | Goblin Mode — one prompt, Single Goblin/Goblintown switch, compact Tank checkbox |
+| GET    | `/tank`                           | Legacy full Tank live diorama UI; takes `?run=<runId>` to attach to an existing run |
 | GET    | `/rite/new`                       | Plain HTML rite form (legacy) |
 | GET    | `/rite/:id`                       | Rite detail page (now includes artifact lineage) |
 | GET    | `/quest/:id`                      | Quest detail |
@@ -760,7 +847,13 @@ Runtime behavior:
 | GET    | `/runs`                           | List of all SSE runs (each runId links back to the Tank) |
 | GET    | `/inbox`, `/outbox`               | Federation message lists |
 | POST   | `/api/rite`                       | Start a rite, returns `{ runId }` |
+| POST   | `/api/goblin/single`              | Run one Goblin and stash the answer as Loot |
 | POST   | `/api/plan`                       | Start a planner-driven multi-step run, returns `{ runId }` |
+| POST   | `/api/context/ingest`             | Import local text files as file-backed Artifacts |
+| POST   | `/api/context/search`             | Search Artifacts, including imported context |
+| POST   | `/api/context/chats/scan`         | Scan Codex sessions or ChatGPT exports without importing |
+| POST   | `/api/context/chats/import`       | Import previous chats as root/chunk Artifacts |
+| POST   | `/api/context/vectorize`          | Precompute embeddings for stored Artifacts |
 | GET    | `/api/rite/:runId/stream`         | SSE stream of `RiteStep` + plan events; emits `replay-end` after history |
 | GET    | `/api/runs`                       | JSON list of run records |
 | GET    | `/api/runs/:runId`                | JSON single run record |
@@ -795,7 +888,7 @@ Runtime behavior:
 npm test
 ```
 
-274 tests, no OpenAI calls. Pure-function coverage across drift, reward,
+318 tests, no OpenAI calls. Pure-function coverage across drift, reward,
 Hoard content-addressing, federation signatures (incl. HMAC), audit
 aggregation, reward plugin loader, graph rendering, concurrency semaphore,
 budget tracker, run persistence, markdown export, rite comparison, plus the
@@ -805,20 +898,21 @@ construction, verifier tool dispatch, add-on registry, Solana read-only lookup,
 profile/activity/transaction/token summaries, thesis prompt and evidence
 construction, Tank thesis workflow wiring, sentiment source/key handling,
 query-specific project sentiment, market context separation, source failure normalization,
-and Tank/Settings wiring,
+local context ingestion, previous chat import, pre-vectorized chat memory, and Tank/Settings wiring,
 embeddings ranking math (cosine, RRF fusion),
 context-folding clustering, provider routing, output formatting, cloud mode,
 Settings menu reset flows, sprite assets, and trace-export schema mapping.
 
 ## Current scope
 
-The `0.6.0-beta.1` package is a complete local-first app and CLI. These pieces
+The `0.7.0-beta.1` package is a complete local-first app and CLI. These pieces
 ship together and are covered by the test suite:
 
 | Area | What ships now | Entry point |
 | --- | --- | --- |
-| **Tank UI** | Live creature diorama, default sprite sheets, centered wordmark, result panel, resumable runs, Settings, Onchain lookup, and Asteroid Mode. | `goblintown serve` |
-| **Memory** | Pigeon-Scribe distills every Rite into a structured JSON artifact with claims, evidence, open questions, next steps, and parent links. | `--cite <riteId>`, `--remember` |
+| **AI-first Tank UI** | Chat-first full Tank shell with sidebar navigation, single-Goblin chat, read-only web fetch for linked pages, browser text-to-speech replies, guided Rite entry, model controls, provider settings, first-run API preference, and desktop-app entrypoint. | Desktop app, `goblintown serve` |
+| **Tank runtime** | Live creature diorama, default sprite sheets, centered wordmark, result panel, resumable runs, Settings, Onchain lookup, and Asteroid Mode. | `/` or `/tank` |
+| **Memory** | Pigeon-Scribe distills every Rite into a structured JSON artifact with claims, evidence, open questions, next steps, and parent links. Local context ingestion imports old conversations/projects as file-backed Artifacts; Chat Hoard Import Mode imports previous Codex and ChatGPT chats as pre-vectorized root/chunk DAG memory. | `--cite <riteId>`, `--remember`, `goblintown context ingest <path>`, `goblintown context scan chats` |
 | **Planning** | Planner emits a typed DAG; the executor runs each node as a sub-rite, feeds artifacts forward, and replans after node failures. | `goblintown plan "<task>"`, Tank `PLAN` |
 | **Specialist recovery** | Failed packs are clustered by dominant failure mode, then 1-3 focused Specialist Goblins repair the best seed before Ogre escalation. | on by default; `--no-specialist` disables |
 | **Debate** | Goblins can see peer proposals and revise once before Gremlin/Troll review. | `--debate` |
@@ -829,7 +923,98 @@ ship together and are covered by the test suite:
 | **Provider routing** | OpenAI, OpenRouter, Ollama, LM Studio, Groq, Together, Mistral, DeepSeek, Anthropic, Gemini, and custom OpenAI-compatible endpoints. | Settings -> API Provider, `goblintown route` |
 | **Goblintown Cloud** | Bundled Firebase-backed SSO, friend codes, discovery, mail, and country metadata for users who opt in. | first-run prompt, Settings -> Account |
 | **Federation and Country** | Filesystem/HTTP artifact delivery, friend requests, direct messages, country discovery, join approvals, and team role assignment. | Settings -> Country/Mail, `goblintown country` |
-| **Trace and audit** | Run export to LLM-MAS trace schema, artifact lineage graphing, audit, compare, reroll, and context folding. | `export-trace`, `graph`, `audit`, `fold` |
+| **Trace and audit** | Run export to LLM-MAS trace schema, artifact lineage graphing, audit, compare, reroll, context search, and context folding. | `export-trace`, `graph`, `audit`, `context search`, `fold` |
+
+### Desktop installers
+
+The Electron desktop shell packages the same local-first Tank app and starts its
+own embedded Goblintown server. Normal users should get a full DMG, EXE, or
+AppImage from the GitHub Release once the `v0.7.0-beta.1` tag is allowed, not
+install from npm and not rebuild from source. Until then, the split-parts
+fallback carries the same installer bytes. The first-run path is kept to a few
+clicks: pick the AI provider or local model, choose local-only or cloud, then
+start chatting.
+
+The beta 0.7 artifact set is:
+
+| Platform | Full installer | Fallback from committed parts |
+| --- | --- | --- |
+| macOS Apple Silicon | `Goblintown-0.7.0-beta.1-mac-arm64.dmg` | `cat release/parts/Goblintown-0.7.0-beta.1-mac-arm64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-arm64.dmg` |
+| macOS Intel | `Goblintown-0.7.0-beta.1-mac-x64.dmg` | `cat release/parts/Goblintown-0.7.0-beta.1-mac-x64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-x64.dmg` |
+| Windows x64 | `Goblintown-0.7.0-beta.1-win-x64.exe` | `cat release/parts/Goblintown-0.7.0-beta.1-win-x64.exe.part-* > release/Goblintown-0.7.0-beta.1-win-x64.exe` |
+| Windows ARM64 | `Goblintown-0.7.0-beta.1-win-arm64.exe` | `cat release/parts/Goblintown-0.7.0-beta.1-win-arm64.exe.part-* > release/Goblintown-0.7.0-beta.1-win-arm64.exe` |
+| Windows package bundle | `Goblintown-0.7.0-beta.1-win.exe` | `cat release/parts/Goblintown-0.7.0-beta.1-win.exe.part-* > release/Goblintown-0.7.0-beta.1-win.exe` |
+| Linux x64 | `Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` | `cat release/parts/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage.part-* > release/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` |
+| Linux ARM64 | `Goblintown-0.7.0-beta.1-linux-arm64.AppImage` | `cat release/parts/Goblintown-0.7.0-beta.1-linux-arm64.AppImage.part-* > release/Goblintown-0.7.0-beta.1-linux-arm64.AppImage` |
+
+Then verify:
+
+```bash
+shasum -a 256 -c release/parts/SHA256SUMS.txt
+```
+
+Before calling a build public, run:
+
+```bash
+npm run release:ready
+```
+
+That readiness gate checks the beta 0.7 artifact set, verifies split-package
+checksums, and refuses to pass unless Apple Developer ID, Apple notarization,
+and Windows signing credentials are available. This keeps the human-facing
+download path honest: public installers should be a few-click experience, not a
+Gatekeeper or SmartScreen puzzle.
+
+The committed split files are a transport fallback, not a second release
+format. They are there so a fork or PR can carry the exact DMG, EXE, and
+AppImage payloads even when GitHub Release uploads or new Git LFS objects are
+blocked. Reconstructed files must match `SHA256SUMS.txt` before they are
+shared.
+
+Installer artifacts are written to `release/`, which is intentionally
+gitignored:
+
+```bash
+npm run dist:mac      # macOS arm64 DMG
+npm run dist:win      # Windows x64 one-click NSIS installer
+npm run dist:linux    # Linux x64 AppImage
+npm run dist:desktop  # all three targets from one command
+```
+
+When installer binaries need to travel through a PR or fork that cannot accept
+GitHub Release uploads or new Git LFS objects, split the large artifacts under
+`release/parts/`. The files in that folder are small enough for regular git
+pushes and include `SHA256SUMS.txt` plus a local README with reconstruction
+commands for each DMG, AppImage, and NSIS installer. Treat those reconstructed
+files as installer candidates unless they were produced by a signed release
+build.
+
+macOS public release builds require a Developer ID Application certificate and
+notarization credentials. The `electron-builder` config is prepared for hardened
+runtime signing, the entitlements in `build/`, and DMG notarization when Apple
+credentials are present; local builds without those credentials may produce
+unsigned or ad-hoc signed artifacts for development testing only.
+
+### Signed release workflow
+
+The repository includes `.github/workflows/desktop-release.yml` for the actual
+few-click public release path. Run it from GitHub Actions with a tag like
+`v0.7.0-beta.1`, or push a `v*` tag, after these repository secrets are set:
+
+| Secret | Used for |
+| --- | --- |
+| `MAC_CSC_LINK` | Base64 or URL for the Developer ID Application `.p12` certificate. |
+| `MAC_CSC_KEY_PASSWORD` | Password for the Mac signing certificate. |
+| `APPLE_ID` | Apple ID used for notarization. |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for notarization. |
+| `APPLE_TEAM_ID` | Apple Developer Team ID. |
+| `WIN_CSC_LINK` | Base64 or URL for the Windows Authenticode certificate. |
+| `WIN_CSC_KEY_PASSWORD` | Password for the Windows signing certificate. |
+
+The workflow runs the full test suite, builds macOS DMGs, Windows one-click NSIS
+installers, and Linux AppImages, verifies signing on macOS and Windows, then
+uploads the installers directly to the GitHub Release. That is the intended
+download vector for normal users.
 
 The Tank renders the protocol as a tamagotchi-style live village: each creature
 has a home, tokens stream into per-creature thinking bubbles, the DAG panel

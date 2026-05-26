@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import {
   builtinTools,
+  createWebFetchTool,
   parseToolCallsJson,
   renderToolCatalog,
   renderToolResults,
@@ -132,6 +133,41 @@ describe("http.head safety gate", () => {
     } finally {
       if (orig !== undefined) process.env.GOBLINTOWN_TOOLS_HTTP = orig;
     }
+  });
+});
+
+describe("web.fetch", () => {
+  it("fetches readable public page text", async () => {
+    const tool = createWebFetchTool(async () =>
+      new Response("<html><title>GitHub Repo</title><body><script>nope()</script><h1>Goblintown</h1><p>README facts.</p></body></html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+    const result = await tool.invoke({ url: "https://github.com/0xbl33p/goblintown" }) as {
+      ok: boolean;
+      title: string;
+      text: string;
+    };
+
+    assert.equal(result.ok, true);
+    assert.equal(result.title, "GitHub Repo");
+    assert.match(result.text, /Goblintown/);
+    assert.match(result.text, /README facts/);
+    assert.doesNotMatch(result.text, /nope/);
+  });
+
+  it("blocks local/private hosts", async () => {
+    const tool = createWebFetchTool(async () => {
+      throw new Error("fetch should not run");
+    });
+    const result = await tool.invoke({ url: "http://localhost:3000" }) as {
+      ok: boolean;
+      error?: string;
+    };
+
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? "", /private|local/);
   });
 });
 

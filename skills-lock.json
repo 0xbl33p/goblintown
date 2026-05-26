@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "add-provider-package": {
+      "source": "vercel/ai",
+      "sourceType": "github",
+      "skillPath": "skills/add-provider-package/SKILL.md",
+      "computedHash": "e5496e46de07df70952aba9a204842b381b2ce0cdfb350bb7ca5933db02dab60"
+    }
+  }
+}

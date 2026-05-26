@@ -113,6 +113,17 @@ describe("parsePlanJson", () => {
     assert.equal(plan.edges.length, 0);
   });
 
+  it("accepts goblin_mode as a valid planner personality", () => {
+    const json = JSON.stringify({
+      nodes: [
+        { id: "n", task: "t", inputs: [], kind: "sub_rite", packSize: 3, personality: "goblin_mode" },
+      ],
+      edges: [],
+    });
+    const plan = parsePlanJson(json, "X");
+    assert.equal(plan.nodes[0].personality, "goblin_mode");
+  });
+
   it("coerces unknown personality to undefined and clamps packSize", () => {
     const json = JSON.stringify({
       nodes: [

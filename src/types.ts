@@ -20,7 +20,8 @@ export type Personality =
   | "cynical"
   | "chipper"
   | "stoic"
-  | "feral";
+  | "feral"
+  | "goblin_mode";
 
 export interface Creature {
   kind: CreatureKind;
@@ -295,6 +296,17 @@ export interface ProviderConfig {
   outputFormat?: OutputFormat;
 }
 
+export type VoiceProviderId = "browser" | "openai" | "deepgram" | "local" | "custom";
+
+export interface VoiceConfig {
+  provider: VoiceProviderId;
+  baseURL?: string;
+  apiKeyEnv?: string;
+  model?: string;
+  language?: string;
+  prompt?: string;
+}
+
 export interface AddonConfig {
   enabled?: boolean;
   config?: Record<string, string | number | boolean>;
@@ -358,6 +370,7 @@ export interface WarrenManifest {
   defaultModelOgre: string;
   defaultModelTroll: string;
   provider?: ProviderConfig;
+  voice?: VoiceConfig;
   /** Optional installable Goblintown add-ons keyed by add-on id. */
   addons?: Record<string, AddonConfig>;
   /** Optional shared secret for HMAC-authenticated federation. */
