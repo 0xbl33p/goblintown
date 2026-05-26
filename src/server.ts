@@ -7247,8 +7247,11 @@ function tankHtml(
         <button class="active" type="button" data-settings-section="account">Account</button>
         <button type="button" data-settings-section="country">Country</button>
         <button type="button" data-settings-section="groups">Group Chats</button>
+        <button type="button" data-settings-section="addons">Add-ons</button>
         <button type="button" data-settings-section="api">API</button>
         <button type="button" data-settings-section="voice">Voice</button>
+        <button type="button" data-settings-section="solana">Solana Tools</button>
+        <button type="button" data-settings-section="context">Context APIs</button>
         <button type="button" data-settings-section="imports">Import Records</button>
         <button type="button" data-settings-section="reset">Reset</button>
       </nav>
@@ -12368,8 +12371,11 @@ const settingsEmbeddedPanelIds = {
   account: "auth-popover",
   country: "country-popover",
   groups: "mail-popover",
+  addons: "addon-popover",
   api: "provider-popover",
   voice: "voice-popover",
+  solana: "onchain-popover",
+  context: "sentiment-config-popover",
   reset: "settings-reset-panel",
 };
 
@@ -12389,7 +12395,10 @@ function settingsSectionHtml(section) {
     account: ["Account", "Sign in, cloud mode, and collaboration identity."],
     country: ["Country", "Town name, code, members, and role assignment."],
     groups: ["Group Chats", "Friend group chats, shared threads, and collaboration rooms."],
+    addons: ["Add-ons", "Installed tools, optional packages, and local extensions."],
     api: ["API", "LLM providers, model routing, and custom provider workflows."],
+    solana: ["Solana Tools", "Read-only wallet, token, program, and transaction inspection."],
+    context: ["Context APIs", "Sentiment, market, and research connectors with local secrets."],
     reset: ["Reset", "Asteroid Mode and local/cloud cleanup controls."],
   };
   if (section === "voice") {
@@ -12445,6 +12454,13 @@ function wireSettingsPanel(section) {
       }
       if (section === "api" && typeof loadProviderMenu === "function") void loadProviderMenu();
       if (section === "voice" && typeof loadVoiceMenu === "function") void loadVoiceMenu();
+      if (section === "addons" && typeof loadAddonMenu === "function") void loadAddonMenu();
+      if (section === "solana" && typeof onchainAddress !== "undefined") {
+        setTimeout(() => onchainAddress.focus(), 30);
+      }
+      if (section === "context" && typeof loadSentimentSources === "function") {
+        void loadSentimentSources();
+      }
       if (section === "reset") {
         panel.classList.add("open");
         resetChip.setAttribute("aria-expanded", "true");
