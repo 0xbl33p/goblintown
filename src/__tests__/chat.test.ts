@@ -242,9 +242,11 @@ describe("single goblin chat", () => {
   it("opens settings as an inline sidebar surface instead of a floating top menu", () => {
     assert.match(serverSource, /<section class="settings-surface" id="settings-surface" hidden/);
     assert.match(serverSource, /<div class="settings-sidebar-panel" id="settings-sidebar-panel" hidden>[\s\S]*id="settings-sidebar-menu"[\s\S]*Account[\s\S]*Country[\s\S]*Group Chats[\s\S]*API[\s\S]*Voice[\s\S]*Import Records[\s\S]*Reset/);
+    assert.match(serverSource, /<div class="settings-sidebar-content" id="settings-sidebar-content">[\s\S]*id="settings-sidebar-surface-panel"/);
     assert.doesNotMatch(serverSource, /data-settings-section="mail">Mail<\/button>/);
     assert.doesNotMatch(serverSource, /id="settings-surface-menu"/);
     assert.match(serverSource, /\.ops-sidebar\.settings-mode \.ops-main,[\s\S]*\.ops-sidebar\.settings-mode \.ops-head \.ops-toggle \{[\s\S]*display: none;/);
+    assert.match(serverSource, /\.chat-main\.settings-active \.chat-composer \{[\s\S]*display: none;/);
     assert.match(serverSource, /function setSidebarSettingsMode\(open\)/);
     assert.match(serverSource, /settingsSidebarPanel\.hidden = !open/);
     assert.match(serverSource, /settingsSidebarBack\.onclick = \(\) => \{[\s\S]*setSidebarSettingsMode\(false\);[\s\S]*showChatThreadSurface\(\);/);
@@ -252,7 +254,15 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /sidebarFullSettings\.onclick = \(\) => \{[\s\S]*showSettingsSurface\(\);/);
     assert.match(serverSource, /function showSettingsSection\(section\)/);
     assert.match(serverSource, /settingsPopover\.classList\.toggle\("open", false\)/);
-    assert.match(serverSource, /setSidebarSettingsMode\(true\);[\s\S]*\$\("settings-surface"\)\.hidden = false;/);
+    assert.match(serverSource, /\$\("settings-sidebar-surface-panel"\)\.innerHTML = settingsSectionHtml\(section\);/);
+    assert.match(serverSource, /setSidebarSettingsMode\(true\);[\s\S]*\$\("chat-main"\)\.classList\.add\("settings-active"\);[\s\S]*\$\("settings-surface"\)\.hidden = true;/);
+  });
+
+  it("keeps new chat and new rite as pinned unboxed sidebar actions", () => {
+    assert.match(serverSource, /<div class="ops-actions" aria-label="New work">[\s\S]*id="btn-chat"[\s\S]*id="btn-rite"[\s\S]*<\/div>/);
+    assert.match(serverSource, /\.ops-actions \.btn \{[\s\S]*min-height: 1\.45rem;[\s\S]*border: 0;[\s\S]*background: transparent;[\s\S]*text-align: left;/);
+    assert.match(serverSource, /\.ops-actions \.btn\.primary \{[\s\S]*background: transparent;[\s\S]*border: 0;/);
+    assert.doesNotMatch(serverSource, /\.ops-quick \.btn \{[\s\S]*border-radius: 8px;/);
   });
 
   it("makes record import ready inside the settings surface", () => {

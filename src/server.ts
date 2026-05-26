@@ -4808,7 +4808,7 @@ function tankHtml(
     .ops-sidebar {
       padding: 0.45rem 0.28rem;
     }
-    .ops-quick .btn {
+    .ops-actions .btn {
       min-height: 2rem;
       font-size: 0.5rem;
       padding: 0.32rem 0.14rem;
@@ -5221,22 +5221,44 @@ function tankHtml(
     flex: 1 1 auto;
   }
   .ops-quick {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.65rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.78rem;
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
     padding-right: 0.15rem;
   }
-  .ops-quick .btn {
-    padding: 0.72rem 0.85rem;
+  .ops-actions {
+    display: grid;
+    gap: 0.34rem;
+    flex: 0 0 auto;
+  }
+  .ops-actions .btn {
+    width: 100%;
+    min-height: 1.45rem;
+    padding: 0.12rem 0.16rem;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #e6e2d3;
     font-size: 0.86rem;
     letter-spacing: 0;
-    min-height: 2.8rem;
     text-align: left;
     text-transform: none;
-    border-radius: 8px;
+    transform: none;
+  }
+  .ops-actions .btn:hover,
+  .ops-actions .btn.primary:hover {
+    background: transparent;
+    color: #7cff5b;
+    transform: none;
+  }
+  .ops-actions .btn.primary {
+    background: transparent;
+    border: 0;
+    color: #e6e2d3;
+    font-weight: 600;
   }
   .sidebar-list {
     display: grid;
@@ -5468,6 +5490,21 @@ function tankHtml(
   .settings-sidebar-menu button:hover,
   .settings-sidebar-menu button.active {
     color: #7cff5b;
+  }
+  .settings-sidebar-content {
+    border-top: 1px solid rgba(124,255,91,0.16);
+    margin-top: 0.15rem;
+    padding-top: 0.85rem;
+  }
+  .settings-sidebar-content .settings-surface-panel {
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+  }
+  .chat-main.settings-active .chat-composer {
+    display: none;
   }
   .ops-sidebar.settings-mode .ops-main,
   .ops-sidebar.settings-mode .ops-head .ops-toggle {
@@ -7126,12 +7163,14 @@ function tankHtml(
     </div>
     <div class="ops-main" id="ops-main">
       <div class="ops-quick">
-        <button class="btn primary" id="btn-chat" type="button" title="Start a fresh single-goblin chat">+ New chat</button>
-        <button class="btn" id="btn-rite" type="button" title="Start a new full rite">+ New rite</button>
-        <button class="sr-only" id="btn-regular-rite" type="button" title="Start a regular rite">Regular</button>
-        <button class="sr-only" id="btn-thesis" type="button" title="Build a thesis rite">Thesis</button>
-        <button class="sr-only" id="btn-sentiment" type="button" title="Run sentiment tools">Sentiment</button>
-        <button class="sr-only" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
+        <div class="ops-actions" aria-label="New work">
+          <button class="btn primary" id="btn-chat" type="button" title="Start a fresh single-goblin chat">+ New chat</button>
+          <button class="btn" id="btn-rite" type="button" title="Start a new full rite">+ New rite</button>
+          <button class="sr-only" id="btn-regular-rite" type="button" title="Start a regular rite">Regular</button>
+          <button class="sr-only" id="btn-thesis" type="button" title="Build a thesis rite">Thesis</button>
+          <button class="sr-only" id="btn-sentiment" type="button" title="Run sentiment tools">Sentiment</button>
+          <button class="sr-only" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
+        </div>
         <section class="sidebar-list" data-sidebar-section="chats" aria-label="Chats">
           <button class="sidebar-section-toggle" type="button" data-sidebar-toggle="chats" aria-expanded="true">CHATS</button>
           <div class="sidebar-items">
@@ -7183,6 +7222,12 @@ function tankHtml(
         <button type="button" data-settings-section="imports">Import Records</button>
         <button type="button" data-settings-section="reset">Reset</button>
       </nav>
+      <div class="settings-sidebar-content" id="settings-sidebar-content">
+        <article class="settings-surface-panel" id="settings-sidebar-surface-panel">
+          <h2>Account</h2>
+          <p>Choose a section above. Settings details stay in this sidebar while chat remains out of the way.</p>
+        </article>
+      </div>
     </div>
   </aside>
 
@@ -12275,6 +12320,7 @@ function setSidebarSelection(kind, id) {
 
 function showChatThreadSurface() {
   setSidebarSettingsMode(false);
+  $("chat-main").classList.remove("settings-active");
   $("chat-thread").classList.remove("surface-hidden");
   $("root-rite-surface").hidden = true;
   $("settings-surface").hidden = true;
@@ -12282,6 +12328,7 @@ function showChatThreadSurface() {
 
 function showRiteSurface() {
   setSidebarSettingsMode(false);
+  $("chat-main").classList.remove("settings-active");
   $("chat-thread").classList.add("surface-hidden");
   $("root-rite-surface").hidden = false;
   $("settings-surface").hidden = true;
@@ -12421,7 +12468,7 @@ function showSettingsSection(section) {
   document.querySelectorAll("[data-settings-section]").forEach((button) => {
     button.classList.toggle("active", button.getAttribute("data-settings-section") === section);
   });
-  $("settings-surface-panel").innerHTML = settingsSectionHtml(section);
+  $("settings-sidebar-surface-panel").innerHTML = settingsSectionHtml(section);
   wireSettingsPanel(section);
 }
 
@@ -12431,15 +12478,17 @@ function showSettingsSurface() {
   setSidebarSettingsOpen(false);
   setSidebarSettingsMode(true);
   showChatMode();
+  $("chat-main").classList.add("settings-active");
   $("chat-thread").classList.add("surface-hidden");
   $("root-rite-surface").hidden = true;
-  $("settings-surface").hidden = false;
+  $("settings-surface").hidden = true;
   setSurfaceMode("settings");
   showSettingsSection("account");
 }
 
 settingsSidebarBack.onclick = () => {
   setSidebarSettingsMode(false);
+  $("chat-main").classList.remove("settings-active");
   showChatMode();
   showChatThreadSurface();
   setSurfaceMode("chat");
