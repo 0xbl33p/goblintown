@@ -29,6 +29,8 @@ Shipped filenames:
 - `goblin-sceptre-come-out.png`
 - `goblin-spear-come-out.png`
 - `gtowntextmark.png`
+- `gtownlogo.svg`
+- `goblintownlogo.svg`
 
 Expected pigeon layout:
 
@@ -75,6 +77,8 @@ Expected decorative tank assets:
 
 - `gtowntextmark.png`: transparent PNG wordmark, rendered as a low-opacity
   floating background mark
+- `gtownlogo.svg`: wide README/marketing banner.
+- `goblintownlogo.svg`: distribution icon source.
 
 The UI automatically falls back to emoji only if files are removed or missing in
 a fork/local checkout. If `pigeon-walk-left.png` is missing, the right sheet is

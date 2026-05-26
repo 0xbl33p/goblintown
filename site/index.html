@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Goblintown — multi-agent orchestration on top of OpenAI</title>
-<meta name="description" content="A planning multi-agent orchestration protocol on top of OpenAI. Memory, debate, failure-driven specialists, recursive replan, verifier tools — content-addressed, drift-monitored, budget-capped." />
+<title>Goblintown — local AI chat and rite orchestration</title>
+<meta name="description" content="A local-first desktop AI app for simple chat, live voice, provider routing, memory, rites, and multi-agent orchestration." />
 <meta property="og:title" content="Goblintown" />
-<meta property="og:description" content="Planning multi-agent orchestration on top of OpenAI. Six specialized creatures, plan-then-execute with recursive replan, typed-artifact memory, debate, specialist recovery." />
+<meta property="og:description" content="Desktop AI chat first, multi-agent rites when work needs the full town. Local-first, provider-routed, voice-capable, and packaged as simple installers." />
 <meta property="og:type" content="website" />
 <meta name="theme-color" content="#0d1410" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='52'>%F0%9F%91%B9</text></svg>" />
@@ -234,7 +234,7 @@
   <nav class="top">
     <span class="brand">goblintown</span>
     <span class="spacer"></span>
-    <a class="tab" href="#install">install</a>
+    <a class="tab" href="#install">download</a>
     <a class="tab" href="#usage">usage</a>
     <a class="tab" href="#roster">roster</a>
     <a class="tab" href="#research">research</a>
@@ -244,22 +244,16 @@
   <div class="hero">
     <h1>goblintown<span class="blink"></span></h1>
     <p class="tagline">
-      A planning multi-agent orchestration protocol on top of OpenAI.
-      Decompose a task into a DAG, scavenge context, race a pack of goblins
-      against each other, debate, attack each other's outputs, spawn focused
-      specialists when the pack fails — then hand back a signed,
-      content-addressed answer that future rites can build on.
+      A local-first desktop AI app. Start with simple chat, pick the API or
+      local model that powers it, then summon full rites when the work needs
+      memory, tools, debate, critique, and saved artifacts.
     </p>
     <a class="cta primary" href="#install">
-      <span>install</span>
+      <span>download</span>
       <span class="arrow">→</span>
     </a>
     <a class="cta" href="https://github.com/0XBL33P/goblintown">
       <span>github</span>
-      <span class="arrow">↗</span>
-    </a>
-    <a class="cta" href="https://www.npmjs.com/package/goblintown">
-      <span>npm</span>
       <span class="arrow">↗</span>
     </a>
   </div>
@@ -453,14 +447,25 @@
 </section>
 
 <section id="install">
-  <h2><span class="hash">#</span> install</h2>
-<pre><span class="comment"># current beta package</span>
-npm install -g goblintown@beta
+  <h2><span class="hash">#</span> download</h2>
+  <p>
+    Use the signed desktop installer from the GitHub Release. It opens directly
+    into chat, asks which API or local model should power Goblintown, and keeps
+    setup to a few guided clicks.
+  </p>
+<pre><span class="comment"># beta 0.7 installer candidates are mirrored as repo release parts</span>
+release/parts/Goblintown-0.7.0-beta.1-mac-arm64.dmg.part-*
+release/parts/Goblintown-0.7.0-beta.1-mac-x64.dmg.part-*
+release/parts/Goblintown-0.7.0-beta.1-win-x64.exe.part-*
+release/parts/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage.part-*
 
-<span class="comment"># or run without a global install</span>
-npx goblintown@beta --help
-export OPENAI_API_KEY=sk-...            <span class="comment"># or choose a provider in the Tank UI</span>
-goblintown init</pre>
+<span class="comment"># verify after reconstructing</span>
+shasum -a 256 -c release/parts/SHA256SUMS.txt</pre>
+  <p>
+    The few-click public release requires signed and notarized macOS builds plus
+    signed Windows builds; repo parts are for review and reconstruction when
+    release uploads are not available.
+  </p>
 </section>
 
 <section id="usage">
@@ -508,7 +513,7 @@ goblintown drift
 goblintown audit &lt;riteId&gt;                <span class="comment"># now includes artifact lineage</span>
 goblintown graph &lt;riteId|lootId&gt;
 goblintown export-trace &lt;runId&gt; --out trace.json   <span class="comment"># academic LLM-MAS schema</span>
-goblintown serve --port 7777             <span class="comment"># Goblin Mode GUI + first-run Local Only / Goblintown Cloud choice</span>
+goblintown serve --port 7777             <span class="comment"># Goblin Mode GUI + first-run API and cloud choices</span>
 goblintown cloud                         <span class="comment"># bundled cloud setup + Firebase override notes</span>
 goblintown addon enable solana           <span class="comment"># read-only onchain verifier tools</span>
 goblintown addon solana &lt;address&gt;        <span class="comment"># direct read-only Solana address profile</span>
@@ -533,7 +538,7 @@ goblintown sentiment project "Jito"       <span class="comment"># project/team/p
     <div class="card"><h3>Context-folding</h3><p>As the Hoard accumulates, <code>goblintown fold</code> merges related older artifacts into higher-level summaries. Recursive abstraction.</p></div>
     <div class="card"><h3>Token streaming</h3><p>Ogre, every goblin, and every specialist stream tokens. Live "thinking" bubbles in the tank UI show what each creature is producing as it produces it.</p></div>
     <div class="card"><h3>Goblin Mode GUI</h3><p>A one-prompt surface at <code>/</code> with Single Goblin and Goblintown modes, slash commands, and a Tank checkbox for planner runs. The desktop app opens here by default.</p></div>
-    <div class="card"><h3>Tank UI</h3><p>A tamagotchi-style live diorama at <code>/tank</code>: default creature sprites, a centered wordmark, village tiers, DAG progress, resumable run views, Onchain lookup, the Tank Sentiment tool, and the first-run Local Only / Goblintown Cloud choice.</p></div>
+    <div class="card"><h3>Tank UI</h3><p>A tamagotchi-style live diorama at <code>/tank</code>: default creature sprites, a centered wordmark, village tiers, DAG progress, resumable run views, Onchain lookup, the Tank Sentiment tool, and first-run API plus Local Only / Goblintown Cloud choices.</p></div>
     <div class="card"><h3>Settings menu</h3><p>Country, Mail, Add-ons, Onchain, Settings Sentiment Sources, API Provider, Account cloud mode, and Reset are gathered into one scrollable menu. Reset buries Asteroid Mode behind an extra step before local or cloud data can be destroyed.</p></div>
     <div class="card"><h3>Solana add-on</h3><p>Enable read-only onchain investigator tools for address profiles, activity, parsed transactions, token mint/account data, SOL balances, account metadata, SPL token accounts, recent signatures, and RPC health. The Tank Onchain panel and <code>goblintown addon solana &lt;address&gt;</code> can turn a lookup into a Goblintown analysis rite. No keys, signing, swaps, or transaction submission.</p></div>
     <div class="card"><h3>Thesis engine</h3><p>Build project-quality memos about a team, product, protocol, repository, or decision. It weighs quality and advantages, evidence gaps, risks, and invalidation triggers, can scan repo files, and labels missing evidence Unknown / Unverified. It is not buyability or a buy/sell recommendation.</p></div>
@@ -639,7 +644,6 @@ export default function (loot, verdict) {
   <div class="wrap">
     <div class="links">
       <a href="https://github.com/0XBL33P/goblintown">github ↗</a>
-      <a href="https://www.npmjs.com/package/goblintown">npm ↗</a>
       <a href="https://github.com/0XBL33P/goblintown/issues">issues ↗</a>
       <a href="https://openai.com/index/where-the-goblins-came-from/">the postmortem ↗</a>
     </div>

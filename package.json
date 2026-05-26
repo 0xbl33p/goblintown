@@ -1,6 +1,6 @@
 {
   "name": "goblintown",
-  "version": "0.6.0-beta.1",
+  "version": "0.7.0-beta.1",
   "description": "Multi-agent orchestration protocol on top of OpenAI.",
   "license": "MIT",
   "author": "0XBL33P",
@@ -76,6 +76,10 @@
     "files": [
       "dist/**/*",
       "site/assets/**/*",
+      "build/icon.icns",
+      "build/icon.ico",
+      "build/icon.png",
+      "build/icon.svg",
       "package.json",
       "LICENSE",
       "README.md",
@@ -83,6 +87,7 @@
       "!.goblintown/**/*"
     ],
     "mac": {
+      "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
@@ -97,20 +102,25 @@
       ]
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ]
     },
     "linux": {
+      "icon": "build/icon.png",
       "category": "Development",
       "target": [
         "AppImage"
       ]
     },
     "nsis": {
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Goblintown"
     }
   },
   "dependencies": {

@@ -43,6 +43,13 @@ describe("docs and CLI help", () => {
   });
 
   it("updates README for local-first cloud, Settings, and reset flows", () => {
+    assert.match(readme, /<img src="site\/assets\/gtownlogo\.svg"/);
+    assert.match(readme, /## Download/);
+    assert.match(readme, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/);
+    assert.match(readme, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe/);
+    assert.match(readme, /release\/parts/);
+    assert.match(readme, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
+    assert.match(readme, /asks which AI provider should power it/);
     assert.match(readme, /## Goblintown Cloud/);
     assert.match(readme, /Stay Local/);
     assert.match(readme, /Use Goblintown Cloud/);
@@ -80,7 +87,12 @@ describe("docs and CLI help", () => {
   });
 
   it("updates the marketing site copy for the Tank and cloud mode", () => {
-    assert.match(siteIndex, /first-run Local Only \/ Goblintown Cloud choice/);
+    assert.match(siteIndex, /local model should power Goblintown/);
+    assert.match(siteIndex, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg\.part-\*/);
+    assert.match(siteIndex, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe\.part-\*/);
+    assert.match(siteIndex, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
+    assert.doesNotMatch(siteIndex, /npmjs\.com/);
+    assert.doesNotMatch(siteIndex, /npm install -g goblintown@beta/);
     assert.match(siteIndex, /Settings menu/);
     assert.match(siteIndex, /Asteroid Mode/);
     assert.match(siteIndex, /318 tests/);

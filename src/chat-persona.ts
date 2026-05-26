@@ -15,7 +15,7 @@ export const GOBLINTOWN_CHAT_CONTEXT = [
 
 export const CHAT_PERSONA_UI = {
   intro:
-    "Ask anything. One goblin answers fast. If the job smells bigger than one pair of hands, I will call the town.",
+    "Welcome. First, pick the API that powers me in Settings, then ask anything. One goblin answers fast; bigger jobs can call the town.",
   ready: ["ready", "ears up", "prompt basket empty"],
   thinking: ["sniffing the prompt", "checking the Hoard", "sorting shiny thoughts"],
   saved: ["stashed as loot", "tucked in the Hoard", "answer bagged"],

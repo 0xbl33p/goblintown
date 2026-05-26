@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="site/assets/gtownlogo.svg" alt="Goblintown" width="820">
+</p>
+
 # Goblintown
 
 Goblintown is a local-first AI app with a Goblin Mode GUI, a compact optional
@@ -11,6 +15,26 @@ hand the surviving answer back as a signed, content-addressed artifact that
 future rites can build on.
 
 Current beta release line: `goblintown@beta`.
+
+## Download
+
+For normal users, use the signed desktop installer from the GitHub Release. It
+opens the chat app directly, asks which AI API or local model should power the
+first conversation, then walks through optional features one at a time.
+
+| Platform | Installer | Notes |
+| --- | --- | --- |
+| macOS Apple Silicon | `Goblintown-0.7.0-beta.1-mac-arm64.dmg` | Open the DMG, drag Goblintown to Applications, launch. |
+| macOS Intel | `Goblintown-0.7.0-beta.1-mac-x64.dmg` | Open the DMG, drag Goblintown to Applications, launch. |
+| Windows | `Goblintown-0.7.0-beta.1-win-x64.exe` | One-click NSIS installer with Start Menu and Desktop shortcuts. |
+| Linux | `Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` | Mark executable, launch. |
+
+For PRs and forks that cannot carry release uploads, installer candidates are
+also committed in split form under [`release/parts`](release/parts/README.md).
+Concatenate the matching `*.part-*` files in lexical order, then run
+`shasum -a 256 -c release/parts/SHA256SUMS.txt` to verify the reconstructed
+installer. The committed beta 0.7 parts are unsigned candidate packages until
+Apple Developer ID and Windows signing credentials are available.
 
 ## Background
 
@@ -227,27 +251,24 @@ that future rites can cite.
 
 ## Install
 
-### npm
+Use the desktop installer for your platform from [Download](#download). The app
+opens directly into chat, asks which AI provider should power it, and keeps the
+rest of setup behind short guided choices instead of a settings wall.
+
+The same codebase still includes a CLI for development and automation:
 
 ```bash
-npm install -g goblintown@beta
 goblintown --help
 goblintown serve --port 7777
 ```
 
-You can also run it without a global install:
-
-```bash
-npx goblintown@beta --help
-npx goblintown@beta serve --port 7777
-```
-
-`goblintown serve` opens Goblin Mode at `http://localhost:7777/`: one prompt,
-a **Single Goblin / Goblintown** switch, and a Tank checkbox for multi-agent
-runs. The legacy full Tank UI remains available at `/tank`. On first run the
-app asks whether this Warren should stay local-only or use Goblintown Cloud.
+`goblintown serve` opens Goblin Mode at `http://localhost:7777/`: one chat,
+Chats and Rites in the left sidebar, inline rite output in the main surface,
+and Settings for API, voice, context APIs, Solana tools, group chats, import,
+and reset. On first run the app asks for the chat API preference first, then
+asks whether this Warren should stay local-only or use Goblintown Cloud.
 Sprites, the Goblintown wordmark, Matter.js Asteroid Mode, and the CLI
-entrypoint are included in the npm package.
+entrypoint are included in the desktop package.
 
 Set a provider API key for any command that calls a creature. You can set it in
 your shell, or save it from **Settings -> API Provider** in the Tank. Local
@@ -864,12 +885,12 @@ Settings menu reset flows, sprite assets, and trace-export schema mapping.
 
 ## Current scope
 
-The `0.6.0-beta.1` package is a complete local-first app and CLI. These pieces
+The `0.7.0-beta.1` package is a complete local-first app and CLI. These pieces
 ship together and are covered by the test suite:
 
 | Area | What ships now | Entry point |
 | --- | --- | --- |
-| **AI-first Tank UI** | Chat-first full Tank shell with sidebar navigation, single-Goblin chat, read-only web fetch for linked pages, browser text-to-speech replies, guided Rite entry, model controls, provider settings, and desktop-app entrypoint. | `goblintown serve`, `npm run desktop` |
+| **AI-first Tank UI** | Chat-first full Tank shell with sidebar navigation, single-Goblin chat, read-only web fetch for linked pages, browser text-to-speech replies, guided Rite entry, model controls, provider settings, first-run API preference, and desktop-app entrypoint. | Desktop app, `goblintown serve` |
 | **Tank runtime** | Live creature diorama, default sprite sheets, centered wordmark, result panel, resumable runs, Settings, Onchain lookup, and Asteroid Mode. | `/` or `/tank` |
 | **Memory** | Pigeon-Scribe distills every Rite into a structured JSON artifact with claims, evidence, open questions, next steps, and parent links. Local context ingestion imports old conversations/projects as file-backed Artifacts; Chat Hoard Import Mode imports previous Codex and ChatGPT chats as pre-vectorized root/chunk DAG memory. | `--cite <riteId>`, `--remember`, `goblintown context ingest <path>`, `goblintown context scan chats` |
 | **Planning** | Planner emits a typed DAG; the executor runs each node as a sub-rite, feeds artifacts forward, and replans after node failures. | `goblintown plan "<task>"`, Tank `PLAN` |
@@ -887,12 +908,32 @@ ship together and are covered by the test suite:
 ### Desktop installers
 
 The Electron desktop shell packages the same local-first Tank app and starts its
-own embedded Goblintown server. Installer artifacts are written to `release/`,
-which is intentionally gitignored:
+own embedded Goblintown server. Normal users should install from signed GitHub
+Release assets, not from package-manager commands. The first-run path is kept to
+a few clicks: pick the AI provider or local model, choose local-only or cloud,
+then start chatting.
+
+| Platform | Reconstruct from committed parts | Output |
+| --- | --- | --- |
+| macOS Apple Silicon | `cat release/parts/Goblintown-0.7.0-beta.1-mac-arm64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-arm64.dmg` | DMG |
+| macOS Intel | `cat release/parts/Goblintown-0.7.0-beta.1-mac-x64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-x64.dmg` | DMG |
+| Windows x64 | `cat release/parts/Goblintown-0.7.0-beta.1-win-x64.exe.part-* > release/Goblintown-0.7.0-beta.1-win-x64.exe` | one-click EXE |
+| Windows ARM64 | `cat release/parts/Goblintown-0.7.0-beta.1-win-arm64.exe.part-* > release/Goblintown-0.7.0-beta.1-win-arm64.exe` | one-click EXE |
+| Linux x64 | `cat release/parts/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage.part-* > release/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` | AppImage |
+| Linux ARM64 | `cat release/parts/Goblintown-0.7.0-beta.1-linux-arm64.AppImage.part-* > release/Goblintown-0.7.0-beta.1-linux-arm64.AppImage` | AppImage |
+
+Then verify:
+
+```bash
+shasum -a 256 -c release/parts/SHA256SUMS.txt
+```
+
+Installer artifacts are written to `release/`, which is intentionally
+gitignored:
 
 ```bash
 npm run dist:mac      # macOS arm64 DMG
-npm run dist:win      # Windows x64 NSIS installer
+npm run dist:win      # Windows x64 one-click NSIS installer
 npm run dist:linux    # Linux x64 AppImage
 npm run dist:desktop  # all three targets from one command
 ```
@@ -901,7 +942,9 @@ When installer binaries need to travel through a PR or fork that cannot accept
 GitHub Release uploads or new Git LFS objects, the large artifacts can be split
 under `release/parts/`. The files in that folder are small enough for regular
 git pushes and include `SHA256SUMS.txt` plus a local README with reconstruction
-commands for each DMG, AppImage, and NSIS installer.
+commands for each DMG, AppImage, and NSIS installer. Treat those reconstructed
+files as installer candidates unless they were produced by a signed release
+build.
 
 macOS public release builds require a Developer ID Application certificate and
 notarization credentials. The `electron-builder` config is prepared for hardened

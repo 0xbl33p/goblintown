@@ -6794,6 +6794,7 @@ function tankHtml(
   .onboard-cloud-actions {
     display: none;
     gap: 0.55rem;
+    flex-wrap: wrap;
     margin-top: 0.85rem;
   }
   .onboard-cloud-actions.open {
@@ -7603,6 +7604,14 @@ function tankHtml(
         <h4 class="onboard-title" id="onboard-title">Welcome to Goblintown</h4>
         <p class="onboard-body" id="onboard-body"></p>
         <p class="onboard-progress" id="onboard-progress">Step 1</p>
+        <div class="onboard-cloud-actions" id="onboard-provider-actions">
+          <button class="btn primary" type="button" data-onboard-provider="openai">OpenAI</button>
+          <button class="btn" type="button" data-onboard-provider="deepseek">DeepSeek</button>
+          <button class="btn" type="button" data-onboard-provider="lmstudio">LM Studio</button>
+          <button class="btn" type="button" data-onboard-provider="ollama">Ollama</button>
+          <button class="btn" type="button" data-onboard-provider="anthropic">Anthropic</button>
+          <button class="btn" type="button" data-onboard-provider="custom">Add New</button>
+        </div>
         <div class="onboard-cloud-actions" id="onboard-cloud-actions">
           <button class="btn" type="button" id="onboard-local-mode">Stay Local</button>
           <button class="btn primary" type="button" id="onboard-cloud-mode">Use Goblintown Cloud</button>
@@ -11953,11 +11962,18 @@ const onboardProgress = $("onboard-progress");
 const onboardBack = $("onboard-back");
 const onboardSkip = $("onboard-skip");
 const onboardNext = $("onboard-next");
+const onboardProviderActions = $("onboard-provider-actions");
 const onboardCloudActions = $("onboard-cloud-actions");
 const onboardLocalMode = $("onboard-local-mode");
 const onboardCloudMode = $("onboard-cloud-mode");
-const onboardingStorageKey = "goblintown.onboarding.v2";
+const onboardingStorageKey = "goblintown.onboarding.v3";
 const onboardingSteps = [
+  {
+    title: "Power the Chat",
+    body: "Choose the API or local model that should answer first. You can save a key now from API settings, or keep moving and fill it in later.",
+    providerChoice: true,
+    targetId: "root-chat-form",
+  },
   {
     title: "Choose Your Town",
     body: "Stay Local keeps this Goblintown on your machine. Goblintown Cloud adds SSO, friend codes, discovery, group chats, and shared country metadata through the official cloud backend.",
@@ -12017,6 +12033,7 @@ function clearOnboardingFocus() {
 function renderOnboardingStep() {
   const step = onboardingSteps[onboardingIndex];
   if (!step) return;
+  const isProviderChoice = step.providerChoice === true;
   const isCloudChoice = step.cloudChoice === true;
   setTopPopover(step.popover || "");
   clearOnboardingFocus();
@@ -12030,10 +12047,13 @@ function renderOnboardingStep() {
   onboardBody.textContent = step.body;
   onboardProgress.textContent = isCloudChoice
     ? "First run choice"
-    : "Step " + onboardingIndex + " of " + (onboardingSteps.length - 1);
+    : isProviderChoice
+      ? "Choose an API"
+      : "Step " + onboardingIndex + " of " + (onboardingSteps.length - 1);
+  onboardProviderActions.classList.toggle("open", isProviderChoice);
   onboardCloudActions.classList.toggle("open", isCloudChoice);
   onboardBack.parentElement.style.display = isCloudChoice ? "none" : "flex";
-  onboardBack.disabled = onboardingIndex <= 1 && readCloudModeChoice() !== "";
+  onboardBack.disabled = onboardingIndex <= 0 || (onboardingIndex <= 2 && readCloudModeChoice() !== "");
   onboardNext.textContent = onboardingIndex === onboardingSteps.length - 1 ? "Finish" : "Next";
 }
 function closeOnboarding(markDone) {
@@ -12050,13 +12070,13 @@ function maybeStartOnboarding() {
   const params = new URLSearchParams(window.location.search);
   const forced = params.get("onboarding") === "1";
   if (done && !forced) return;
-  onboardingIndex = readCloudModeChoice() ? 1 : 0;
+  onboardingIndex = 0;
   onboardOverlay.classList.add("open");
   renderOnboardingStep();
 }
 onboardBack.onclick = () => {
   if (onboardingIndex <= 0) return;
-  if (onboardingIndex <= 1 && readCloudModeChoice() !== "") return;
+  if (onboardingIndex <= 2 && readCloudModeChoice() !== "") return;
   onboardingIndex -= 1;
   renderOnboardingStep();
 };
@@ -12069,14 +12089,45 @@ onboardNext.onclick = () => {
   renderOnboardingStep();
 };
 onboardSkip.onclick = () => closeOnboarding(true);
+async function chooseOnboardingProvider(preset) {
+  if (preset === "custom") {
+    closeOnboarding(false);
+    showSettingsSurface();
+    showSettingsSection("api");
+    setTimeout(() => providerPreset.focus(), 30);
+    return;
+  }
+  await loadProviderMenu();
+  providerPreset.value = preset;
+  providerPreset.onchange();
+  providerStatus.textContent = "Saving " + (providerById(preset)?.label || preset) + "...";
+  try {
+    const r = await fetch("/api/provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildProviderPayload()),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    applyProviderPayload(await r.json());
+    onboardingIndex = readCloudModeChoice() ? 2 : 1;
+    renderOnboardingStep();
+  } catch (err) {
+    providerStatus.textContent = "Provider save failed: " + (err.message || err);
+    showSettingsSurface();
+    showSettingsSection("api");
+  }
+}
+onboardProviderActions.querySelectorAll("[data-onboard-provider]").forEach((button) => {
+  button.addEventListener("click", () => chooseOnboardingProvider(button.getAttribute("data-onboard-provider") || "openai"));
+});
 onboardLocalMode.onclick = () => {
   setCloudModeChoice("local");
-  onboardingIndex = 1;
+  onboardingIndex = 2;
   renderOnboardingStep();
 };
 onboardCloudMode.onclick = () => {
   setCloudModeChoice("cloud");
-  onboardingIndex = 1;
+  onboardingIndex = 2;
   renderOnboardingStep();
 };
 setTimeout(maybeStartOnboarding, 120);

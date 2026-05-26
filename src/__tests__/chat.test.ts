@@ -309,6 +309,12 @@ describe("single goblin chat", () => {
   });
 
   it("keeps first-run onboarding from swallowing app control clicks", () => {
+    assert.match(serverSource, /const onboardingStorageKey = "goblintown\.onboarding\.v3"/);
+    assert.match(serverSource, /id="onboard-provider-actions"[\s\S]*data-onboard-provider="openai"[\s\S]*data-onboard-provider="deepseek"[\s\S]*data-onboard-provider="lmstudio"[\s\S]*data-onboard-provider="ollama"[\s\S]*data-onboard-provider="anthropic"[\s\S]*data-onboard-provider="custom"/);
+    assert.match(serverSource, /title: "Power the Chat"/);
+    assert.match(serverSource, /async function chooseOnboardingProvider\(preset\)/);
+    assert.match(serverSource, /showSettingsSurface\(\);[\s\S]*showSettingsSection\("api"\)/);
+    assert.match(serverSource, /fetch\("\/api\/provider"/);
     assert.match(serverSource, /\.onboard-overlay \{[\s\S]*pointer-events: none;/);
     assert.match(serverSource, /\.onboard-card \{[\s\S]*pointer-events: auto;/);
   });
