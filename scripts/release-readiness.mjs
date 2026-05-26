@@ -45,15 +45,28 @@ if (existsSync(partDir)) {
 const checksumOutput = commandOk("shasum", ["-a", "256", "-c", "release/parts/SHA256SUMS.txt"]);
 add("split installer checksums verify", !/FAILED|No such file|not found/i.test(checksumOutput), checksumOutput.trim());
 
+const macSigningSecret = Boolean(process.env.MAC_CSC_LINK || process.env.CSC_LINK);
+const macSigningPassword = Boolean(process.env.MAC_CSC_KEY_PASSWORD || process.env.CSC_KEY_PASSWORD);
+const winSigningSecret = Boolean(process.env.WIN_CSC_LINK || process.env.CSC_LINK);
+const winSigningPassword = Boolean(process.env.WIN_CSC_KEY_PASSWORD || process.env.CSC_KEY_PASSWORD);
+
 if (process.platform === "darwin") {
   const identities = commandOk("security", ["find-identity", "-v", "-p", "codesigning"]);
-  add("Apple Developer ID identity installed", /Developer ID Application/.test(identities), identities.trim());
+  add(
+    "Apple Developer ID identity installed or provided",
+    /Developer ID Application/.test(identities) || (macSigningSecret && macSigningPassword),
+    identities.trim() || "MAC_CSC_LINK/MAC_CSC_KEY_PASSWORD or CSC_LINK/CSC_KEY_PASSWORD",
+  );
 } else {
-  add("Apple Developer ID identity installed", false, "Run release:ready on the signing Mac.");
+  add(
+    "Apple Developer ID identity installed or provided",
+    macSigningSecret && macSigningPassword,
+    "Run release:ready on the signing Mac, or provide MAC_CSC_LINK/MAC_CSC_KEY_PASSWORD.",
+  );
 }
 
 add("Apple notarization env present", Boolean(process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID), "APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID");
-add("Windows signing env present", Boolean(process.env.CSC_LINK && process.env.CSC_KEY_PASSWORD), "CSC_LINK, CSC_KEY_PASSWORD");
+add("Windows signing env present", winSigningSecret && winSigningPassword, "WIN_CSC_LINK/WIN_CSC_KEY_PASSWORD or CSC_LINK/CSC_KEY_PASSWORD");
 
 let failed = false;
 for (const check of checks) {

@@ -9,6 +9,7 @@ const cliSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
 const cliHelpSource = readFileSync(join(repoRoot, "src", "cli-help.ts"), "utf8");
 const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
 const siteIndex = readFileSync(join(repoRoot, "site", "index.html"), "utf8");
+const desktopReleaseWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "desktop-release.yml"), "utf8");
 
 describe("docs and CLI help", () => {
   it("documents the Goblintown Cloud command in CLI help", () => {
@@ -51,6 +52,9 @@ describe("docs and CLI help", () => {
     assert.match(readme, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
     assert.match(readme, /npm run release:ready/);
     assert.match(readme, /Gatekeeper or SmartScreen puzzle/);
+    assert.match(readme, /\.github\/workflows\/desktop-release\.yml/);
+    assert.match(readme, /MAC_CSC_LINK/);
+    assert.match(readme, /WIN_CSC_LINK/);
     assert.match(readme, /asks which AI provider should power it/);
     assert.match(readme, /## Goblintown Cloud/);
     assert.match(readme, /Stay Local/);
@@ -86,6 +90,17 @@ describe("docs and CLI help", () => {
     assert.match(readme, /solana\.balance/);
     assert.match(readme, /Settings -> Onchain/);
     assert.match(readme, /\/api\/onchain\/solana\/lookup/);
+  });
+
+  it("ships a signed desktop release workflow for GitHub Release assets", () => {
+    assert.match(desktopReleaseWorkflow, /name: Desktop Release/);
+    assert.match(desktopReleaseWorkflow, /workflow_dispatch/);
+    assert.match(desktopReleaseWorkflow, /npx electron-builder --mac dmg --arm64 --x64 --publish never/);
+    assert.match(desktopReleaseWorkflow, /npx electron-builder --win nsis --x64 --arm64 --publish never/);
+    assert.match(desktopReleaseWorkflow, /npx electron-builder --linux AppImage --x64 --arm64 --publish never/);
+    assert.match(desktopReleaseWorkflow, /MAC_CSC_LINK/);
+    assert.match(desktopReleaseWorkflow, /WIN_CSC_LINK/);
+    assert.match(desktopReleaseWorkflow, /gh release upload/);
   });
 
   it("updates the marketing site copy for the Tank and cloud mode", () => {

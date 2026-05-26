@@ -964,6 +964,27 @@ runtime signing, the entitlements in `build/`, and DMG notarization when Apple
 credentials are present; local builds without those credentials may produce
 unsigned or ad-hoc signed artifacts for development testing only.
 
+### Signed release workflow
+
+The repository includes `.github/workflows/desktop-release.yml` for the actual
+few-click public release path. Run it from GitHub Actions with a tag like
+`v0.7.0-beta.1`, or push a `v*` tag, after these repository secrets are set:
+
+| Secret | Used for |
+| --- | --- |
+| `MAC_CSC_LINK` | Base64 or URL for the Developer ID Application `.p12` certificate. |
+| `MAC_CSC_KEY_PASSWORD` | Password for the Mac signing certificate. |
+| `APPLE_ID` | Apple ID used for notarization. |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for notarization. |
+| `APPLE_TEAM_ID` | Apple Developer Team ID. |
+| `WIN_CSC_LINK` | Base64 or URL for the Windows Authenticode certificate. |
+| `WIN_CSC_KEY_PASSWORD` | Password for the Windows signing certificate. |
+
+The workflow runs the full test suite, builds macOS DMGs, Windows one-click NSIS
+installers, and Linux AppImages, verifies signing on macOS and Windows, then
+uploads the installers directly to the GitHub Release. That is the intended
+download vector for normal users.
+
 The Tank renders the protocol as a tamagotchi-style live village: each creature
 has a home, tokens stream into per-creature thinking bubbles, the DAG panel
 lights up node-by-node during a plan, and the result panel slides up with the
