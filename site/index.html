@@ -9,7 +9,7 @@
 <meta property="og:description" content="Desktop AI chat first, multi-agent rites when work needs the full town. Local-first, provider-routed, voice-capable, and packaged as simple installers." />
 <meta property="og:type" content="website" />
 <meta name="theme-color" content="#0d1410" />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='52'>%F0%9F%91%B9</text></svg>" />
+<link rel="icon" href="assets/mayor-icon.png" />
 <style>
   :root {
     color-scheme: dark;
@@ -449,11 +449,13 @@
 <section id="install">
   <h2><span class="hash">#</span> download</h2>
   <p>
-    Use the signed desktop installer from the GitHub Release. It opens directly
-    into chat, asks which API or local model should power Goblintown, and keeps
-    setup to a few guided clicks.
+    Use the beta 0.7 desktop package for your platform. It opens directly into
+    chat, asks which API or local model should power Goblintown, and keeps setup
+    to a few guided clicks.
   </p>
-<pre><span class="comment"># beta 0.7 installer candidates are mirrored as repo release parts</span>
+<pre><span class="comment"># beta 0.7 packages live in the release parts branch</span>
+https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts
+
 release/parts/Goblintown-0.7.0-beta.1-mac-arm64.dmg.part-*
 release/parts/Goblintown-0.7.0-beta.1-mac-x64.dmg.part-*
 release/parts/Goblintown-0.7.0-beta.1-win-x64.exe.part-*
@@ -462,9 +464,9 @@ release/parts/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage.part-*
 <span class="comment"># verify after reconstructing</span>
 shasum -a 256 -c release/parts/SHA256SUMS.txt</pre>
   <p>
-    The few-click public release requires signed and notarized macOS builds plus
-    signed Windows builds; repo parts are for review and reconstruction when
-    release uploads are not available.
+    The few-click public release will move to signed and notarized macOS builds
+    plus signed Windows builds once certificates are ready; the current beta
+    parts are the published package path while release uploads are unavailable.
   </p>
 </section>
 

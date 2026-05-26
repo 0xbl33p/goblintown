@@ -110,7 +110,7 @@ describe("docs and CLI help", () => {
 
   it("documents the unsigned beta 0.7 package location", () => {
     assert.match(beta07ReleaseNote, /water-bear86\/goblintown/);
-    assert.match(beta07ReleaseNote, /codex\/desktop-installers\/release\/parts/);
+    assert.match(beta07ReleaseNote, /release\/v0\.7\.0-beta\.1\/release\/parts/);
     assert.match(beta07ReleaseNote, /Gatekeeper friction/);
     assert.match(beta07ReleaseNote, /SmartScreen warnings/);
     assert.match(beta07ReleaseNote, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg\.part-\*/);
@@ -128,6 +128,8 @@ describe("docs and CLI help", () => {
 
   it("updates the marketing site copy for the Tank and cloud mode", () => {
     assert.match(siteIndex, /local model should power Goblintown/);
+    assert.match(siteIndex, /assets\/mayor-icon\.png/);
+    assert.match(siteIndex, /release\/v0\.7\.0-beta\.1\/release\/parts/);
     assert.match(siteIndex, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg\.part-\*/);
     assert.match(siteIndex, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe\.part-\*/);
     assert.match(siteIndex, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);

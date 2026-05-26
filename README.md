@@ -18,9 +18,9 @@ Current beta release line: `goblintown@beta`.
 
 ## Download
 
-For normal users, use the signed desktop installer from the GitHub Release. It
-opens the chat app directly, asks which AI API or local model should power the
-first conversation, then walks through optional features one at a time.
+For the beta 0.7 publish, use the desktop installer package for your platform.
+It opens the chat app directly, asks which AI API or local model should power
+the first conversation, then walks through optional features one at a time.
 
 | Platform | Installer | Notes |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ first conversation, then walks through optional features one at a time.
 
 For the unsigned beta 0.7 publish, installer candidates are committed in split
 form under [`release/parts`](release/parts/README.md) in
-[`water-bear86/goblintown`](https://github.com/water-bear86/goblintown/tree/codex/desktop-installers/release/parts).
+[`water-bear86/goblintown`](https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts).
 Concatenate the matching `*.part-*` files in lexical order, then run
 `shasum -a 256 -c release/parts/SHA256SUMS.txt` to verify the reconstructed
 installer. See [the beta 0.7 release note](docs/releases/0.7.0-beta.1.md) for

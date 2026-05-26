@@ -10,7 +10,7 @@ Beta 0.7 installers:
 Canonical repo location while GitHub Release tag creation is restricted:
 
 ```text
-https://github.com/water-bear86/goblintown/tree/codex/desktop-installers/release/parts
+https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts
 ```
 
 ```sh
