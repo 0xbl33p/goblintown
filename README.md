@@ -18,25 +18,41 @@ Current beta release line: `goblintown@beta`.
 
 ## Download
 
-For the beta 0.7 publish, use the desktop installer package for your platform.
-It opens the chat app directly, asks which AI API or local model should power
-the first conversation, then walks through optional features one at a time.
+Beta 0.7 has real desktop installer packages: macOS DMGs, Windows one-click
+EXEs, and Linux AppImages. The intended download path is the GitHub prerelease:
+
+```text
+https://github.com/water-bear86/goblintown/releases/tag/v0.7.0-beta.1
+```
+
+The desktop app opens directly into chat, asks which AI API or local model
+should power the first conversation, then walks through optional features one at
+a time.
 
 | Platform | Installer | Notes |
 | --- | --- | --- |
 | macOS Apple Silicon | `Goblintown-0.7.0-beta.1-mac-arm64.dmg` | Open the DMG, drag Goblintown to Applications, launch. |
 | macOS Intel | `Goblintown-0.7.0-beta.1-mac-x64.dmg` | Open the DMG, drag Goblintown to Applications, launch. |
 | Windows | `Goblintown-0.7.0-beta.1-win-x64.exe` | One-click NSIS installer with Start Menu and Desktop shortcuts. |
+| Windows ARM64 | `Goblintown-0.7.0-beta.1-win-arm64.exe` | Native ARM64 one-click NSIS installer. |
 | Linux | `Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` | Mark executable, launch. |
+| Linux ARM64 | `Goblintown-0.7.0-beta.1-linux-arm64.AppImage` | Mark executable, launch. |
 
-For the unsigned beta 0.7 publish, installer candidates are committed in split
-form under [`release/parts`](release/parts/README.md) in
-[`water-bear86/goblintown`](https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts).
-Concatenate the matching `*.part-*` files in lexical order, then run
+If the GitHub Release page is unavailable, the same beta 0.7 installer payloads
+are also committed in split form under
+[`release/parts`](release/parts/README.md) on the
+[`release/v0.7.0-beta.1`](https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts)
+branch. Concatenate the matching `*.part-*` files in lexical order, then run
 `shasum -a 256 -c release/parts/SHA256SUMS.txt` to verify the reconstructed
-installer. See [the beta 0.7 release note](docs/releases/0.7.0-beta.1.md) for
-platform-specific install notes. The committed beta 0.7 parts are unsigned
-packages until Apple Developer ID and Windows signing credentials are available.
+installer. This split-parts route exists only because normal git blobs over
+100 MB are blocked.
+
+Release-signing status: the beta 0.7 packages are installer candidates until
+Apple Developer ID notarization and Windows Authenticode signing are configured.
+macOS may require right-click Open or a Privacy & Security approval; Windows may
+show SmartScreen warnings. See
+[the beta 0.7 release note](docs/releases/0.7.0-beta.1.md) for
+platform-specific install notes.
 
 ## Background
 
@@ -910,19 +926,22 @@ ship together and are covered by the test suite:
 ### Desktop installers
 
 The Electron desktop shell packages the same local-first Tank app and starts its
-own embedded Goblintown server. Normal users should install from signed GitHub
-Release assets, not from package-manager commands. The first-run path is kept to
-a few clicks: pick the AI provider or local model, choose local-only or cloud,
-then start chatting.
+own embedded Goblintown server. Normal users should get a full DMG, EXE, or
+AppImage from the GitHub Release, not install from npm and not rebuild from
+source. The first-run path is kept to a few clicks: pick the AI provider or
+local model, choose local-only or cloud, then start chatting.
 
-| Platform | Reconstruct from committed parts | Output |
+The beta 0.7 artifact set is:
+
+| Platform | Full installer | Fallback from committed parts |
 | --- | --- | --- |
-| macOS Apple Silicon | `cat release/parts/Goblintown-0.7.0-beta.1-mac-arm64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-arm64.dmg` | DMG |
-| macOS Intel | `cat release/parts/Goblintown-0.7.0-beta.1-mac-x64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-x64.dmg` | DMG |
-| Windows x64 | `cat release/parts/Goblintown-0.7.0-beta.1-win-x64.exe.part-* > release/Goblintown-0.7.0-beta.1-win-x64.exe` | one-click EXE |
-| Windows ARM64 | `cat release/parts/Goblintown-0.7.0-beta.1-win-arm64.exe.part-* > release/Goblintown-0.7.0-beta.1-win-arm64.exe` | one-click EXE |
-| Linux x64 | `cat release/parts/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage.part-* > release/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` | AppImage |
-| Linux ARM64 | `cat release/parts/Goblintown-0.7.0-beta.1-linux-arm64.AppImage.part-* > release/Goblintown-0.7.0-beta.1-linux-arm64.AppImage` | AppImage |
+| macOS Apple Silicon | `Goblintown-0.7.0-beta.1-mac-arm64.dmg` | `cat release/parts/Goblintown-0.7.0-beta.1-mac-arm64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-arm64.dmg` |
+| macOS Intel | `Goblintown-0.7.0-beta.1-mac-x64.dmg` | `cat release/parts/Goblintown-0.7.0-beta.1-mac-x64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-x64.dmg` |
+| Windows x64 | `Goblintown-0.7.0-beta.1-win-x64.exe` | `cat release/parts/Goblintown-0.7.0-beta.1-win-x64.exe.part-* > release/Goblintown-0.7.0-beta.1-win-x64.exe` |
+| Windows ARM64 | `Goblintown-0.7.0-beta.1-win-arm64.exe` | `cat release/parts/Goblintown-0.7.0-beta.1-win-arm64.exe.part-* > release/Goblintown-0.7.0-beta.1-win-arm64.exe` |
+| Windows package bundle | `Goblintown-0.7.0-beta.1-win.exe` | `cat release/parts/Goblintown-0.7.0-beta.1-win.exe.part-* > release/Goblintown-0.7.0-beta.1-win.exe` |
+| Linux x64 | `Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` | `cat release/parts/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage.part-* > release/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` |
+| Linux ARM64 | `Goblintown-0.7.0-beta.1-linux-arm64.AppImage` | `cat release/parts/Goblintown-0.7.0-beta.1-linux-arm64.AppImage.part-* > release/Goblintown-0.7.0-beta.1-linux-arm64.AppImage` |
 
 Then verify:
 
@@ -942,6 +961,12 @@ and Windows signing credentials are available. This keeps the human-facing
 download path honest: public installers should be a few-click experience, not a
 Gatekeeper or SmartScreen puzzle.
 
+The committed split files are a transport fallback, not a second release
+format. They are there so a fork or PR can carry the exact DMG, EXE, and
+AppImage payloads even when GitHub Release uploads or new Git LFS objects are
+blocked. Reconstructed files must match `SHA256SUMS.txt` before they are
+shared.
+
 Installer artifacts are written to `release/`, which is intentionally
 gitignored:
 
@@ -953,9 +978,9 @@ npm run dist:desktop  # all three targets from one command
 ```
 
 When installer binaries need to travel through a PR or fork that cannot accept
-GitHub Release uploads or new Git LFS objects, the large artifacts can be split
-under `release/parts/`. The files in that folder are small enough for regular
-git pushes and include `SHA256SUMS.txt` plus a local README with reconstruction
+GitHub Release uploads or new Git LFS objects, split the large artifacts under
+`release/parts/`. The files in that folder are small enough for regular git
+pushes and include `SHA256SUMS.txt` plus a local README with reconstruction
 commands for each DMG, AppImage, and NSIS installer. Treat those reconstructed
 files as installer candidates unless they were produced by a signed release
 build.

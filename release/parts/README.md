@@ -1,17 +1,30 @@
-Goblintown desktop installer parts
-==================================
+# Goblintown desktop installer parts
 
-GitHub blocks regular git blobs above 100 MB and this fork cannot upload new
-Git LFS objects, so the installer artifacts in this folder are split into
-90 MB parts.
+This folder carries the beta 0.7 desktop installer payloads when full GitHub
+Release assets or new Git LFS objects are not available. It is a transport
+fallback for the same DMG, EXE, and AppImage files, not a separate package
+format.
 
-Beta 0.7 installers:
+Preferred full-asset download:
 
-Canonical repo location while GitHub Release tag creation is restricted:
+```text
+https://github.com/water-bear86/goblintown/releases/tag/v0.7.0-beta.1
+```
+
+Split-parts fallback:
 
 ```text
 https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts
 ```
+
+GitHub blocks regular git blobs above 100 MB, so the installer artifacts in
+this folder are split into 90 MB parts. Download every matching `*.part-*` file
+for your platform, keep lexical order, concatenate them, then verify the
+checksum.
+
+## Reconstruct
+
+From the repository root:
 
 ```sh
 cat release/parts/Goblintown-0.7.0-beta.1-mac-arm64.dmg.part-* > release/Goblintown-0.7.0-beta.1-mac-arm64.dmg
@@ -31,7 +44,19 @@ shasum -a 256 -c release/parts/SHA256SUMS.txt
 
 The `.blockmap` files are included unsplit for updater metadata.
 
-Release-signing note: these local artifacts were generated with signing disabled
-because this machine currently has no Apple Developer ID or Windows signing
-identity. They are install-package candidates, not the final idiot-proof public
-release until signed/notarized macOS and signed Windows artifacts are produced.
+## Install
+
+- macOS: open the DMG, drag Goblintown to Applications, then launch it. Because
+  this beta is unsigned, macOS may require right-click Open or an explicit
+  Privacy & Security approval.
+- Windows: run the NSIS installer. Because this beta is unsigned, SmartScreen
+  may require More info -> Run anyway.
+- Linux: mark the AppImage executable, then launch it.
+
+On first run, Goblintown opens into chat, asks which AI API or local model
+should power it, then walks through optional setup.
+
+Release-signing note: these artifacts were generated before Apple Developer ID
+and Windows Authenticode credentials were available. They are installer
+candidates until signed/notarized macOS and signed Windows artifacts are
+produced.
