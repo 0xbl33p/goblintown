@@ -31,6 +31,7 @@ Shipped filenames:
 - `gtowntextmark.png`
 - `gtownlogo.svg`
 - `goblintownlogo.svg`
+- `mayor-icon.png`
 
 Expected pigeon layout:
 
@@ -78,7 +79,8 @@ Expected decorative tank assets:
 - `gtowntextmark.png`: transparent PNG wordmark, rendered as a low-opacity
   floating background mark
 - `gtownlogo.svg`: wide README/marketing banner.
-- `goblintownlogo.svg`: distribution icon source.
+- `goblintownlogo.svg`: legacy vector mark.
+- `mayor-icon.png`: distribution icon source used to generate `build/icon.png`, `build/icon.icns`, and `build/icon.ico`.
 
 The UI automatically falls back to emoji only if files are removed or missing in
 a fork/local checkout. If `pigeon-walk-left.png` is missing, the right sheet is

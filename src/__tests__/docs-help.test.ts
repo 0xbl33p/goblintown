@@ -11,6 +11,8 @@ const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
 const siteIndex = readFileSync(join(repoRoot, "site", "index.html"), "utf8");
 const desktopReleaseWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "desktop-release.yml"), "utf8");
 const beta07ReleaseNote = readFileSync(join(repoRoot, "docs", "releases", "0.7.0-beta.1.md"), "utf8");
+const assetReadme = readFileSync(join(repoRoot, "site", "assets", "README.md"), "utf8");
+const packageJson = readFileSync(join(repoRoot, "package.json"), "utf8");
 
 describe("docs and CLI help", () => {
   it("documents the Goblintown Cloud command in CLI help", () => {
@@ -113,6 +115,15 @@ describe("docs and CLI help", () => {
     assert.match(beta07ReleaseNote, /SmartScreen warnings/);
     assert.match(beta07ReleaseNote, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg\.part-\*/);
     assert.match(beta07ReleaseNote, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
+  });
+
+  it("documents the mayor app icon as the distribution icon source", () => {
+    assert.match(assetReadme, /mayor-icon\.png/);
+    assert.match(assetReadme, /distribution icon source used to generate `build\/icon\.png`, `build\/icon\.icns`, and `build\/icon\.ico`/);
+    assert.match(packageJson, /"build\/icon\.png"/);
+    assert.match(packageJson, /"build\/icon\.icns"/);
+    assert.match(packageJson, /"build\/icon\.ico"/);
+    assert.doesNotMatch(packageJson, /"build\/icon\.svg"/);
   });
 
   it("updates the marketing site copy for the Tank and cloud mode", () => {
