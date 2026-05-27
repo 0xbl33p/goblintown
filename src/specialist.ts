@@ -1,5 +1,6 @@
 import { makeSpecialistGoblin, makeTroll } from "./creatures.js";
 import { measureDrift } from "./drift.js";
+import { extractFirstJsonObject } from "./json-extract.js";
 import { callCreature, callCreatureStream } from "./openai-client.js";
 import { makeThinkingRelay } from "./streaming.js";
 import { trollReview } from "./troll-review.js";
@@ -316,30 +317,4 @@ export async function runSpecialistRerite(opts: {
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
-}
-
-function extractFirstJsonObject(s: string): string | null {
-  const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : s;
-  const start = candidate.indexOf("{");
-  if (start < 0) return null;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < candidate.length; i++) {
-    const ch = candidate[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === "\\") esc = true;
-      else if (ch === '"') inStr = false;
-    } else {
-      if (ch === '"') inStr = true;
-      else if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) return candidate.slice(start, i + 1);
-      }
-    }
-  }
-  return null;
 }

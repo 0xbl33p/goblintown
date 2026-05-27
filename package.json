@@ -4,13 +4,13 @@
   "description": "Local-first AI chat and multi-agent orchestration for Goblintown.",
   "license": "MIT",
   "author": "0XBL33P",
-  "homepage": "https://github.com/0XBL33P/goblintown#readme",
+  "homepage": "https://github.com/0xbl33p/goblintown#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0XBL33P/goblintown.git"
+    "url": "git+https://github.com/0xbl33p/goblintown.git"
   },
   "bugs": {
-    "url": "https://github.com/0XBL33P/goblintown/issues"
+    "url": "https://github.com/0xbl33p/goblintown/issues"
   },
   "type": "module",
   "bin": {

@@ -238,7 +238,7 @@
     <a class="tab" href="#usage">usage</a>
     <a class="tab" href="#roster">roster</a>
     <a class="tab" href="#research">research</a>
-    <a class="tab" href="https://github.com/0XBL33P/goblintown">github →</a>
+    <a class="tab" href="https://github.com/0xbl33p/goblintown">github →</a>
   </nav>
 
   <div class="hero">
@@ -252,7 +252,7 @@
       <span>download</span>
       <span class="arrow">→</span>
     </a>
-    <a class="cta" href="https://github.com/0XBL33P/goblintown">
+    <a class="cta" href="https://github.com/0xbl33p/goblintown">
       <span>github</span>
       <span class="arrow">↗</span>
     </a>
@@ -449,81 +449,58 @@
 <section id="install">
   <h2><span class="hash">#</span> download</h2>
   <p>
-    Use the beta 0.7 desktop package for your platform. It opens directly into
-    chat, asks which API or local model should power Goblintown, and keeps setup
-    to a few guided clicks.
+    The desktop app opens directly into chat, asks which API or local model
+    should power Goblintown, and keeps setup to a few guided clicks. One-click
+    installers, no build step.
   </p>
-<pre><span class="comment"># beta 0.7 packages live in the release parts branch</span>
-https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts
-
-release/parts/Goblintown-0.7.0-beta.1-mac-arm64.dmg.part-*
-release/parts/Goblintown-0.7.0-beta.1-mac-x64.dmg.part-*
-release/parts/Goblintown-0.7.0-beta.1-win-x64.exe.part-*
-release/parts/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage.part-*
-
-<span class="comment"># verify after reconstructing</span>
-shasum -a 256 -c release/parts/SHA256SUMS.txt</pre>
-  <p>
-    The few-click public release will move to signed and notarized macOS builds
-    plus signed Windows builds once certificates are ready; the current beta
-    parts are the published package path while release uploads are unavailable.
+  <div class="downloads">
+    <a class="cta primary" href="https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-mac-arm64.dmg"><span>macOS · Apple Silicon</span><span class="arrow">↓</span></a>
+    <a class="cta" href="https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-mac-x64.dmg"><span>macOS · Intel</span><span class="arrow">↓</span></a>
+    <a class="cta" href="https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-win-x64.exe"><span>Windows · x64</span><span class="arrow">↓</span></a>
+    <a class="cta" href="https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-win-arm64.exe"><span>Windows · ARM64</span><span class="arrow">↓</span></a>
+    <a class="cta" href="https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage"><span>Linux · x86_64</span><span class="arrow">↓</span></a>
+    <a class="cta" href="https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-linux-arm64.AppImage"><span>Linux · ARM64</span><span class="arrow">↓</span></a>
+  </div>
+  <p class="comment">
+    macOS: open the DMG, drag Goblintown to Applications. Windows: run the
+    installer. Linux: mark the AppImage executable and run it. Every asset and
+    <code>SHA256SUMS.txt</code> lives on the
+    <a href="https://github.com/0xbl33p/goblintown/releases/tag/v0.7.0-beta.1">v0.7.0-beta.1 release</a>.
+    These beta builds aren't code-signed yet, so macOS may need right-click →
+    Open and Windows may show a SmartScreen "More info → Run anyway" prompt.
   </p>
+  <p>Prefer the command line? Install from npm:</p>
+<pre>npm install -g goblintown
+goblintown serve        <span class="comment"># opens the GUI at http://localhost:7777/</span></pre>
 </section>
 
 <section id="usage">
-  <h2><span class="hash">#</span> usage</h2>
-<pre><span class="comment"># Goblin Mode slash commands</span>
-goblintown /ask "Write the shortest useful answer"
-goblintown /town "Plan and implement the feature"
-goblintown /tank "Debug this with the visual Tank"
-goblintown /context ingest "./old-conversations"
-goblintown /context search "desktop app tank"
-
-<span class="comment"># one-shot — output streams as it arrives</span>
-goblintown summon raccoon --task "Summarize package.json" --personality stoic
-
-<span class="comment"># scavenge a corpus</span>
-goblintown scavenge --task "What does the build system do?" \
-  --scan "package.json" --scan "src/**/*.ts"
-
-<span class="comment"># lightweight pack dispatch</span>
-goblintown quest "Write a SQL join: users to last 5 orders" --pack 3
-
-<span class="comment"># full ceremony with all the trimmings</span>
-goblintown rite "Refactor src/quest.ts to share the troll-review helper" \
-  --pack 3 --scan "src/quest.ts" \
-  --debate --troll-tools --remember \
-  --budget 80000 --max-output 4096 --format markdown
-
-<span class="comment"># memory: cite a prior rite or auto-load relevant artifacts</span>
-goblintown context ingest ./notes --limit 40
-goblintown context search "rollback paths"
-goblintown context scan chats --source codex --limit 20
-goblintown context import chats --source chatgpt --path ./conversations.json --all
-goblintown context vectorize --missing-only
-goblintown rite "Extend the migration plan with rollback paths" \
-  --cite 4f2a-abc12345 --remember
-goblintown ancestry &lt;riteId&gt;             <span class="comment"># parents → this → children</span>
-goblintown fold --threshold 30           <span class="comment"># compress older artifacts</span>
-
-<span class="comment"># planning: decompose a complex task into a DAG of sub-rites</span>
-goblintown plan "Design and implement a small REST API for a todo \
-  list, with auth, persistence, and tests" --max-nodes 6 --max-replan 2 --format json
-
-<span class="comment"># observability</span>
-goblintown drift
-goblintown audit &lt;riteId&gt;                <span class="comment"># now includes artifact lineage</span>
-goblintown graph &lt;riteId|lootId&gt;
-goblintown export-trace &lt;runId&gt; --out trace.json   <span class="comment"># academic LLM-MAS schema</span>
-goblintown serve --port 7777             <span class="comment"># Goblin Mode GUI + first-run API and cloud choices</span>
-goblintown cloud                         <span class="comment"># bundled cloud setup + Firebase override notes</span>
-goblintown addon enable solana           <span class="comment"># read-only onchain verifier tools</span>
-goblintown addon solana &lt;address&gt;        <span class="comment"># direct read-only Solana address profile</span>
-goblintown addon solana tx &lt;signature&gt;   <span class="comment"># parsed read-only transaction lookup</span>
-goblintown thesis "Jito" --solana &lt;address&gt; --remember
-                                          <span class="comment"># quality thesis, not buyability</span>
-goblintown sentiment sources              <span class="comment"># no-key + optional-key sentiment sources</span>
-goblintown sentiment project "Jito"       <span class="comment"># project/team/protocol sentiment context</span></pre>
+  <h2><span class="hash">#</span> using goblintown</h2>
+  <p>
+    The app opens into <strong>Goblin Mode</strong>: one prompt and a
+    <strong>Single Goblin / Goblintown</strong> switch. Single Goblin is one
+    worker and one answer — fast chat. Goblintown turns the prompt into a planner
+    DAG with the full pack, memory, and self-correction, streaming progress as it
+    runs.
+  </p>
+  <p>
+    Flip on the <strong>Tank</strong> for the live diorama: each creature has a
+    home, tokens stream into per-creature thinking bubbles, the DAG panel lights
+    up node-by-node, and the result panel slides up with the winning output.
+  </p>
+  <p>
+    Everything else lives behind <strong>Settings</strong> — API provider and
+    per-creature model routing, voice, imported context, group chats and country
+    collaboration, mail, add-ons, onchain lookup, sentiment sources, cloud
+    sign-in, and reset. An interrupted run resumes from the Tank's recovery
+    prompt after a restart.
+  </p>
+  <p class="comment">
+    The package still ships a CLI for development and automation
+    (<code>goblintown serve</code>, <code>rite</code>, <code>plan</code>,
+    <code>thesis</code>, <code>context</code>, …). It is no longer the primary
+    surface — run <code>goblintown --help</code> for the full list.
+  </p>
 </section>
 
 <section id="features">
@@ -645,8 +622,8 @@ export default function (loot, verdict) {
 <footer>
   <div class="wrap">
     <div class="links">
-      <a href="https://github.com/0XBL33P/goblintown">github ↗</a>
-      <a href="https://github.com/0XBL33P/goblintown/issues">issues ↗</a>
+      <a href="https://github.com/0xbl33p/goblintown">github ↗</a>
+      <a href="https://github.com/0xbl33p/goblintown/issues">issues ↗</a>
       <a href="https://openai.com/index/where-the-goblins-came-from/">the postmortem ↗</a>
     </div>
     <div class="meta">

@@ -8,191 +8,84 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const cliSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
 const cliHelpSource = readFileSync(join(repoRoot, "src", "cli-help.ts"), "utf8");
 const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-const docsIndex = readFileSync(join(repoRoot, "docs", "README.md"), "utf8");
-const beta07Install = readFileSync(join(repoRoot, "docs", "install", "beta-0.7.md"), "utf8");
-const pipelineDoc = readFileSync(join(repoRoot, "docs", "architecture", "pipeline.md"), "utf8");
-const singleGoblinDoc = readFileSync(join(repoRoot, "docs", "modes", "single-goblin.md"), "utf8");
-const goblintownModeDoc = readFileSync(join(repoRoot, "docs", "modes", "goblintown-mode.md"), "utf8");
-const extensionsOverview = readFileSync(join(repoRoot, "docs", "extensions", "overview.md"), "utf8");
-const skillsDoc = readFileSync(join(repoRoot, "docs", "extensions", "skills.md"), "utf8");
-const cloudCountryDoc = readFileSync(join(repoRoot, "docs", "features", "cloud-country.md"), "utf8");
-const researchToolsDoc = readFileSync(join(repoRoot, "docs", "features", "research-tools.md"), "utf8");
-const cliReference = readFileSync(join(repoRoot, "docs", "reference", "cli.md"), "utf8");
-const httpApiReference = readFileSync(join(repoRoot, "docs", "reference", "http-api.md"), "utf8");
-const storageLayout = readFileSync(join(repoRoot, "docs", "reference", "storage-layout.md"), "utf8");
 const siteIndex = readFileSync(join(repoRoot, "site", "index.html"), "utf8");
 const desktopReleaseWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "desktop-release.yml"), "utf8");
 const beta07ReleaseNote = readFileSync(join(repoRoot, "docs", "releases", "0.7.0-beta.1.md"), "utf8");
 const assetReadme = readFileSync(join(repoRoot, "site", "assets", "README.md"), "utf8");
 const packageJson = readFileSync(join(repoRoot, "package.json"), "utf8");
 
-function assertIncludesAll(source: string, patterns: RegExp[]): void {
-  for (const pattern of patterns) {
-    assert.match(source, pattern);
-  }
-}
-
 describe("docs and CLI help", () => {
-  it("documents the Goblintown Cloud command in CLI help", () => {
-    for (const source of [cliSource, cliHelpSource]) {
-      assert.match(source, /goblintown cloud/);
-      assert.match(source, /first-run Local Only vs Goblintown Cloud choice/);
-      assert.match(source, /FIREBASE_API_KEY\s+optional override/);
-      assert.match(source, /Asteroid Mode/);
-      assert.match(source, /goblintown addon enable solana/);
-      assert.match(source, /goblintown addon solana <address>/);
-      assert.match(source, /goblintown addon solana tx <signature>/);
-      assert.match(source, /goblintown thesis "<subject>"/);
-      assert.match(source, /--scan <glob>/);
-      assert.match(source, /project-quality thesis memo/);
-      assert.match(source, /not a buy\/sell recommendation/);
-      assert.match(source, /GOBLINTOWN_TOOLS_SOLANA/);
-      assert.match(source, /goblintown sentiment sources/);
-      assert.match(source, /goblintown sentiment key set <source> --value <secret>/);
-      assert.match(source, /COINGECKO_API_KEY/);
-      assert.match(source, /NEYNAR_API_KEY/);
-      assert.match(source, /goblintown context ingest <path>/);
-      assert.match(source, /goblintown context search "<query>"/);
-      assert.match(source, /goblintown context scan chats/);
-      assert.match(source, /goblintown context import chats/);
-      assert.match(source, /goblintown context vectorize/);
-      assert.match(source, /file-backed Artifacts/);
-    }
-    assert.match(cliSource, /case "cloud":\s+return cmdCloud/);
+  it("documents every command in cli-help and wires it into the CLI", () => {
+    // Help text lives once, in cli-help.ts (buildCliHelp), and cli.ts consumes it.
+    assert.match(cliSource, /import \{ buildCliHelp \} from "\.\/cli-help\.js"/);
+    assert.match(cliSource, /const HELP = buildCliHelp\(CREATURE_KINDS\)/);
+
+    assert.match(cliHelpSource, /goblintown cloud/);
+    assert.match(cliHelpSource, /first-run Local Only vs Goblintown Cloud choice/);
+    assert.match(cliHelpSource, /FIREBASE_API_KEY\s+optional override/);
+    assert.match(cliHelpSource, /Asteroid Mode/);
+    assert.match(cliHelpSource, /goblintown addon enable solana/);
+    assert.match(cliHelpSource, /goblintown addon solana <address>/);
+    assert.match(cliHelpSource, /goblintown addon solana tx <signature>/);
+    assert.match(cliHelpSource, /goblintown thesis "<subject>"/);
+    assert.match(cliHelpSource, /--scan <glob>/);
+    assert.match(cliHelpSource, /project-quality thesis memo/);
+    assert.match(cliHelpSource, /not a buy\/sell recommendation/);
+    assert.match(cliHelpSource, /GOBLINTOWN_TOOLS_SOLANA/);
+    assert.match(cliHelpSource, /goblintown sentiment sources/);
+    assert.match(cliHelpSource, /COINGECKO_API_KEY/);
+    assert.match(cliHelpSource, /NEYNAR_API_KEY/);
+    assert.match(cliHelpSource, /goblintown context ingest <path>/);
+    assert.match(cliHelpSource, /goblintown context search "<query>"/);
+    assert.match(cliHelpSource, /goblintown context scan chats/);
+    assert.match(cliHelpSource, /goblintown context import chats/);
+    assert.match(cliHelpSource, /goblintown context vectorize/);
+    assert.match(cliHelpSource, /file-backed Artifacts/);
+
+    // cli.ts still dispatches and implements the cloud command.
+    assert.match(cliSource, /case "cloud":/);
     assert.match(cliSource, /async function cmdCloud/);
     assert.match(cliSource, /goblintown-88fd6/);
     assert.match(cliSource, /Use Goblintown Cloud/);
   });
 
-  it("keeps README as the front page and moves detailed product docs into docs/", () => {
-    assertIncludesAll(readme, [
-      /<img src="site\/assets\/gtownlogo\.svg"/,
-      /docs\/assets\/screenshots\/goblintown-chat\.jpg/,
-      /docs\/assets\/screenshots\/goblintown-settings\.jpg/,
-      /docs\/assets\/screenshots\/goblintown-rites\.jpg/,
-      /## Download/,
-      /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/,
-      /Goblintown-0\.7\.0-beta\.1-win-x64\.exe/,
-      /release\/parts/,
-      /docs\/install\/beta-0\.7\.md/,
-      /docs\/architecture\/pipeline\.md/,
-      /docs\/extensions\/skills\.md/,
-      /docs\/reference\/http-api\.md/,
-      /docs\/reference\/cli\.md/,
-      /Single Goblin mode/,
-      /Goblintown mode/,
-      /not a buy\/sell recommendation/,
-    ]);
+  it("README leads with the desktop app, real download links, and no HTTP endpoints", () => {
+    assert.match(readme, /<img src="site\/assets\/gtownlogo\.svg"/);
+    assert.match(readme, /## Download/);
+    // Per-platform installer links point at the canonical GitHub Release assets.
+    assert.match(readme, /releases\/download\/v0\.7\.0-beta\.1\/Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/);
+    assert.match(readme, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe/);
+    assert.match(readme, /Goblintown-0\.7\.0-beta\.1-linux-arm64\.AppImage/);
+    assert.match(readme, /npm install -g goblintown/);
+    assert.match(readme, /goblintown serve/);
+    // GUI-first framing.
+    assert.match(readme, /## Using Goblintown/);
+    assert.match(readme, /Single Goblin/);
+    assert.match(readme, /\*\*Goblintown\*\* turns the prompt into a planner/);
+    assert.match(readme, /run `goblintown --help`/);
+    // Providers, cloud, build, tests, research, citing.
+    assert.match(readme, /OPENROUTER_API_KEY/);
+    assert.match(readme, /ANTHROPIC_API_KEY/);
+    assert.match(readme, /## Goblintown Cloud/);
+    assert.match(readme, /Stay Local/);
+    assert.match(readme, /Use Goblintown Cloud/);
+    assert.match(readme, /FIREBASE_/);
+    assert.match(readme, /## Building from source/);
+    assert.match(readme, /npm run dist:mac/);
+    assert.match(readme, /\.github\/workflows\/desktop-release\.yml/);
+    assert.match(readme, /npm test/);
+    assert.match(readme, /## Research foundations/);
+    assert.match(readme, /## Citing/);
+    assert.match(readme, /0xbl33p\/goblintown/);
 
-    assertIncludesAll(docsIndex, [
-      /Goblintown Docs/,
-      /install\/beta-0\.7\.md/,
-      /architecture\/pipeline\.md/,
-      /modes\/single-goblin\.md/,
-      /modes\/goblintown-mode\.md/,
-      /extensions\/overview\.md/,
-      /reference\/http-api\.md/,
-      /assets\/screenshots/,
-    ]);
-
-    assertIncludesAll(beta07Install, [
-      /release\/parts/,
-      /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/,
-      /npm run release:ready/,
-      /Gatekeeper/,
-      /SmartScreen/,
-      /\.github\/workflows\/desktop-release\.yml/,
-      /MAC_CSC_LINK/,
-      /WIN_CSC_LINK/,
-    ]);
-
-    assertIncludesAll(pipelineDoc, [
-      /Raccoon/,
-      /Goblin pack/,
-      /Gremlin/,
-      /Troll/,
-      /Specialists/,
-      /Ogre/,
-      /Pigeon-Scribe/,
-      /src\/rite\.ts/,
-      /src\/plan-executor\.ts/,
-    ]);
-
-    assertIncludesAll(singleGoblinDoc, [
-      /\/api\/goblin\/single/,
-      /goblintown \/ask/,
-      /one worker/,
-      /configured Goblin model slot/,
-    ]);
-
-    assertIncludesAll(goblintownModeDoc, [
-      /goblintown rite/,
-      /goblintown plan/,
-      /Planner/,
-      /\.goblintown\/runs/,
-    ]);
-
-    assertIncludesAll(cloudCountryDoc, [
-      /Stay Local/,
-      /Use Goblintown Cloud/,
-      /Settings -> Account/,
-      /Settings -> Reset -> Asteroid Mode/,
-      /FIREBASE_API_KEY/,
-      /goblintown-88fd6/,
-      /country peer add/,
-    ]);
-
-    assertIncludesAll(researchToolsDoc, [
-      /goblintown thesis/,
-      /--scan "README\.md"/,
-      /Unknown \/ Unverified/,
-      /not a buy\/sell recommendation/,
-      /quality and advantages/,
-      /Tank `SENTIMENT`/,
-      /Settings -> Sentiment Sources/,
-      /COINGECKO_API_KEY/,
-      /NEYNAR_API_KEY/,
-      /\.goblintown\/secrets\.json/,
-      /solana\.profile/,
-      /solana\.transaction/,
-      /solana\.balance/,
-      /GOBLINTOWN_TOOLS_SOLANA/,
-    ]);
-
-    assertIncludesAll(extensionsOverview, [
-      /Add-ons/,
-      /Solana/,
-      /Reward Plugins/,
-      /Provider Routes/,
-      /src\/addons\.ts/,
-      /src\/tools\.ts/,
-    ]);
-
-    assertIncludesAll(skillsDoc, [
-      /\.agents\/skills\/add-provider-package\/SKILL\.md/,
-      /npx skills add/,
-      /docs explain Goblintown to users/,
-    ]);
-
-    assertIncludesAll(storageLayout, [
-      /\.goblintown\//,
-      /hoard\/loot/,
-      /hoard\/artifacts/,
-      /runs\/<runId>\.json/,
-    ]);
-
-    assertIncludesAll(cliReference, [
-      /goblintown context ingest \.\/notes/,
-      /goblintown context scan chats/,
-      /goblintown context import chats --source chatgpt/,
-      /goblintown sentiment sources/,
-    ]);
-
-    assertIncludesAll(httpApiReference, [
-      /\/api\/goblin\/single/,
-      /\/api\/context\/ingest/,
-      /\/api\/onchain\/solana\/lookup/,
-    ]);
+    // Deliberately removed: HTTP API table, app endpoints, CLI command dump,
+    // the old owner handle, and the split-parts download ritual.
+    assert.doesNotMatch(readme, /## HTTP API/);
+    assert.doesNotMatch(readme, /\/api\/onchain/);
+    assert.doesNotMatch(readme, /water-bear86/);
+    assert.doesNotMatch(readme, /release\/parts/);
+    assert.doesNotMatch(readme, /goblintown summon/);
+    assert.doesNotMatch(readme, /goblintown scavenge/);
   });
 
   it("ships a signed desktop release workflow for GitHub Release assets", () => {
@@ -206,13 +99,14 @@ describe("docs and CLI help", () => {
     assert.match(desktopReleaseWorkflow, /gh release upload/);
   });
 
-  it("documents the unsigned beta 0.7 package location", () => {
-    assert.match(beta07ReleaseNote, /water-bear86\/goblintown/);
-    assert.match(beta07ReleaseNote, /release\/v0\.7\.0-beta\.1\/release\/parts/);
+  it("documents the beta 0.7 release on the canonical repo", () => {
+    assert.match(beta07ReleaseNote, /0xbl33p\/goblintown/);
+    assert.match(beta07ReleaseNote, /releases\/tag\/v0\.7\.0-beta\.1/);
     assert.match(beta07ReleaseNote, /Gatekeeper friction/);
     assert.match(beta07ReleaseNote, /SmartScreen warnings/);
-    assert.match(beta07ReleaseNote, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg\.part-\*/);
-    assert.match(beta07ReleaseNote, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
+    assert.match(beta07ReleaseNote, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/);
+    assert.match(beta07ReleaseNote, /shasum -a 256 -c/);
+    assert.doesNotMatch(beta07ReleaseNote, /water-bear86/);
   });
 
   it("documents the mayor app icon as the distribution icon source", () => {
@@ -224,37 +118,27 @@ describe("docs and CLI help", () => {
     assert.doesNotMatch(packageJson, /"build\/icon\.svg"/);
   });
 
-  it("updates the marketing site copy for the Tank and cloud mode", () => {
-    assert.match(siteIndex, /local model should power Goblintown/);
+  it("normalizes the repository owner to 0xbl33p", () => {
+    assert.match(packageJson, /github\.com\/0xbl33p\/goblintown/);
+    assert.doesNotMatch(packageJson, /github\.com\/0XBL33P\/goblintown/);
+  });
+
+  it("marketing site offers real installer downloads and the GUI story", () => {
     assert.match(siteIndex, /assets\/mayor-icon\.png/);
-    assert.match(siteIndex, /release\/v0\.7\.0-beta\.1\/release\/parts/);
-    assert.match(siteIndex, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg\.part-\*/);
-    assert.match(siteIndex, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe\.part-\*/);
-    assert.match(siteIndex, /shasum -a 256 -c release\/parts\/SHA256SUMS\.txt/);
-    assert.doesNotMatch(siteIndex, /npmjs\.com/);
-    assert.doesNotMatch(siteIndex, /npm install -g goblintown@beta/);
-    assert.match(siteIndex, /Settings menu/);
-    assert.match(siteIndex, /Asteroid Mode/);
-    assert.match(siteIndex, /318 tests/);
-    assert.match(siteIndex, /goblintown context ingest \.\/notes/);
-    assert.match(siteIndex, /goblintown context scan chats/);
-    assert.match(siteIndex, /goblintown context import chats --source chatgpt/);
-    assert.match(siteIndex, /pre-vectorized/);
-    assert.match(siteIndex, /\/context search "desktop app tank"/);
-    assert.match(siteIndex, /local context ingestion/);
+    assert.match(siteIndex, /releases\/download\/v0\.7\.0-beta\.1\/Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/);
+    assert.match(siteIndex, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe/);
+    assert.match(siteIndex, /npm install -g goblintown/);
+    assert.match(siteIndex, /Single Goblin \/ Goblintown/);
+    assert.match(siteIndex, /goblintown --help/);
     assert.match(siteIndex, /Solana add-on/);
     assert.match(siteIndex, /Thesis engine/);
     assert.match(siteIndex, /Sentiment sources/);
-    assert.match(siteIndex, /Tank Sentiment tool/);
-    assert.match(siteIndex, /Settings Sentiment Sources/);
-    assert.match(siteIndex, /quality and advantages/);
-    assert.match(siteIndex, /not buyability/);
-    assert.match(siteIndex, /scan repo files/);
-    assert.match(siteIndex, /Unknown \/ Unverified/);
-    assert.match(siteIndex, /goblintown sentiment sources/);
-    assert.match(siteIndex, /COINGECKO_API_KEY/);
-    assert.match(siteIndex, /NEYNAR_API_KEY/);
-    assert.match(siteIndex, /goblintown addon solana &lt;address&gt;/);
-    assert.match(siteIndex, /goblintown addon solana tx &lt;signature&gt;/);
+
+    // The split-parts download ritual and the old CLI command dump are gone.
+    assert.doesNotMatch(siteIndex, /water-bear86/);
+    assert.doesNotMatch(siteIndex, /release\/parts/);
+    assert.doesNotMatch(siteIndex, /\.part-\*/);
+    assert.doesNotMatch(siteIndex, /goblintown scavenge/);
+    assert.doesNotMatch(siteIndex, /goblintown summon/);
   });
 });

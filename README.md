@@ -4,406 +4,444 @@
 
 # Goblintown
 
-Goblintown is a local-first AI workbench for asking one model a question, or
-for handing the same question to a small, opinionated town of specialized
-agents that remember, argue, attack, review, recover, and write down what
-survived.
+Goblintown is a local-first desktop AI app. It opens straight into chat, asks
+which AI API or local model should power it, and keeps the rest of setup behind
+a few guided choices. Start with a single fast answer, then summon the full
+**town** when the work needs planning, memory, tools, debate, critique, and
+saved artifacts.
 
-It is not a chatbot skin. It is a file-backed orchestration protocol with a
-desktop shell, a browser UI, a CLI, resumable runs, typed memory, provider
-routing, local add-ons, and a strange amount of ceremony for something that
-still starts with a text box.
+Under the hood it is a planning multi-agent orchestrator: **Single Goblin** mode
+is one worker and one answer; **Goblintown** mode turns the prompt into a small
+fleet of specialized creatures that decompose the task into a DAG, scavenge
+context, race and debate, attack each other's outputs, spawn focused specialists
+when the pack fails, and hand back a signed, content-addressed artifact that
+future runs can build on.
 
-The short version:
-
-- **Single Goblin** is one worker, one answer, one fast model call.
-- **Goblintown mode** is the full Rite: context scavenging, a pack of Goblins,
-  adversarial Gremlin critique, Troll review, Specialist recovery, Ogre
-  fallback, and Pigeon-Scribe memory.
-- **The Hoard** is the local append-only record of Loot, Rites, Artifacts,
-  runs, inboxes, and outboxes.
-- **Skills and extensions** are written down as operational rituals: tool
-  packs, provider routes, reward plugins, and repo skills that tell future
-  agents how to add real capabilities without smearing glue everywhere.
-
-Current beta release line: `0.7.0-beta.1`.
-
-## Screenshots
-
-The app opens into the single-Goblin chat shell. The left rail keeps chats and
-Rites nearby; the bottom composer can stay as one model call or hand the work to
-the town.
-
-![Single Goblin chat shell](docs/assets/screenshots/goblintown-chat.jpg)
-
-Settings are intentionally close, because the first hard question is usually
-not "what is your prompt?" but "which API or local model is allowed to answer?"
-
-![Settings and local town state](docs/assets/screenshots/goblintown-settings.jpg)
-
-The Rite entry path lets the user pick the shape of work before the town starts:
-regular Rite, thesis, onchain/crypto lookup, sentiment, or planner-driven work.
-
-![Rite chooser](docs/assets/screenshots/goblintown-rites.jpg)
+Current beta release line: `goblintown@beta`.
 
 ## Download
 
-Beta 0.7 has real desktop installer packages: macOS DMGs, Windows one-click
-EXEs, and Linux AppImages. The intended GitHub Release URL is:
-
-```text
-https://github.com/water-bear86/goblintown/releases/tag/v0.7.0-beta.1
-```
-
-That tag is currently blocked by repository rules, so the canonical public
-package path is the split-parts fallback on the release branch:
-
-```text
-https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts
-```
-
-Download the matching `*.part-*` files, concatenate them in lexical order, and
-verify the reconstructed installer:
-
-```bash
-shasum -a 256 -c release/parts/SHA256SUMS.txt
-```
+**Desktop app — recommended.** One-click installers, no build step. The app
+launches into chat and walks you through provider setup and optional features.
 
 | Platform | Installer |
 | --- | --- |
-| macOS Apple Silicon | `Goblintown-0.7.0-beta.1-mac-arm64.dmg` |
-| macOS Intel | `Goblintown-0.7.0-beta.1-mac-x64.dmg` |
-| Windows x64 | `Goblintown-0.7.0-beta.1-win-x64.exe` |
-| Windows ARM64 | `Goblintown-0.7.0-beta.1-win-arm64.exe` |
-| Windows bundle | `Goblintown-0.7.0-beta.1-win.exe` |
-| Linux x86_64 | `Goblintown-0.7.0-beta.1-linux-x86_64.AppImage` |
-| Linux ARM64 | `Goblintown-0.7.0-beta.1-linux-arm64.AppImage` |
+| macOS (Apple Silicon) | [Goblintown-0.7.0-beta.1-mac-arm64.dmg](https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-mac-arm64.dmg) |
+| macOS (Intel) | [Goblintown-0.7.0-beta.1-mac-x64.dmg](https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-mac-x64.dmg) |
+| Windows (x64) | [Goblintown-0.7.0-beta.1-win-x64.exe](https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-win-x64.exe) |
+| Windows (ARM64) | [Goblintown-0.7.0-beta.1-win-arm64.exe](https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-win-arm64.exe) |
+| Linux (x86_64) | [Goblintown-0.7.0-beta.1-linux-x86_64.AppImage](https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-linux-x86_64.AppImage) |
+| Linux (ARM64) | [Goblintown-0.7.0-beta.1-linux-arm64.AppImage](https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-linux-arm64.AppImage) |
 
-Release-signing status: these beta packages are installer candidates until
-Apple Developer ID notarization and Windows Authenticode signing are configured.
-macOS may require right-click **Open** or a Privacy & Security approval.
-Windows may show SmartScreen warnings. The guardrail command is:
+macOS: open the DMG, drag Goblintown to Applications, launch. Windows: run the
+installer (Start Menu + Desktop shortcuts are created). Linux: mark the AppImage
+executable and run it. All downloads are on the
+[v0.7.0-beta.1 release](https://github.com/0xbl33p/goblintown/releases/tag/v0.7.0-beta.1);
+verify with the published `SHA256SUMS.txt`.
 
-```bash
-npm run release:ready
-```
+> These beta packages are not yet code-signed. macOS may require right-click →
+> Open or a Privacy & Security approval; Windows may show a SmartScreen "More
+> info → Run anyway" prompt. Signed and notarized builds will replace them.
 
-That command refuses to bless a public build unless signing and notarization
-credentials are present. Good. Public installers should not be a Gatekeeper or
-SmartScreen puzzle pretending to be a release.
-
-More install detail lives in [docs/install/beta-0.7.md](docs/install/beta-0.7.md).
-The historical beta note is [docs/releases/0.7.0-beta.1.md](docs/releases/0.7.0-beta.1.md).
-
-## Single Goblin Mode
-
-Single Goblin mode is the honest baseline: one user message goes to one Goblin,
-and one answer comes back. It is what you want when the task is a normal chat
-turn, a quick explanation, a small rewrite, or a question where orchestration
-would mostly add theater.
-
-In the browser app, Single Goblin uses `/api/goblin/single`. In the CLI, the
-same idea is exposed as:
+**npm.** If you'd rather run from the command line or embed Goblintown in your
+own tooling:
 
 ```bash
-goblintown /ask "Explain this error without summoning a committee."
+npm install -g goblintown
+goblintown serve        # opens the GUI at http://localhost:7777/
 ```
 
-The single worker still gets Goblintown context:
+## Background
 
-- recent chat transcript, capped and normalized;
-- optional `web.fetch` context for public URLs in the latest message;
-- selected personality such as `chipper`, `stoic`, `feral`, or `goblin_mode`;
-- provider routing through the configured Goblin slot;
-- a stored Loot record, so even the small answers can enter the Hoard.
+In April 2026, OpenAI published [*Where the goblins came from*](https://openai.com/index/where-the-goblins-came-from/),
+explaining how a reward signal trained for a "Nerdy" personality leaked across
+all of GPT-5.5's outputs and produced a noticeable surge in creature metaphors.
+Codex shipped with a hardcoded ban list — *goblins, gremlins, raccoons, trolls,
+ogres, pigeons*.
 
-It does **not** run the full pack. It does **not** pretend a single reply is a
-consensus. If the user asks for Goblintown explicitly, or if the task looks big
-enough to benefit from multi-agent work, the chat surface can offer to start the
-town. That boundary is important. A small answer should stay small. A real Rite
-should leave tracks.
+This project takes that ban list as a roster.
 
-Full notes: [docs/modes/single-goblin.md](docs/modes/single-goblin.md).
+## Roster
 
-## Goblintown Mode
-
-Goblintown mode is for work that benefits from decomposition, disagreement,
-memory, review, and recovery. It can run a single Rite or ask the Planner to
-turn a larger task into a DAG of sub-Rites.
-
-```bash
-goblintown rite "Find the migration risks in this branch" \
-  --pack 3 \
-  --scan "src/**/*.ts" \
-  --remember \
-  --debate \
-  --troll-tools \
-  --format markdown
-
-goblintown plan "Design and implement a small REST API with auth and tests" \
-  --max-nodes 6 \
-  --max-replan 2
-```
-
-The browser UI keeps this visible: chats and Rites sit together, runs persist
-under `.goblintown/runs/`, and the Tank can replay or attach to existing work.
-If the server restarts mid-run, in-flight runs are marked interrupted rather
-than silently forgotten.
-
-Full notes: [docs/modes/goblintown-mode.md](docs/modes/goblintown-mode.md).
-
-## The Rite Pipeline
-
-The Rite is the protocol. It is deliberately over-named because the names keep
-the responsibilities separate in human memory.
-
-```text
-optional Planner
-    |
-    v
-Raccoon context scan + prior Artifacts
-    |
-    v
-Goblin pack, varied personalities, parallel drafts
-    |
-    v
-optional debate round
-    |
-    v
-Gremlin chaos pass, one attack per candidate
-    |
-    v
-Troll review, optional verifier tools
-    |
-    +--> any pass: pick winner
-    |
-    +--> all fail: cluster failures
-              |
-              v
-          Specialist Goblins repair the best seed
-              |
-              v
-          Troll re-review
-              |
-              +--> pass or improve: pick winner
-              |
-              +--> still bad: Ogre fallback
-                         |
-                         v
-                      winner
-                         |
-                         v
-                 Pigeon-Scribe Artifact
-```
-
-The creatures are not decorative. They are boundaries:
-
-| Creature | Responsibility |
+| Creature | Job |
 | --- | --- |
-| Goblin | Draft useful answers. In packs, each worker gets a variant prompt and personality. |
-| Raccoon | Scavenge only the context the task needs, including cited or remembered Artifacts. |
-| Gremlin | Attack candidates and expose failure modes before the reviewer sees them. |
-| Troll | Review, score, reject by default, and optionally call verifier tools. |
-| Specialist Goblin | Repair one dominant failure cluster without throwing away all earlier work. |
-| Ogre | Heavy fallback when the pack and Specialists fail. |
-| Pigeon | Carry messages between Warrens and distill completed Rites into typed Artifacts. |
+| **Goblin** | Worker. Cheap, high-temperature, dispatched in packs. Each pack member gets a different personality; an optional debate round lets them revise after seeing each other's proposals. |
+| **Gremlin** | Adversarial. Tries to break each candidate output (per-goblin chaos pass). |
+| **Raccoon** | Scavenger. Returns only the facts a task actually needs. Also loads relevant prior **Artifacts** when memory is enabled. |
+| **Troll** | Reviewer. Default-rejects. Returns a JSON verdict. May invoke verifier tools (`json.parse`, `regex.match`, `http.head`, and enabled add-on tools) before scoring. |
+| **Ogre** | Heavyweight. Deep reasoning, called only when the pack and the **Specialists** both fail. |
+| **Pigeon** | Carrier and **Scribe**. Compresses and routes artifacts between Warrens (federation), and distills each completed Rite into a typed Artifact (memory). |
+| **Specialist Goblin** | A focused recovery worker spawned when the pack fails Troll review. Each one targets a single dominant failure mode identified by clustering the gremlin's critiques. |
 
-Every meaningful call writes Loot to the Hoard. Rites write causal links. The
-Pigeon-Scribe writes Artifacts with claims, evidence, open questions, next
-steps, keywords, and parent links. Future Rites can cite those Artifacts by id
-or ask the memory layer to retrieve relevant ones.
+A unit test pins the roster to the OpenAI ban list, so it can't drift quietly.
+The Specialist is a Goblin variant — same kind, focused system prompt — so the
+ban-list invariant still holds.
 
-The dry machinery is in [docs/architecture/pipeline.md](docs/architecture/pipeline.md).
-The research background is in
-[docs/architecture/research-foundations.md](docs/architecture/research-foundations.md).
+## Bestiary
 
-## Memory And The Hoard
+<table>
+<tr>
+<td valign="top" align="center">
 
-Goblintown stores local state under `.goblintown/`. The important idea is that a
-run is not just text on a screen; it is a graph of inputs, model calls,
-verdicts, outputs, and summaries.
-
-```text
-.goblintown/
-  warren.json
-  reward.mjs
-  provider-secrets.json
-  secrets.json
-  hoard/
-    loot/<id>.json
-    quests/<id>.json
-    rites/<id>.json
-    artifacts/<id>.json
-    inbox/<id>.json
-    outbox/<id>.json
-  runs/<runId>.json
+```
+   ▄█▄        ▄█▄
+   ███        ███
+    ▀████████████▀
+     █  ▀▄  ▄▀  █
+     █   ●  ●   █
+     █    ▾▾    █
+     █▄▄▄▄▄▄▄▄▄▄█
+      █▌ █  █ ▐█
+      ▀▀ ▀  ▀ ▀▀
 ```
 
-Context commands let old projects and old chats become Artifacts:
+**Goblin**
+</td>
+<td valign="top" align="center">
 
-```bash
-goblintown context ingest ./notes --limit 40
-goblintown context search "rollback paths"
-goblintown context scan chats --source codex --limit 20
-goblintown context import chats --source chatgpt --path ./conversations.json --all
-goblintown context vectorize --missing-only
+```
+   ▀▄ ▄▀ ▀▄ ▄▀
+     ▀█▄▄█▄▄█▀
+      █████████
+      █ ◉   ◉ █
+      █   ╳   █
+      █ ╲╱╲╱╲ █
+       ▀█████▀
+         █ █
+        ▀▀ ▀▀
 ```
 
-Imported chat memory is pre-vectorized when an embedding provider is configured,
-with keyword fallback when embeddings are unavailable. AI summaries are opt-in
-through `--summarize`; default import is local parsing, redaction, chunking, and
-optional embedding.
+**Gremlin**
+</td>
+<td valign="top" align="center">
 
-Storage reference: [docs/reference/storage-layout.md](docs/reference/storage-layout.md).
+```
+    ▄█▄          ▄█▄
+    ███          ███
+     ▀████████████▀
+     █▌ ●▔     ▔● ▐█
+     █      ▾      █
+     █▄▄▄▄▄▄▄▄▄▄▄▄█
+     █▌█        █▐█
+     ▀▀▀        ▀▀▀
+```
 
-## Extensions, Add-ons, And Skills
+**Raccoon**
+</td>
+</tr>
+<tr>
+<td valign="top" align="center">
 
-Goblintown has several extension surfaces. They are intentionally not one
-mega-plugin abstraction yet.
+```
+       ▄ ▄    ▄ ▄
+       █ █    █ █
+     ▄████████████▄
+     █  ●        ●  █
+     █     ▾▾▾▾    █
+     █  ──────────  █
+     ████████████████
+    █▌                ▐█
+    █▌                ▐█
+    ████          ████
+```
 
-| Surface | What it extends | Where it lives |
+**Troll**
+</td>
+<td valign="top" align="center">
+
+```
+        ▄▄▄▄▄▄▄▄▄▄
+       ████████████
+      ██  ▀▀    ▀▀  ██
+      █     ●    ●    █
+      █        ▽       █
+      █▄  ▼▼▼▼▼▼▼▼  ▄█
+       ████████████
+      ██████████████
+      ██          ██
+      ██          ██
+```
+
+**Ogre**
+</td>
+<td valign="top" align="center">
+
+```
+       ▄██▄
+      ██  ●█
+      █▌    █▶▶▶
+      ██████████
+      █▀▀▀▀▀▀▀▀█
+       ████████
+          █ █
+          █ █
+         ▀▀ ▀▀
+```
+
+**Pigeon**
+</td>
+</tr>
+</table>
+
+## Pipeline (the Rite)
+
+```
+  optional ─────────────────────────────────────────────────────
+  ┌──────────┐                                                 │
+  │ Planner  │ DAG of sub-rites, recursive replan on failure   │
+  └────┬─────┘                                                 │
+       ▼                                                       │
+  ┌──────────┐  facts +   ┌────────────┐  N parallel ┌──────────┐
+  │ Raccoon  │  prior    ▶│  Goblin    │═════════════▶│ Goblins  │
+  │ + memory │  artifacts │  pack      │  (per-goblin │  output  │
+  └──────────┘            │ (varied   │  personality) └────┬─────┘
+                          │  pers'ty) │                    │
+                          └────────────┘                   │
+                                  optional debate round    │
+                                  (peers see peers'        │
+                                   outputs, revise) ◀──────┘
+                                          │
+                                          ▼
+                                  ┌─────────────┐
+                                  │   Gremlin   │  per-goblin
+                                  │ chaos pass  │  adversarial attack
+                                  └──────┬──────┘
+                                         ▼
+                                  ┌─────────────┐  optional
+                                  │    Troll    │  verifier tool-use
+                                  │   review    │  (json/regex/http)
+                                  └──────┬──────┘
+                                         │
+                              any pass ──┴── all fail
+                                  │              │
+                                  │              ▼
+                                  │      ┌───────────────┐
+                                  │      │ Cluster fails │  identify dominant
+                                  │      │ (1 LLM call)  │  failure modes
+                                  │      └───────┬───────┘
+                                  │              ▼
+                                  │      ┌───────────────┐
+                                  │      │ Specialists   │  1-3 focused
+                                  │      │ + re-judge    │  recovery workers
+                                  │      └───────┬───────┘
+                                  │              │
+                                  │      passed/  │
+                                  │      improved over seed
+                                  │              ▼
+                                  │      ┌────────────┐
+                                  │      │   Ogre     │  last resort
+                                  │      │  fallback  │  (heavyweight)
+                                  │      └─────┬──────┘
+                                  │            │
+                                  ▼            ▼
+                                 winner ◀──────┘
+                                    │
+                                    ▼
+                              ┌─────────────┐
+                              │  Pigeon —   │  distills the rite into
+                              │   Scribe    │  a typed Artifact (memory)
+                              └─────────────┘
+```
+
+Every step writes a Loot drop to the Hoard with parent links to its inputs.
+A Rite is fully reconstructible from the Hoard alone. The Pigeon-Scribe also
+emits a typed **Artifact** (claims, evidence, open questions, next steps) that
+future rites can cite.
+
+## Concepts
+
+- **Loot** — one agent invocation, content-addressed by `sha256(model || prompt || output)`.
+- **Quest** — lightweight: Goblin pack + Troll arbitration.
+- **Rite** — full pipeline: Raccoon → pack → (debate?) → Gremlin → Troll → Specialists → Ogre fallback → Scribe.
+- **Hoard** — file-backed store under `.goblintown/hoard/`.
+- **Warren** — per-project root, found by walking up from cwd.
+- **Shinies** — reward signal: troll score − cross-creature drift penalty + pass bonus, clamped 0..1.
+- **Drift** — cross-creature word frequency. A Goblin output mentioning *raccoons* unprompted is the signal we measure.
+- **Artifact** — a typed JSON summary of a completed Rite: claims, evidence, open questions, next steps, parent-artifact links. Stored under `.goblintown/hoard/artifacts/`. Future rites can cite a prior artifact or auto-load relevant ones.
+- **Plan** — a DAG of sub-rites the Planner emits for complex tasks. Topologically executed; on a node failure the Planner can be re-invoked with the failure context (recursive replan, max depth 2).
+- **Trace** — the full run history, exportable to the [LLM-MAS Orchestration Trace schema](https://github.com/xxzcc/awesome-llm-mas-rl) for compatibility with academic tooling.
+
+## Using Goblintown
+
+The desktop app (and `goblintown serve`) opens **Goblin Mode** at `/`: one
+prompt, a **Single Goblin / Goblintown** mode switch, and a Tank checkbox.
+
+- **Single Goblin** runs one worker for one answer — fast chat.
+- **Goblintown** turns the prompt into a planner DAG with the full pack, memory,
+  and self-correction, streaming progress as it goes.
+- The **Tank** is a tamagotchi-style live diorama at `/tank`: each creature has
+  a home, tokens stream into per-creature thinking bubbles, the DAG panel lights
+  up node-by-node during a plan, and the result panel slides up with the winning
+  output. Sprites are the default presentation, with emoji fallback when an asset
+  is missing.
+
+Everything else lives behind **Settings**: API provider and per-creature model
+routing, voice, imported context, group chats / country collaboration, mail,
+add-ons, onchain lookup, sentiment sources, cloud sign-in, and reset.
+
+Run state is persisted to `.goblintown/runs/<runId>.json`, so an interrupted run
+can be resumed from the Tank's recovery prompt after a restart.
+
+### First run
+
+On first launch, Goblin Mode asks two things: which **AI provider** should power
+chat, and whether this Warren should **Stay Local** or **Use Goblintown Cloud**.
+Both can be changed later from **Settings**.
+
+Set a provider API key for any creature call. You can set it in your shell, or
+save it from **Settings → API Provider** in the app. Local Ollama uses a
+harmless dummy key if none is set; LM Studio needs `LM_API_TOKEN` only when its
+server authentication is enabled.
+
+### Command line
+
+The same package still ships a CLI for development and automation — `goblintown
+serve`, `init`, `rite`, `plan`, `quest`, `thesis`, `context`, `route`, and more.
+It is no longer the primary surface; run `goblintown --help` for the full list.
+
+## What ships in beta 0.7
+
+| Area | What it does |
+| --- | --- |
+| **Chat-first desktop app** | Full Tank shell with sidebar navigation, single-Goblin chat, read-only web fetch for linked pages, browser text-to-speech, guided Rite entry, model controls, and first-run provider preference. |
+| **Tank runtime** | Live creature diorama, default sprite sheets, centered wordmark, result panel, resumable runs, and reset. |
+| **Memory** | Pigeon-Scribe distills every Rite into a typed Artifact (claims, evidence, open questions, next steps, parent links). Local context ingestion imports old conversations/projects; Chat Hoard Import Mode imports Codex and ChatGPT chats as pre-vectorized root/chunk memory. |
+| **Planning** | Planner emits a typed DAG; the executor runs each node as a sub-rite, feeds artifacts forward, and replans after node failures. |
+| **Specialist recovery** | Failed packs are clustered by dominant failure mode, then 1-3 focused Specialist Goblins repair the best seed before Ogre escalation. |
+| **Debate** | Goblins can see peer proposals and revise once before Gremlin/Troll review. |
+| **Verifier tools** | Troll can invoke `json.parse`, `regex.match`, gated `http.head`, and enabled add-on tools before scoring. |
+| **Add-ons** | Optional local tool packs. The bundled Solana add-on contributes read-only onchain investigator tools — address profiles, activity, parsed transactions, token data, balances, and RPC health. No keys, signing, or transaction submission. |
+| **Thesis engine** | Quality-and-advantage memos for any project, team, product, protocol, or decision. Solana flags add read-only onchain diligence. Not a buy/sell recommendation. |
+| **Sentiment** | Free/no-key Alternative.me and GDELT baselines plus optional CoinGecko, Dune, Neynar, Santiment, CryptoPanic, and LunarCrush connectors, with keys stored locally. |
+| **Provider routing** | OpenAI, OpenRouter, Ollama, LM Studio, Groq, Together, Mistral, DeepSeek, Anthropic, Gemini, and custom OpenAI-compatible endpoints, with per-creature routes. |
+| **Goblintown Cloud** | Optional Firebase-backed SSO, friend codes, discovery, mail, and country metadata. |
+| **Federation & Country** | Filesystem/HTTP artifact delivery, friend requests, direct messages, country discovery, join approvals, and team role assignment. |
+| **Trace & audit** | Run export to LLM-MAS trace schema, artifact lineage graphing, audit, compare, reroll, context search, and context folding. |
+
+## Providers, local inference, and output formats
+
+Goblintown talks to OpenAI by default, but the underlying client is just the
+`openai` SDK pointed at a base URL — anything that exposes an OpenAI-compatible
+API works. Choose a provider from **Settings → API Provider**; non-secret
+settings are saved to `.goblintown/warren.json`, and API keys are never written
+there.
+
+| Preset | Base URL | Key env var |
 | --- | --- | --- |
-| Add-ons | Optional verifier tools for the Troll and direct local utilities. | `src/addons.ts`, `src/tools.ts`, `.goblintown/warren.json` |
-| Reward plugins | The score function used to pick winners. | `.goblintown/reward.mjs` |
-| Provider routes | Which backend/model powers each creature slot. | `.goblintown/warren.json`, `.goblintown/provider-secrets.json` |
-| Repo skills | How future agents should add capabilities without improvising. | `.agents/skills/<name>/SKILL.md` |
+| OpenAI | default SDK URL | `OPENAI_API_KEY` |
+| OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
+| Ollama | `http://localhost:11434/v1` | `OLLAMA_API_KEY` (optional; dummy key if unset) |
+| LM Studio | `http://localhost:1234/v1` | `LM_API_TOKEN` |
+| Groq | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` |
+| Together AI | `https://api.together.ai/v1` | `TOGETHER_API_KEY` |
+| Mistral | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` |
+| DeepSeek | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` |
+| Anthropic | `https://api.anthropic.com/v1/` | `ANTHROPIC_API_KEY` |
+| Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | `GEMINI_API_KEY` |
+| Custom | user supplied | user supplied |
 
-The bundled add-on is Solana and it is read-only. It contributes tools such as
-`solana.profile`, `solana.activity`, `solana.transaction`, `solana.token`,
-`solana.balance`, `solana.account`, `solana.tokens`, `solana.signatures`, and
-`solana.rpcHealth`. It does not hold keys, sign transactions, swap, or submit
-transactions.
+Defaults: Goblin / Gremlin / Raccoon / Troll / Pigeon run on `gpt-5.4-mini`, Ogre
+on `gpt-5.5`. Per-creature provider routes let you mix backends — e.g. cheap
+local goblins with a hosted ogre. Output format can be `freeform`, `markdown`,
+or `json`. `gpt-5*`, `o*`, `deepseek-r*`, and `-thinking` models are detected
+and switched to reasoning-model parameters automatically.
 
-The current skills convention is `.agents/skills/`, not an arbitrary top-level
-dumping ground. A skill is a small operating manual for future agent work:
-frontmatter, when to use it, exact files to touch, commands to run, examples,
-and verification. The existing example is:
+## Goblintown Cloud
 
-```text
-.agents/skills/add-provider-package/SKILL.md
-```
+Goblintown is download-and-run friendly and local by default. **Stay Local**
+keeps memory, runs, provider secrets, and reset state on the machine. **Use
+Goblintown Cloud** signs in through the bundled Firebase project and turns on
+shared features — SSO, friend codes, discovery, mail, and country metadata —
+while local rite/run files still remain in `.goblintown/`. Normal users do not
+need Firebase keys; forks can override them via `FIREBASE_*` env vars.
 
-Install or refresh it with:
-
-```bash
-npx skills add https://github.com/vercel/ai --skill add-provider-package
-```
-
-Use that skill when a provider needs a real SDK adapter/package. For plain
-OpenAI-compatible endpoints, use the provider settings or route commands
-instead of writing a package.
-
-Extension docs:
-
-- [docs/extensions/overview.md](docs/extensions/overview.md)
-- [docs/extensions/skills.md](docs/extensions/skills.md)
-- [docs/reference/providers.md](docs/reference/providers.md)
-
-## Providers
-
-Goblintown talks to OpenAI by default, but the client can point at any
-OpenAI-compatible API. The app includes presets for OpenAI, OpenRouter, Ollama,
-LM Studio, Groq, Together AI, Mistral, DeepSeek, Anthropic, Gemini, and custom
-base URLs.
+## Building from source
 
 ```bash
-goblintown route
-goblintown route set goblin --preset ollama --model gemma3:27b
-goblintown route set troll --preset openrouter --model openai/gpt-4o-mini
-goblintown route set ogre --preset openai --model gpt-5.5
-goblintown route clear goblin
-```
-
-Keys are looked up from environment variables first, then local secrets. The
-app does not write API keys into `warren.json`.
-
-Provider reference: [docs/reference/providers.md](docs/reference/providers.md).
-
-## Other Systems In The Town
-
-Goblintown also ships:
-
-- **Goblintown Cloud**: optional Firebase-backed SSO, friend codes, discovery,
-  mail, and country metadata. Local-only remains the default posture.
-- **Goblin-Country**: collaboration across Warrens, with join requests, direct
-  messages, team roles, and peer dispatch.
-- **Thesis engine**: quality-and-advantage memos for projects, protocols,
-  repositories, teams, or decisions. It is not a buy/sell recommendation.
-- **Sentiment sources**: free/no-key baselines plus optional local API keys for
-  CoinGecko, Dune, Neynar, Santiment, CryptoPanic, and LunarCrush.
-- **Trace export**: LLM-MAS orchestration traces for external analysis.
-
-Product-manual details:
-
-- [docs/features/cloud-country.md](docs/features/cloud-country.md)
-- [docs/features/research-tools.md](docs/features/research-tools.md)
-- [docs/reference/http-api.md](docs/reference/http-api.md)
-- [docs/reference/cli.md](docs/reference/cli.md)
-
-## Development
-
-```bash
+git clone https://github.com/0xbl33p/goblintown.git
+cd goblintown
 npm install
 npm run build
 npm run serve -- --port 7777
+```
+
+Build desktop installers (output goes to the gitignored `release/`):
+
+```bash
+npm run dist:mac      # macOS arm64 DMG
+npm run dist:win      # Windows x64 one-click NSIS installer
+npm run dist:linux    # Linux x64 AppImage
+npm run dist:desktop  # all three targets
+```
+
+Public release builds are produced by `.github/workflows/desktop-release.yml`,
+which runs the test suite, builds all platforms, signs macOS (Developer ID +
+notarization) and Windows (Authenticode) when the signing secrets are present,
+and uploads the installers to the GitHub Release.
+
+## Tests
+
+```bash
 npm test
 ```
 
-Desktop packaging commands:
+The suite runs as pure functions with no OpenAI calls, covering drift, reward,
+Hoard content-addressing, federation signatures, audit, planner DAG validation,
+debate prompt construction, verifier tool dispatch, add-ons, Solana read-only
+lookups, thesis and sentiment construction, embeddings ranking, context folding,
+provider routing, output formatting, cloud mode, sprite assets, trace export,
+and the GUI/Settings wiring.
 
-```bash
-npm run dist:mac
-npm run dist:win
-npm run dist:linux
-npm run dist:desktop
-```
+## Research foundations
 
-Full development notes: [docs/development.md](docs/development.md).
+Goblintown is an engineering project, not a research paper, but the
+orchestration design is opinionated by what's working in current LLM multi-agent
+systems. We deliberately stay in the **prompted, training-free** slice of the
+literature so everything runs with just an OpenAI-compatible API key.
 
-## Layout
+[1] **OpenAI**, *Where the goblins came from* (April 2026). The roster is taken
+straight from the hardcoded ban list described in this postmortem.
+<https://openai.com/index/where-the-goblins-came-from/>
 
-```text
-src/
-  cli.ts                 command router
-  server.ts              browser UI and HTTP API
-  chat.ts                Single Goblin chat path
-  rite.ts                full Rite pipeline
-  planner.ts             DAG planning
-  plan-executor.ts       DAG execution and replan loop
-  addons.ts              local add-on registry
-  tools.ts               verifier tool runtime
-  reward-plugin.ts       .goblintown/reward.mjs loader
-site/assets/             sprites, icons, wordmarks
-docs/                    product manual and reference
-.agents/skills/          repo skills for future agent work
-```
+[2] **Nielsen, S., et al.** *Learning to Orchestrate Agents in Natural Language
+with the Conductor.* arXiv:2512.04388 (2025). *Dynamic topology selection* and
+*recursive-self-as-worker* are borrowed as prompted heuristics in the Planner.
 
-## Docs
+[3] **Zhou, & Chan.** *ADEMA: Knowledge-State Orchestration for Long-Horizon
+Synthesis.* arXiv:2604.25849 (2026). The typed Artifact memory adapts ADEMA's
+"epistemic bookkeeping."
 
-Start with [docs/README.md](docs/README.md).
+[4] **Saeidi, et al.** *FAMA: Failure-Aware Meta-Agentic Framework.*
+arXiv:2604.25135 (2026). The Specialist re-rite layer follows FAMA's pattern of
+spawning a minimal specialist that targets the dominant error.
 
-Good entry points:
+[5] **Parmar.** *MCP Workflow Engine: Separating Intelligence from Execution.*
+arXiv:2605.00827 (2026). The plan-then-execute split comes from this paper.
 
-- [Install beta 0.7](docs/install/beta-0.7.md)
-- [Pipeline architecture](docs/architecture/pipeline.md)
-- [Single Goblin mode](docs/modes/single-goblin.md)
-- [Goblintown mode](docs/modes/goblintown-mode.md)
-- [Extensions overview](docs/extensions/overview.md)
-- [Skills in this repo](docs/extensions/skills.md)
-- [CLI reference](docs/reference/cli.md)
-- [HTTP API reference](docs/reference/http-api.md)
+[6] **Zou, J., et al.** *Latent Collaboration in Multi-Agent Systems.*
+arXiv:2511.20639 (2025). The optional debate round is inspired by this
+training-free latent-communication result.
 
-## Citation
+[7] **Peng, Z., et al.** *CriticLean: Critic-Guided Reinforcement Learning for
+Mathematical Formalization.* arXiv:2507.06181 (2025). The verifier-as-reward
+pattern in the Troll's tool-use round comes from here.
+
+[8] **xxzcc.** *Awesome LLM-MAS RL.* <https://github.com/xxzcc/awesome-llm-mas-rl>
+(May 2026). The survey's five orchestration sub-decisions (spawn / delegate /
+communicate / aggregate / stop) motivated the debate round, and its JSON trace
+schema is adopted as Goblintown's `export-trace` output format.
+
+## Citing
 
 ```bibtex
 @software{goblintown,
   author  = {0XBL33P},
-  title   = {Goblintown: a local-first multi-agent orchestration workbench},
+  title   = {Goblintown: a planning multi-agent orchestration protocol on top of OpenAI},
   year    = {2026},
-  url     = {https://github.com/0XBL33P/goblintown}
+  url     = {https://github.com/0xbl33p/goblintown}
 }
 ```
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT — see [LICENSE](./LICENSE).

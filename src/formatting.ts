@@ -1,4 +1,5 @@
 import type { OutputFormat } from "./types.js";
+import { extractFirstJsonObject } from "./json-extract.js";
 
 export function normalizeOutputFormat(value: unknown): OutputFormat {
   return value === "markdown" || value === "json" || value === "freeform"
@@ -76,30 +77,4 @@ function formatInstruction(format: OutputFormat): string | null {
     "Return a single valid JSON object and nothing else.",
     "Do not include Markdown fences, comments, prose before the object, or prose after the object.",
   ].join("\n");
-}
-
-function extractFirstJsonObject(s: string): string | null {
-  const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : s;
-  const start = candidate.indexOf("{");
-  if (start < 0) return null;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < candidate.length; i++) {
-    const ch = candidate[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === "\\") esc = true;
-      else if (ch === "\"") inStr = false;
-    } else {
-      if (ch === "\"") inStr = true;
-      else if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) return candidate.slice(start, i + 1);
-      }
-    }
-  }
-  return null;
 }
