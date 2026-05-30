@@ -154,6 +154,17 @@ Usage:
       Show the bundled Goblintown Cloud project, first-run Local Only vs Goblintown Cloud choice,
       Settings -> Account controls, and optional Firebase env overrides.
 
+  goblintown mcp [--doctor|--install-codex|--config-snippet] [--package <npm-spec>]
+      Start the local stdio MCP sidecar for Codex. The sidecar exposes Single
+      Goblin, full Rite, Planner DAG, provider snapshot, and doctor tools from
+      the current Warren. --install-codex writes ~/.codex/config.toml. No hosted
+      MCP is required.
+
+  goblintown skill install [--skills-dir <path>] [--force]
+      Install the bundled goblintown-sidecar Codex skill into ~/.codex/skills
+      so Codex knows when and how to install packages, register MCP, ask for
+      consent, and use the Goblintown MCP tools.
+
   goblintown addon [ls]
   goblintown addon enable solana
   goblintown addon disable solana
@@ -172,9 +183,10 @@ Usage:
       summaries, and store optional API keys locally in .goblintown/secrets.json.
       Sources: coingecko, dune, neynar, santiment, cryptopanic, lunarcrush.
 
-  goblintown serve [--port <N>]
-      Start the Goblin Mode GUI. Default port=7777. The legacy Tank UI is at /tank.
-      First run asks Local Only vs Goblintown Cloud; later change it in Settings -> Account.
+  goblintown serve [--port <N>] [--chat]
+      Start the Goblin Mode GUI. Default port=7777.
+      By default runs in autopilot mode: the Tank diorama with config menus, no chat surface.
+      The agent drives rites and plans via MCP tools. Use --chat to restore the legacy chat UI.
       Settings also contains Country, Mail, Add-ons, API Provider, and Reset -> Asteroid Mode.
       Bundled sprite sheets and the Goblintown wordmark are loaded from site/assets.
 

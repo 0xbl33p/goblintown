@@ -18,7 +18,9 @@ describe("AI-first Tank shell", () => {
     assert.match(serverSource, /app\.get\("\/", async \(_req, res\) => renderHome/);
     assert.match(serverSource, /app\.get\("\/tank"/);
     assert.match(serverSource, /function tankHtml/);
-    assert.match(serverSource, /<div class="tank chat-mode codex-chat-surface" id="tank">/);
+    assert.match(serverSource, /id="tank">/);
+    assert.match(serverSource, /chat-mode codex-chat-surface sidecar-mode/);
+    assert.match(serverSource, /id="sidecar-surface"[\s\S]*Codex sidecar/);
     assert.doesNotMatch(serverSource, /app\.get\("\/", async \(_req, res\) => renderGoblinMode/);
   });
 
@@ -63,6 +65,8 @@ describe("AI-first Tank shell", () => {
     assert.match(packageJson, /"electron"/);
     assert.match(packageJson, /"electron-builder"/);
     assert.match(packageJson, /"@electron\/packager"/);
+    assert.match(packageJson, /"@modelcontextprotocol\/sdk"/);
+    assert.match(packageJson, /"skills"/);
     assert.match(packageJson, /"AppImage"/);
     assert.match(packageJson, /"nsis"/);
   });

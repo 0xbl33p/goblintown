@@ -180,10 +180,9 @@ describe("single goblin chat", () => {
     );
   });
 
-  it("exposes the chat page and api from the Tank server", () => {
+  it("keeps the legacy chat page and API available for compatibility", () => {
     assert.match(serverSource, /app\.get\("\/chat"/);
     assert.match(serverSource, /app\.post\("\/api\/chat"/);
-    assert.match(serverSource, /id="btn-chat"/);
     assert.match(serverSource, /id="chat-form"/);
     assert.match(serverSource, /id="chat-send" type="submit" title="Send \(Enter or Cmd\/Ctrl\+Enter\)"/);
     assert.match(serverSource, /id="chat-offer-run"/);
@@ -200,19 +199,21 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /submitChatForm\(\)/);
   });
 
-  it("makes the Tank root chat-first and swaps to Tank mode for runs", () => {
+  it("makes the Tank root sidecar-first and swaps to Tank mode for runs", () => {
+    assert.match(serverSource, /id="sidecar-surface"[\s\S]*Codex sidecar/);
     assert.match(serverSource, /id="root-chat-form"/);
-    assert.match(serverSource, /class="tank chat-mode codex-chat-surface"/);
+    assert.match(serverSource, /chat-mode codex-chat-surface sidecar-mode"/);
+    assert.match(serverSource, /class="chat-composer sidecar-hidden" id="root-chat-form" aria-hidden="true"/);
     assert.match(serverSource, /function showTankMode\(\)/);
-    assert.match(serverSource, /function showChatMode\(\)/);
-    assert.match(serverSource, /startGoblintownFromChat/);
+    assert.match(serverSource, /function showSidecarMode\(\)/);
+    assert.doesNotMatch(serverSource, /id="btn-chat"/);
   });
 
-  it("exposes separate chats and rites in the left sidebar", () => {
+  it("exposes rites and settings in the left sidebar without chat chrome", () => {
     assert.match(serverSource, /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">/);
     assert.match(
       serverSource,
-      /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">[\s\S]*\+ New chat[\s\S]*\+ New rite[\s\S]*CHATS[\s\S]*Bounty issue #72 chat[\s\S]*Solana wallet question[\s\S]*README cleanup chat[\s\S]*RITES[\s\S]*sidebarRiteButtons\(runs\)[\s\S]*<\/aside>/,
+      /<aside class="ops-sidebar goblin-sidebar" id="ops-sidebar">[\s\S]*\+ New rite[\s\S]*RITES[\s\S]*sidebarRiteButtons\(runs\)[\s\S]*<\/aside>/,
     );
     assert.match(serverSource, /function sidebarRiteButtons\(runs: Map<string, RunState>\)[\s\S]*Bounty issue #72[\s\S]*Provider setup audit[\s\S]*Tank UI simplification/);
     assert.match(serverSource, /<button class="sr-only" id="btn-regular-rite"/);
@@ -225,6 +226,9 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /\.sidebar-settings \{[\s\S]*margin-top: auto;[\s\S]*flex: 0 0 auto;/);
     assert.match(serverSource, /\.settings-icon \{[\s\S]*width: 1\.9rem;[\s\S]*aspect-ratio: 210 \/ 246;[\s\S]*height: auto;/);
     assert.match(serverSource, /\.settings-trigger \{[\s\S]*align-items: center;/);
+    assert.doesNotMatch(serverSource, /\+ New chat/);
+    assert.doesNotMatch(serverSource, /data-sidebar-section="chats"/);
+    assert.doesNotMatch(serverSource, /Bounty issue #72 chat/);
     assert.doesNotMatch(serverSource, /id="btn-api-configs"/);
     assert.doesNotMatch(serverSource, /id="ops-line"/);
     assert.doesNotMatch(serverSource, /id="ops-run"/);
@@ -238,11 +242,10 @@ describe("single goblin chat", () => {
     assert.doesNotMatch(serverSource, /<span class="stat"><b id="stat-loot"/);
     assert.match(serverSource, /<span class="status-stats" id="status-stats">[\s\S]*id="stat-loot"[\s\S]*id="stat-rites"[\s\S]*id="stat-drift"/);
     assert.match(serverSource, /const tierName = \["unincorporated","hamlet","village","town","city"/);
-    assert.match(serverSource, /id="surface-mode">chat<\/span>/);
+    assert.match(serverSource, /id="surface-mode">sidecar<\/span>/);
     assert.match(serverSource, /function setSurfaceMode\(mode\)/);
-    assert.match(serverSource, /setSurfaceMode\("chat"\)/);
+    assert.match(serverSource, /setSurfaceMode\("sidecar"\)/);
     assert.match(serverSource, /setSurfaceMode\("rite"\)/);
-    assert.match(serverSource, /class="sidebar-section-toggle"[\s\S]*data-sidebar-toggle="chats"[\s\S]*CHATS/);
     assert.match(serverSource, /class="sidebar-section-toggle"[\s\S]*data-sidebar-toggle="rites"[\s\S]*RITES/);
     assert.match(serverSource, /function setSidebarSectionCollapsed\(section, collapsed\)/);
     assert.match(serverSource, /\.sidebar-list\.collapsed \.sidebar-items \{[\s\S]*display: none;/);
@@ -272,7 +275,7 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /\.chat-main\.settings-active \.chat-composer \{[\s\S]*display: none;/);
     assert.match(serverSource, /function setSidebarSettingsMode\(open\)/);
     assert.match(serverSource, /settingsSidebarPanel\.hidden = !open/);
-    assert.match(serverSource, /settingsSidebarBack\.onclick = \(\) => \{[\s\S]*setSidebarSettingsMode\(false\);[\s\S]*showChatThreadSurface\(\);/);
+    assert.match(serverSource, /settingsSidebarBack\.onclick = \(\) => \{[\s\S]*setSidebarSettingsMode\(false\);[\s\S]*showSidecarSurface\(\);/);
     assert.match(serverSource, /function showSettingsSurface\(\)/);
     assert.match(serverSource, /sidebarFullSettings\.onclick = \(\) => \{[\s\S]*showSettingsSurface\(\);/);
     assert.match(serverSource, /function showSettingsSection\(section\)/);
@@ -311,7 +314,7 @@ describe("single goblin chat", () => {
   it("keeps first-run onboarding from swallowing app control clicks", () => {
     assert.match(serverSource, /const onboardingStorageKey = "goblintown\.onboarding\.v3"/);
     assert.match(serverSource, /id="onboard-provider-actions"[\s\S]*data-onboard-provider="openai"[\s\S]*data-onboard-provider="deepseek"[\s\S]*data-onboard-provider="lmstudio"[\s\S]*data-onboard-provider="ollama"[\s\S]*data-onboard-provider="anthropic"[\s\S]*data-onboard-provider="custom"/);
-    assert.match(serverSource, /title: "Power the Chat"/);
+    assert.match(serverSource, /title: "Power the Sidecar"/);
     assert.match(serverSource, /async function chooseOnboardingProvider\(preset\)/);
     assert.match(serverSource, /showSettingsSurface\(\);[\s\S]*showSettingsSection\("api"\)/);
     assert.match(serverSource, /fetch\("\/api\/provider"/);
@@ -319,8 +322,9 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /\.onboard-card \{[\s\S]*pointer-events: auto;/);
   });
 
-  it("keeps new chat and new rite as pinned unboxed sidebar actions", () => {
-    assert.match(serverSource, /<div class="ops-actions" aria-label="New work">[\s\S]*id="btn-chat"[\s\S]*id="btn-rite"[\s\S]*<\/div>/);
+  it("keeps new rite as a pinned unboxed sidebar action", () => {
+    assert.match(serverSource, /<div class="ops-actions" aria-label="New work">[\s\S]*id="btn-rite"[\s\S]*<\/div>/);
+    assert.doesNotMatch(serverSource, /id="btn-chat"/);
     assert.match(serverSource, /\.ops-actions \.btn \{[\s\S]*min-height: 1\.45rem;[\s\S]*border: 0;[\s\S]*background: transparent;[\s\S]*text-align: left;/);
     assert.match(serverSource, /\.ops-actions \.btn\.primary \{[\s\S]*background: transparent;[\s\S]*border: 0;/);
     assert.doesNotMatch(serverSource, /\.ops-quick \.btn \{[\s\S]*border-radius: 8px;/);
@@ -349,8 +353,8 @@ describe("single goblin chat", () => {
     assert.doesNotMatch(serverSource, /DM threads/);
   });
 
-  it("loads chats and rites from the sidebar into the main surface", () => {
-    assert.match(serverSource, /data-surface-kind="chat" data-chat-id="bounty-72-chat"/);
+  it("loads rites from the sidebar into the main surface", () => {
+    assert.doesNotMatch(serverSource, /data-surface-kind="chat" data-chat-id/);
     assert.match(serverSource, /data-surface-kind="rite" data-run-id="sample-bounty-72"/);
     assert.match(serverSource, /id="root-rite-surface"/);
     assert.match(serverSource, /id="root-rite-discussion"/);
@@ -364,14 +368,14 @@ describe("single goblin chat", () => {
     assert.doesNotMatch(serverSource, /record\.events\.slice/);
   });
 
-  it("exposes the simplified chat composer controls and keyboard affordances", () => {
+  it("keeps single-goblin compatibility controls hidden behind the sidecar", () => {
     assert.match(serverSource, /CHAT_PERSONA_UI\.intro/);
     assert.match(serverSource, /const CHAT_PERSONA = /);
     assert.match(serverSource, /function chatPersonaPick\(kind\)/);
     assert.match(serverSource, /function setRootChatStatus\(kind, detail\)/);
     assert.match(
       serverSource,
-      /<div class="chat-thread" id="chat-thread"[\s\S]*<section class="settings-surface" id="settings-surface" hidden[\s\S]*<form class="chat-composer" id="root-chat-form">/,
+      /<section class="sidecar-surface" id="sidecar-surface"[\s\S]*<div class="chat-thread surface-hidden" id="chat-thread"[\s\S]*<section class="settings-surface" id="settings-surface" hidden[\s\S]*<form class="chat-composer sidecar-hidden" id="root-chat-form" aria-hidden="true">/,
     );
     assert.match(serverSource, /id="root-chat-send"[^>]*type="submit"[^>]*title="Send \(Enter\)"[\s\S]*↑/);
     assert.match(serverSource, /id="root-chat-voice" type="button" class="voice-trigger" title="Voice mode"/);
@@ -395,7 +399,7 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /<select id="root-chat-personality"/);
     assert.match(serverSource, /const tooltipEl = document\.createElement\("div"\)/);
     assert.match(serverSource, /function resetRootChat\(\)/);
-    assert.match(serverSource, /\$\("btn-chat"\)\.onclick = \(\) => \{[\s\S]*resetRootChat\(\);/);
+    assert.doesNotMatch(serverSource, /\$\("btn-chat"\)\.onclick/);
     assert.match(serverSource, /\$\("root-chat-input"\)\.addEventListener\("keydown", \(event\) =>/);
     assert.match(serverSource, /event\.shiftKey && event\.key === "Enter"/);
     assert.match(serverSource, /if \(event\.key === "Enter"\) \{/);
@@ -425,27 +429,19 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /\["root-chat-speak", "Read single-goblin replies aloud with browser text-to-speech\."\]/);
   });
 
-  it("starts New Rite as a chat-guided rite type question", () => {
-    assert.match(serverSource, /function startNewRiteChatFlow\(\)/);
-    assert.match(serverSource, /What type of rite should we run\?/);
-    assert.match(serverSource, /className = "rite-choice-row"/);
-    assert.match(serverSource, /\["regular", "Regular"\]/);
-    assert.match(serverSource, /\["thesis", "Thesis"\]/);
-    assert.match(serverSource, /\["onchain", "Crypto\/onchain"\]/);
-    assert.match(serverSource, /\["sentiment", "Sentiment"\]/);
-    assert.match(serverSource, /\["plan", "Plan"\]/);
-    assert.match(serverSource, /button\.setAttribute\("data-rite-choice", choice\)/);
-    assert.match(serverSource, /function handleRiteChoice\(choice\)/);
-    assert.match(serverSource, /function clearRiteChoiceRows\(\)/);
-    assert.match(serverSource, /document\.querySelectorAll\("\.rite-choice-row"\)\.forEach\(\(row\) => row\.remove\(\)\)/);
-    assert.match(serverSource, /case "thesis":[\s\S]*openThesisForm\(\)/);
-    assert.match(serverSource, /case "plan":[\s\S]*openRiteForm\(true\)/);
-    assert.match(serverSource, /\$\("btn-rite"\)\.onclick = startNewRiteChatFlow/);
-    assert.match(serverSource, /\$\("btn-regular-rite"\)\.onclick = startNewRiteChatFlow/);
+  it("starts new rites from sidecar controls without a chat prompt", () => {
+    assert.match(serverSource, /id="sidecar-new-rite"/);
+    assert.match(serverSource, /id="sidecar-new-plan"/);
+    assert.match(serverSource, /\$\("btn-rite"\)\.onclick = \(\) => openRiteForm\(false\)/);
+    assert.match(serverSource, /\$\("btn-regular-rite"\)\.onclick = \(\) => openRiteForm\(false\)/);
+    assert.match(serverSource, /\$\("sidecar-new-rite"\)\.onclick = \(\) => openRiteForm\(false\)/);
+    assert.match(serverSource, /\$\("sidecar-new-plan"\)\.onclick = \(\) => openRiteForm\(true\)/);
+    assert.doesNotMatch(serverSource, /What type of rite should we run\?/);
+    assert.doesNotMatch(serverSource, /className = "rite-choice-row"/);
   });
 
   it("keeps sidebar titles compact with hover tips and brighter settings icons", () => {
-    assert.match(serverSource, /title="Bounty issue #72 chat"/);
+    assert.doesNotMatch(serverSource, /title="Bounty issue #72 chat"/);
     assert.match(serverSource, /title="\$\{esc\(record\.task \|\| record\.runId\)\}"/);
     assert.match(serverSource, /\.sidebar-item \{[\s\S]*white-space: nowrap;[\s\S]*overflow: hidden;[\s\S]*text-overflow: ellipsis;/);
     assert.match(serverSource, /\.sidebar-item strong,[\s\S]*\.sidebar-item span \{[\s\S]*overflow: hidden;[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);

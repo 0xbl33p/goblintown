@@ -139,6 +139,11 @@ async function main(): Promise<void> {
       return cmdCountry(argv.slice(1));
     case "cloud":
       return cmdCloud(argv.slice(1));
+    case "mcp":
+      return cmdMcp(argv.slice(1));
+    case "skill":
+    case "skills":
+      return cmdSkill(argv.slice(1));
     case "addon":
     case "addons":
       return cmdAddon(argv.slice(1));
@@ -1662,7 +1667,8 @@ async function cmdCountryRun(args: string[]): Promise<void> {
 async function cmdServe(args: string[]): Promise<void> {
   const flags = parseFlags(args);
   const port = flags.port ? Number(flags.port) : 7777;
-  await serve({ cwd: process.cwd(), port });
+  const chatMode = flags.chat === "true";
+  await serve({ cwd: process.cwd(), port, autopilot: !chatMode });
 }
 
 async function cmdCloud(args: string[]): Promise<void> {
@@ -2117,6 +2123,97 @@ async function cmdPlan(args: string[]): Promise<void> {
   if (result.finalArtifact) {
     process.stdout.write(`Final artifact: ${result.finalArtifact.id}\n`);
   }
+}
+
+async function cmdMcp(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  if (flags["install-codex"] === "true") {
+    const {
+      installGoblintownCodexMcpConfig,
+      mcpDoctorPayload,
+    } = await import("./mcp.js");
+    const packageSpec = flags.package || flags["package-spec"];
+    const configPath = flags["codex-config"] || flags.config;
+    const install = await installGoblintownCodexMcpConfig({
+      packageSpec,
+      configPath,
+    });
+    const doctor = await mcpDoctorPayload(process.cwd(), { packageSpec });
+    const payload: Record<string, unknown> = {
+      ...doctor,
+      install,
+    };
+    if (install.ok !== true) {
+      payload.ok = false;
+      process.exitCode = 1;
+    }
+    process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+    return;
+  }
+  if (flags["config-snippet"] === "true") {
+    const { buildGoblintownMcpConfig } = await import("./mcp.js");
+    const packageSpec = flags.package || flags["package-spec"];
+    process.stdout.write(JSON.stringify(buildGoblintownMcpConfig({ packageSpec }), null, 2) + "\n");
+    return;
+  }
+  if (flags.doctor === "true") {
+    const { mcpDoctorPayload } = await import("./mcp.js");
+    const packageSpec = flags.package || flags["package-spec"];
+    process.stdout.write(JSON.stringify(await mcpDoctorPayload(process.cwd(), { packageSpec }), null, 2) + "\n");
+    return;
+  }
+  if (flags.help === "true" || flags.h === "true") {
+    process.stdout.write(
+      [
+        "usage: goblintown mcp [--doctor|--config-snippet]",
+        "",
+        "Starts the local stdio MCP sidecar for Codex.",
+        "  --doctor           Check the current Warren and print a config snippet.",
+        "  --install-codex    Add/update [mcp_servers.goblintown] in ~/.codex/config.toml.",
+        "  --codex-config <path>  Config path to update with --install-codex.",
+        "  --config-snippet   Print only the Codex MCP config JSON.",
+        "  --package <spec>   Use an npm package spec in snippets (default: goblintown@latest).",
+        "",
+      ].join("\n"),
+    );
+    return;
+  }
+  const { runGoblintownMcpServer } = await import("./mcp.js");
+  await runGoblintownMcpServer({ cwd: process.cwd() });
+}
+
+async function cmdSkill(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const positionals = positionalArgs(args);
+  const action = positionals[0];
+  const help = [
+    "usage: goblintown skill install [--skills-dir <path>] [--source-dir <path>] [--force]",
+    "",
+    "Installs the bundled goblintown-sidecar Codex skill into ~/.codex/skills.",
+    "Restart Codex after installing or updating the skill.",
+    "",
+  ].join("\n");
+  if (flags.help === "true" || flags.h === "true" || action === "help" || !action) {
+    process.stdout.write(help);
+    return;
+  }
+  if (action === "install") {
+    const { installGoblintownCodexSkill } = await import("./skill-install.js");
+    const result = await installGoblintownCodexSkill({
+      skillsDir: flags["skills-dir"],
+      sourceDir: flags["source-dir"],
+      force: flags.force === "true",
+    });
+    if (!result.ok) process.exitCode = 1;
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return;
+  }
+  if (action === "path") {
+    const { defaultCodexSkillsDir, GOBLINTOWN_SIDECAR_SKILL_NAME } = await import("./skill-install.js");
+    process.stdout.write(`${join(defaultCodexSkillsDir(), GOBLINTOWN_SIDECAR_SKILL_NAME)}\n`);
+    return;
+  }
+  process.stdout.write(help);
 }
 
 async function cmdExportTrace(args: string[]): Promise<void> {

@@ -62,7 +62,7 @@ function configureMediaPermissions(origin: string): void {
 async function createWindow(): Promise<void> {
   const root = process.env.GOBLINTOWN_DESKTOP_ROOT ?? join(app.getPath("userData"), "warren");
   await ensureDesktopWarren(root);
-  serverHandle = await serve({ cwd: root, port: 0 });
+  serverHandle = await serve({ cwd: root, port: 0, autopilot: true });
   configureMediaPermissions(new URL(serverHandle.url).origin);
 
   mainWindow = new BrowserWindow({

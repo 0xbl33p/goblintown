@@ -124,7 +124,9 @@ import {
   setVoiceSecretForRoot,
 } from "./voice-secrets.js";
 import {
+  buildOpenAIRealtimeSessionConfig,
   normalizeVoiceConfig,
+  openAIRealtimeCallURL,
   transcribeVoiceAudio,
   voiceApiKeyEnv,
   voiceProviderNeedsServer,
@@ -148,6 +150,7 @@ import {
 export interface ServeOptions {
   cwd: string;
   port: number;
+  autopilot?: boolean;
 }
 
 export interface ServeHandle {
@@ -166,6 +169,7 @@ interface StartRunOptions {
 }
 
 const DISCOVERY_OPEN_MEMBER_LIMIT = 3;
+const ONBOARDING_VERSION = 3;
 const DEFAULT_FIREBASE_CLIENT_CONFIG = {
   apiKey: "AIzaSyD2px9fRoSh6bwOBDIk2dGioYbxROQ6Leo",
   authDomain: "goblintown-88fd6.firebaseapp.com",
@@ -368,6 +372,7 @@ function cspHeaderForRequest(): string {
 }
 
 export async function serve(opts: ServeOptions): Promise<ServeHandle> {
+  const autopilot = opts.autopilot !== false;
   let warren = await loadWarren(opts.cwd);
   await ensureCountryIdentity(warren.root);
   ensureCountryDefaults(warren);
@@ -410,10 +415,12 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
     res.type("application/javascript").send(MATTER_JS_BROWSER_SOURCE);
   });
 
-  app.get("/", async (_req, res) => renderHome(warren, runs, res));
-  app.get("/tank", async (_req, res) => renderHome(warren, runs, res));
+  app.get("/", async (_req, res) => renderHome(warren, runs, res, autopilot));
+  app.get("/tank", async (_req, res) => renderHome(warren, runs, res, autopilot));
   app.get("/chat", (_req, res) =>
-    res.send(layout("Single Goblin Chat", chatPage())),
+    autopilot
+      ? res.redirect("/")
+      : res.send(layout("Single Goblin Chat", chatPage())),
   );
   app.get("/rite/new", (_req, res) =>
     res.send(layout("New Rite", newRiteForm())),
@@ -469,6 +476,22 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
     } catch (err) {
       res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
     }
+  });
+  app.get("/api/onboarding", (_req, res) => {
+    res.json(onboardingPayload(warren));
+  });
+  app.post("/api/onboarding", async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (body.done !== true) {
+      res.status(400).json({ error: "done=true is required" });
+      return;
+    }
+    warren.manifest.onboarding = {
+      version: ONBOARDING_VERSION,
+      dismissedAt: new Date().toISOString(),
+    };
+    await saveWarrenManifest(warren);
+    res.json(onboardingPayload(warren));
   });
   app.get("/api/rite/:runId/stream", (req, res) =>
     streamRiteRun(runs, req, res),
@@ -753,6 +776,52 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
       res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
+  app.post(
+    "/api/voice/realtime",
+    express.text({ type: ["application/sdp", "text/plain"], limit: "128kb" }),
+    async (req, res) => {
+      const config = normalizeVoiceConfig(warren.manifest.voice);
+      if (config.provider !== "openai") {
+        res.status(400).json({ error: "OpenAI realtime voice requires the OpenAI provider" });
+        return;
+      }
+      const sdp = typeof req.body === "string" ? req.body.trim() : "";
+      if (!sdp) {
+        res.status(400).json({ error: "SDP offer is required" });
+        return;
+      }
+      const apiKeyEnv = voiceApiKeyEnv(config);
+      const storedSecrets = readVoiceSecretsForRootSync(warren.root);
+      const apiKey = process.env[apiKeyEnv]?.trim() || storedSecrets[apiKeyEnv] || "";
+      if (!apiKey) {
+        res.status(400).json({ error: `${apiKeyEnv} is not set for OpenAI realtime voice` });
+        return;
+      }
+
+      const personality =
+        typeof req.query.personality === "string" ? req.query.personality : undefined;
+      const fd = new FormData();
+      fd.set("sdp", sdp);
+      fd.set("session", JSON.stringify(buildOpenAIRealtimeSessionConfig(config, { personality })));
+      try {
+        const response = await fetch(openAIRealtimeCallURL(config), {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: fd,
+        });
+        const answer = await response.text();
+        if (!response.ok) {
+          res.status(502).json({ error: realtimeErrorMessage(answer, response.status) });
+          return;
+        }
+        res.type("application/sdp").send(answer);
+      } catch (err) {
+        res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
   app.get("/api/addons", (_req, res) => {
     res.json(addonStatusPayload(warren.manifest));
   });
@@ -2230,6 +2299,38 @@ function voicePayload(warren: Warren): {
   };
 }
 
+function onboardingPayload(warren: Warren): {
+  done: boolean;
+  version: number;
+  dismissedAt?: string;
+} {
+  const onboarding = warren.manifest.onboarding ?? {};
+  const dismissedAt = typeof onboarding.dismissedAt === "string" ? onboarding.dismissedAt : undefined;
+  const done = onboarding.version === ONBOARDING_VERSION && !!dismissedAt;
+  return {
+    done,
+    version: ONBOARDING_VERSION,
+    ...(dismissedAt ? { dismissedAt } : {}),
+  };
+}
+
+function realtimeErrorMessage(body: string, status: number): string {
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const error = parsed.error;
+    if (typeof error === "string" && error.trim()) return error.trim();
+    if (error && typeof error === "object") {
+      const message = (error as Record<string, unknown>).message;
+      if (typeof message === "string" && message.trim()) return message.trim();
+    }
+    const message = parsed.message;
+    if (typeof message === "string" && message.trim()) return message.trim();
+  } catch {
+    // OpenAI returns SDP on success and may return plain text on failures.
+  }
+  return body.trim() || `OpenAI realtime voice returned ${status}`;
+}
+
 async function upsertFriend(warren: Warren, candidate: FriendRecord): Promise<void> {
   const normalized = normalizeFriendRecord(candidate);
   if (!normalized) return;
@@ -2777,6 +2878,7 @@ async function renderHome(
   warren: Warren,
   runs: Map<string, RunState>,
   res: Response,
+  autopilot: boolean,
 ): Promise<void> {
   const [rites, loot] = await Promise.all([
     warren.hoard.allRites(),
@@ -2784,7 +2886,7 @@ async function renderHome(
   ]);
   const driftSum = loot.reduce((s, l) => s + l.drift.driftRate, 0);
   const drift = loot.length ? driftSum / loot.length : 0;
-  res.send(tankHtml(warren.manifest.name, warren.manifest.country, loot.length, rites.length, drift, runs));
+  res.send(tankHtml(warren.manifest.name, warren.manifest.country, loot.length, rites.length, drift, runs, autopilot));
 }
 
 async function renderGoblinMode(
@@ -4193,6 +4295,7 @@ function tankHtml(
   riteCount: number,
   drift: number,
   runs: Map<string, RunState>,
+  autopilot: boolean,
 ): string {
   const townIdentity = townIdentityLabel(warrenName, countryConfig);
   const initial = JSON.stringify({
@@ -5701,6 +5804,98 @@ function tankHtml(
     color: #7cff5b;
     font-size: 0.7rem;
   }
+  .sidecar-surface {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: clamp(1rem, 3vw, 2.2rem);
+    display: grid;
+    align-content: start;
+    gap: 1rem;
+  }
+  .sidecar-surface[hidden] {
+    display: none;
+  }
+  .sidecar-shell {
+    width: min(980px, 100%);
+    display: grid;
+    gap: 1rem;
+  }
+  .sidecar-head {
+    border-bottom: 1px solid rgba(124,255,91,0.18);
+    padding-bottom: 0.9rem;
+  }
+  .sidecar-kicker {
+    display: block;
+    color: #7cff5b;
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .sidecar-head h2 {
+    margin: 0.2rem 0 0.25rem;
+    color: #e6e2d3;
+    font-size: clamp(1.45rem, 2.6vw, 2.35rem);
+    letter-spacing: 0;
+  }
+  .sidecar-head p {
+    margin: 0;
+    color: #a8b09a;
+    max-width: 68ch;
+    line-height: 1.5;
+  }
+  .sidecar-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 0.8rem;
+  }
+  .sidecar-card {
+    border: 1px solid rgba(124,255,91,0.16);
+    border-radius: 8px;
+    background: rgba(13,15,12,0.58);
+    padding: 0.85rem;
+  }
+  .sidecar-card span {
+    display: block;
+    color: #7cff5b;
+    font-size: 0.64rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .sidecar-card strong {
+    display: block;
+    margin-top: 0.2rem;
+    color: #e6e2d3;
+    font-size: 1rem;
+  }
+  .sidecar-card p {
+    margin: 0.45rem 0 0;
+    color: #a8b09a;
+    font-size: 0.76rem;
+    line-height: 1.45;
+  }
+  .sidecar-actions {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+  }
+  .sidecar-actions button {
+    border: 1px solid rgba(124,255,91,0.3);
+    border-radius: 8px;
+    background: rgba(124,255,91,0.08);
+    color: #e6e2d3;
+    font: inherit;
+    font-weight: 650;
+    padding: 0.48rem 0.68rem;
+    cursor: pointer;
+  }
+  .sidecar-actions button:hover {
+    border-color: #7cff5b;
+    color: #7cff5b;
+  }
+  .sidecar-hidden {
+    display: none !important;
+  }
   .rite-inline-inner {
     width: min(980px, 100%);
     margin: 0 auto;
@@ -6879,7 +7074,7 @@ function tankHtml(
     <span class="name" id="town-identity">Goblintown · ${esc(townIdentity)}</span>
     <span class="grow"></span>
     <span class="tier" id="tier-display">tier 1 · unincorporated</span>
-    <span class="clock" id="surface-mode">chat</span>
+    <span class="clock" id="surface-mode">sidecar</span>
   </div>
 
   <div class="settings-popover" id="settings-popover">
@@ -7034,7 +7229,7 @@ function tankHtml(
       <label for="voice-provider">Provider</label>
       <select id="voice-provider">
         <option value="browser">Browser Speech (no key)</option>
-        <option value="openai">OpenAI Transcription</option>
+        <option value="openai">OpenAI Realtime + Transcription</option>
         <option value="deepgram">Deepgram</option>
         <option value="local">Local OpenAI-compatible STT</option>
         <option value="custom">Custom Endpoint</option>
@@ -7046,7 +7241,7 @@ function tankHtml(
         schema validation, examples, docs, and tests. Existing STT-compatible endpoints can stay in this panel.
       </div>
       <label for="voice-baseurl">Base URL</label>
-      <input id="voice-baseurl" placeholder="http://localhost:8000/v1/audio/transcriptions">
+      <input id="voice-baseurl" placeholder="blank for OpenAI; local/custom transcription URL">
       <div class="provider-grid">
         <div>
           <label for="voice-keyenv">Key env var</label>
@@ -7060,8 +7255,14 @@ function tankHtml(
       <div class="provider-grid">
         <div>
           <label for="voice-model">Model</label>
-          <input id="voice-model" placeholder="gpt-4o-mini-transcribe, nova-3, whisper-large-v3">
+          <input id="voice-model" placeholder="gpt-realtime-2, nova-3, whisper-large-v3">
         </div>
+        <div>
+          <label for="voice-outputvoice">Output voice</label>
+          <input id="voice-outputvoice" placeholder="marin, cedar">
+        </div>
+      </div>
+      <div class="provider-grid">
         <div>
           <label for="voice-language">Language</label>
           <input id="voice-language" placeholder="en-US">
@@ -7197,21 +7398,12 @@ function tankHtml(
     <div class="ops-main" id="ops-main">
       <div class="ops-quick">
         <div class="ops-actions" aria-label="New work">
-          <button class="btn primary" id="btn-chat" type="button" title="Start a fresh single-goblin chat">+ New chat</button>
-          <button class="btn" id="btn-rite" type="button" title="Start a new full rite">+ New rite</button>
+          <button class="btn primary" id="btn-rite" type="button" title="Start a new full rite">+ New rite</button>
           <button class="sr-only" id="btn-regular-rite" type="button" title="Start a regular rite">Regular</button>
           <button class="sr-only" id="btn-thesis" type="button" title="Build a thesis rite">Thesis</button>
           <button class="sr-only" id="btn-sentiment" type="button" title="Run sentiment tools">Sentiment</button>
           <button class="sr-only" id="btn-plan" type="button" title="Create a planned rite">Plan</button>
         </div>
-        <section class="sidebar-list" data-sidebar-section="chats" aria-label="Chats">
-          <button class="sidebar-section-toggle" type="button" data-sidebar-toggle="chats" aria-expanded="true">CHATS</button>
-          <div class="sidebar-items">
-            <button class="sidebar-item active" type="button" data-surface-kind="chat" data-chat-id="bounty-72-chat" title="Bounty issue #72 chat">Bounty issue #72 chat</button>
-            <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="solana-wallet-question" title="Solana wallet question">Solana wallet question</button>
-            <button class="sidebar-item" type="button" data-surface-kind="chat" data-chat-id="readme-cleanup-chat" title="README cleanup chat">README cleanup chat</button>
-          </div>
-        </section>
         <section class="sidebar-list" data-sidebar-section="rites" aria-label="Rites">
           <button class="sidebar-section-toggle" type="button" data-sidebar-toggle="rites" aria-expanded="true">RITES</button>
           <div class="sidebar-items">
@@ -7261,9 +7453,41 @@ function tankHtml(
     </div>
   </aside>
 
-  <div class="tank chat-mode codex-chat-surface" id="tank">
-    <section class="chat-main" id="chat-main" aria-label="Single Goblin chat">
-      <div class="chat-thread" id="chat-thread" aria-live="polite">
+  <div class="tank${autopilot ? "" : " chat-mode codex-chat-surface sidecar-mode"}" id="tank">
+    <section class="chat-main" id="chat-main" aria-label="Codex sidecar">
+      ${autopilot ? "" : `<section class="sidecar-surface" id="sidecar-surface" aria-live="polite">
+        <div class="sidecar-shell">
+          <header class="sidecar-head">
+            <span class="sidecar-kicker">Codex sidecar</span>
+            <h2>Goblintown is waiting for Codex.</h2>
+            <p>The prompt box moved into Codex. This app stays focused on rites, provider setup, imports, voice settings, local memory, and live run inspection.</p>
+          </header>
+          <div class="sidecar-grid">
+            <article class="sidecar-card">
+              <span>MCP</span>
+              <strong>Local stdio server</strong>
+              <p>Install with the bundled skill or run <code>goblintown mcp --doctor</code> to verify the current Warren.</p>
+            </article>
+            <article class="sidecar-card">
+              <span>Rites</span>
+              <strong>Full pack still lives here</strong>
+              <p>Start direct rites or planner runs, then watch transcripts, tool calls, and final artifacts in the Tank.</p>
+            </article>
+            <article class="sidecar-card">
+              <span>Records</span>
+              <strong>Chat imports stay local</strong>
+              <p>Settings can still scan and import Codex sessions, ChatGPT exports, or folders into the Hoard.</p>
+            </article>
+          </div>
+          <div class="sidecar-actions">
+            <button id="sidecar-new-rite" type="button">New Rite</button>
+            <button id="sidecar-new-plan" type="button">New Plan</button>
+            <button id="sidecar-imports" type="button">Import Records</button>
+            <button id="sidecar-provider" type="button">Provider Settings</button>
+          </div>
+        </div>
+      </section>`}
+      <div class="chat-thread surface-hidden" id="chat-thread" aria-live="polite" aria-hidden="true">
         <div class="chat-message assistant">
           <span class="chat-role">single goblin</span>
           ${CHAT_PERSONA_UI.intro}
@@ -7300,14 +7524,14 @@ function tankHtml(
           </article>
         </div>
       </section>
-      <form class="chat-composer" id="root-chat-form">
+      ${autopilot ? "" : `<form class="chat-composer sidecar-hidden" id="root-chat-form" aria-hidden="true">
         <div class="chat-composer-inner">
           <div class="chat-offer-inline" id="root-chat-offer">
             <span id="root-chat-offer-text">This looks complex enough for the full Goblintown pack.</span>
             <button id="root-chat-offer-run" type="button">Run Goblintown</button>
           </div>
           <div class="chat-input-row">
-            <textarea id="root-chat-input" rows="3" placeholder="Message the single Goblin..." required></textarea>
+            <textarea id="root-chat-input" rows="3" placeholder="Hidden compatibility prompt" required></textarea>
             <div class="voice-picker" id="voice-picker">
               <button id="root-chat-voice" type="button" class="voice-trigger" title="Voice mode" aria-haspopup="menu">
                 <img src="/assets/textgoblinchat.svg" alt="" aria-hidden="true" decoding="async">
@@ -7355,7 +7579,7 @@ function tankHtml(
             <span id="root-chat-status">ready</span>
           </div>
         </div>
-      </form>
+      </form>`}
     </section>
     <img class="tank-logo-mark" src="/assets/gtowntextmark.png" alt="" aria-hidden="true" decoding="async">
 
@@ -7639,7 +7863,7 @@ function tankHtml(
 <script>
 const INITIAL = ${initial};
 
-const $ = (id) => document.getElementById(id);
+const $ = (id) => document.getElementById(id)${autopilot ? ` || new Proxy(function t(){ return t }, { get: (o,k) => k==='then'?undefined:t, set: ()=>true, apply: (o) => o })` : ""};
 const tank = $("tank");
 const ticker = $("ticker");
 const tickerText = $("ticker-text");
@@ -8838,10 +9062,12 @@ window.addEventListener("resize", () => {
   ["provider-chip", "Configure local provider, model slots, and API key storage."],
   ["voice-chip", "Configure browser, OpenAI, Deepgram, local, or custom speech input."],
   ["reset-chip", "Open reset controls."],
-  ["btn-chat", "Start a fresh single-goblin chat."],
+  ["sidecar-new-rite", "Start a full Goblintown rite from the sidecar."],
+  ["sidecar-new-plan", "Start a planned Goblintown DAG from the sidecar."],
+  ["sidecar-imports", "Open local chat and record import settings."],
+  ["sidecar-provider", "Open provider and model routing settings."],
   ["btn-sidebar-settings", "Open the settings menu."],
   ["ops-rites", "Open rite shortcuts and run history."],
-  ["ops-chats", "Open chat shortcuts."],
   ["root-chat-input", "Write a chat message. Shift+Enter inserts a line break; Enter sends."],
   ["root-chat-send", "Send this chat message."],
   ["root-chat-voice", "Speak into the chat box. Browser voice stays local; configured APIs use the voice connector."],
@@ -8885,11 +9111,12 @@ window.addEventListener("resize", () => {
   ["provider-save", "Save provider settings to local config."],
   ["provider-cancel", "Close provider settings without applying changes now."],
   ["provider-clear-key", "Delete the locally stored provider API key."],
-  ["voice-provider", "Choose the speech-to-text connector for chat voice input."],
-  ["voice-baseurl", "Optional voice API endpoint for local or custom connectors."],
+  ["voice-provider", "Choose browser voice, OpenAI live voice, or a transcription connector."],
+  ["voice-baseurl", "Optional voice endpoint; leave blank for OpenAI defaults."],
   ["voice-keyenv", "Environment variable name used for this voice API key."],
   ["voice-apikey", "Optional voice key saved locally in the voice secret file."],
-  ["voice-model", "Optional speech-to-text model name."],
+  ["voice-model", "Optional voice model name. OpenAI Chat Live uses realtime models."],
+  ["voice-outputvoice", "OpenAI realtime output voice for live model audio."],
   ["voice-language", "Speech recognition language hint."],
   ["voice-prompt", "Vocabulary and cleanup hint for Goblintown-specific transcript terms."],
   ["voice-save", "Save voice connector settings."],
@@ -9444,6 +9671,7 @@ const voiceBaseUrl = $("voice-baseurl");
 const voiceKeyEnv = $("voice-keyenv");
 const voiceApiKey = $("voice-apikey");
 const voiceModel = $("voice-model");
+const voiceOutputVoice = $("voice-outputvoice");
 const voiceLanguage = $("voice-language");
 const voicePrompt = $("voice-prompt");
 const voiceStatus = $("voice-status");
@@ -9719,6 +9947,11 @@ loadProviderMenu();
 let voiceConfig = { provider: "browser", language: "en-US", prompt: CHAT_PERSONA.intro };
 let voiceRecorder = null;
 let voiceChunks = [];
+let voiceRealtimePeer = null;
+let voiceRealtimeDataChannel = null;
+let voiceRealtimeStream = null;
+let voiceRealtimeAudio = null;
+let voiceRealtimeAssistantTranscript = "";
 function defaultVoiceKeyEnv(provider) {
   if (provider === "openai") return "OPENAI_API_KEY";
   if (provider === "deepgram") return "DEEPGRAM_API_KEY";
@@ -9732,6 +9965,7 @@ function applyVoicePayload(payload) {
   voiceBaseUrl.value = config.baseURL || "";
   voiceKeyEnv.value = config.apiKeyEnv || runtime.apiKeyEnv || defaultVoiceKeyEnv(voiceProvider.value);
   voiceModel.value = config.model || "";
+  voiceOutputVoice.value = config.outputVoice || "";
   voiceLanguage.value = config.language || "en-US";
   voicePrompt.value = config.prompt || "";
   voiceApiKey.value = "";
@@ -9739,6 +9973,8 @@ function applyVoicePayload(payload) {
   setSettingsActionText(voiceChip, "Voice", label.replace(/ \\(.+\\)/, "") + " ▾");
   if (runtime.needsServer && !runtime.hasApiKey) {
     voiceStatus.textContent = "Missing key: set " + runtime.apiKeyEnv + " in env or save locally.";
+  } else if (config.provider === "openai") {
+    voiceStatus.textContent = "OpenAI voice ready. Chat Live uses realtime model audio; Speak Only uses transcription.";
   } else if (runtime.needsServer) {
     voiceStatus.textContent = "Voice API ready. Transcripts still get Goblintown cleanup before sending.";
   } else {
@@ -9775,6 +10011,7 @@ $("voice-save").onclick = async () => {
     baseURL: voiceBaseUrl.value.trim(),
     apiKeyEnv: voiceKeyEnv.value.trim(),
     model: voiceModel.value.trim(),
+    outputVoice: voiceOutputVoice.value.trim(),
     language: voiceLanguage.value.trim(),
     prompt: voicePrompt.value.trim(),
   };
@@ -9807,6 +10044,7 @@ $("voice-clear-key").onclick = async () => {
         baseURL: voiceBaseUrl.value.trim(),
         apiKeyEnv: voiceKeyEnv.value.trim(),
         model: voiceModel.value.trim(),
+        outputVoice: voiceOutputVoice.value.trim(),
         language: voiceLanguage.value.trim(),
         prompt: voicePrompt.value.trim(),
         clearApiKey: true,
@@ -11969,10 +12207,10 @@ const onboardCloudMode = $("onboard-cloud-mode");
 const onboardingStorageKey = "goblintown.onboarding.v3";
 const onboardingSteps = [
   {
-    title: "Power the Chat",
-    body: "Choose the API or local model that should answer first. You can save a key now from API settings, or keep moving and fill it in later.",
+    title: "Power the Sidecar",
+    body: "Choose the API or local model Codex should route through first. You can save a key now from API settings, or keep moving and fill it in later.",
     providerChoice: true,
-    targetId: "root-chat-form",
+    targetId: "sidecar-surface",
   },
   {
     title: "Choose Your Town",
@@ -11981,7 +12219,7 @@ const onboardingSteps = [
   },
   {
     title: "Navigation Sidebar",
-    body: "This sidebar keeps the main paths close: new chats, new rites, rite shortcuts, chat history, and settings.",
+    body: "This sidebar keeps the main paths close: new rites, recent rite shortcuts, imports, and settings.",
     targetId: "ops-sidebar",
   },
   {
@@ -12009,8 +12247,8 @@ const onboardingSteps = [
   },
   {
     title: "You are ready",
-    body: "Use chat first, start rites from the sidebar, and keep deeper configuration inside Settings.",
-    targetId: "btn-chat",
+    body: "Use Codex for prompts, start rites from the sidecar or sidebar, and keep deeper configuration inside Settings.",
+    targetId: "sidecar-surface",
   },
 ];
 let onboardingIndex = 0;
@@ -12056,19 +12294,44 @@ function renderOnboardingStep() {
   onboardBack.disabled = onboardingIndex <= 0 || (onboardingIndex <= 2 && readCloudModeChoice() !== "");
   onboardNext.textContent = onboardingIndex === onboardingSteps.length - 1 ? "Finish" : "Next";
 }
+function readLocalOnboardingDone() {
+  try { return localStorage.getItem(onboardingStorageKey) === "done"; } catch { return false; }
+}
+async function saveOnboardingDone() {
+  try { localStorage.setItem(onboardingStorageKey, "done"); } catch {}
+  try {
+    await fetch("/api/onboarding", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ done: true }),
+    });
+  } catch {}
+}
+async function readOnboardingDone() {
+  const localDone = readLocalOnboardingDone();
+  try {
+    const r = await fetch("/api/onboarding");
+    const body = await r.json().catch(() => ({}));
+    if (r.ok && body.done === true) {
+      try { localStorage.setItem(onboardingStorageKey, "done"); } catch {}
+      return true;
+    }
+    if (r.ok && localDone) void saveOnboardingDone();
+  } catch {}
+  return localDone;
+}
 function closeOnboarding(markDone) {
   clearOnboardingFocus();
   setTopPopover("");
   onboardOverlay.classList.remove("open");
   if (markDone) {
-    try { localStorage.setItem(onboardingStorageKey, "done"); } catch {}
+    void saveOnboardingDone();
   }
 }
-function maybeStartOnboarding() {
-  let done = false;
-  try { done = localStorage.getItem(onboardingStorageKey) === "done"; } catch {}
+async function maybeStartOnboarding() {
   const params = new URLSearchParams(window.location.search);
   const forced = params.get("onboarding") === "1";
+  const done = await readOnboardingDone();
   if (done && !forced) return;
   onboardingIndex = 0;
   onboardOverlay.classList.add("open");
@@ -12405,17 +12668,25 @@ function setSidebarSelection(kind, id) {
   });
 }
 
-function showChatThreadSurface() {
+function showSidecarSurface() {
+  if (${autopilot}) return;
   setSidebarSettingsMode(false);
   $("chat-main").classList.remove("settings-active");
-  $("chat-thread").classList.remove("surface-hidden");
+  $("sidecar-surface").hidden = false;
+  $("chat-thread").classList.add("surface-hidden");
   $("root-rite-surface").hidden = true;
   $("settings-surface").hidden = true;
+  setSurfaceMode("sidecar");
 }
 
 function showRiteSurface() {
   setSidebarSettingsMode(false);
+  ${autopilot ? `
+  tank.classList.add("chat-mode");
+  tank.classList.add("sidecar-mode");
+` : ""}
   $("chat-main").classList.remove("settings-active");
+  $("sidecar-surface").hidden = true;
   $("chat-thread").classList.add("surface-hidden");
   $("root-rite-surface").hidden = false;
   $("settings-surface").hidden = true;
@@ -12530,22 +12801,19 @@ function wireSettingsPanel(section) {
   }
   if (section === "voice") {
     $("settings-live-voice").onclick = () => {
-      showChatMode();
-      showChatThreadSurface();
-      setRootChatSpeakEnabled(true);
-      beginSpeechInput();
+      showSidecarMode();
+      showSidecarSurface();
+      setRootChatVoiceMode("full");
     };
     $("settings-speak-only").onclick = () => {
-      showChatMode();
-      showChatThreadSurface();
-      setRootChatSpeakEnabled(false);
-      beginSpeechInput();
+      showSidecarMode();
+      showSidecarSurface();
+      setRootChatVoiceMode("stt");
     };
     $("settings-listen-only").onclick = () => {
-      showChatMode();
-      showChatThreadSurface();
-      setRootChatSpeakEnabled(true);
-      setRootChatStatus("voicePending", "listening for goblin replies");
+      showSidecarMode();
+      showSidecarSurface();
+      setRootChatVoiceMode("tts");
     };
     $("settings-voice-config").onclick = () => {
       closeSettingsPopover();
@@ -12624,8 +12892,12 @@ function showSettingsSurface() {
   closeResetMenu();
   setSidebarSettingsOpen(false);
   setSidebarSettingsMode(true);
-  showChatMode();
+  ${autopilot ? `
+  tank.classList.add("chat-mode");
+  tank.classList.add("sidecar-mode");
+` : `showSidecarMode();`}
   $("chat-main").classList.add("settings-active");
+  $("sidecar-surface").hidden = true;
   $("chat-thread").classList.add("surface-hidden");
   $("root-rite-surface").hidden = true;
   $("settings-surface").hidden = false;
@@ -12636,9 +12908,8 @@ function showSettingsSurface() {
 settingsSidebarBack.onclick = () => {
   setSidebarSettingsMode(false);
   $("chat-main").classList.remove("settings-active");
-  showChatMode();
-  showChatThreadSurface();
-  setSurfaceMode("chat");
+  ${autopilot ? `showTankMode()` : `showSidecarMode();
+  showSidecarSurface()`};
 };
 
 function renderInlineRite(record) {
@@ -12707,7 +12978,7 @@ async function loadInlineRite(runId) {
 }
 
 function selectSidebarSurface(kind, id) {
-  showChatMode();
+  showSidecarMode();
   setSidebarSelection(kind, id);
   if (kind === "rite") {
     showRiteSurface();
@@ -12721,19 +12992,21 @@ function selectSidebarSurface(kind, id) {
     });
     return;
   }
-  showChatThreadSurface();
+  showSidecarSurface();
   setRootChatStatus("ready");
-  setTimeout(() => $("root-chat-input").focus(), 30);
 }
 
-function showChatMode() {
+function showSidecarMode() {
+  if (${autopilot}) { showTankMode(); return; }
   tank.classList.add("chat-mode");
-  setSurfaceMode("chat");
+  tank.classList.add("sidecar-mode");
+  setSurfaceMode("sidecar");
   setLaunchButtonsDisabled(false);
 }
 
 function showTankMode() {
   tank.classList.remove("chat-mode");
+  tank.classList.remove("sidecar-mode");
   setSurfaceMode("rite");
 }
 
@@ -12903,9 +13176,42 @@ function clearVoiceRestart() {
   voiceCaptureTimer = 0;
 }
 
+function ensureRealtimeAudioElement() {
+  if (voiceRealtimeAudio) return voiceRealtimeAudio;
+  const audio = document.createElement("audio");
+  audio.autoplay = true;
+  audio.playsInline = true;
+  audio.style.display = "none";
+  document.body.appendChild(audio);
+  voiceRealtimeAudio = audio;
+  return audio;
+}
+
+function stopOpenAIRealtimeVoice() {
+  if (voiceRealtimeDataChannel) {
+    try { voiceRealtimeDataChannel.close(); } catch {}
+    voiceRealtimeDataChannel = null;
+  }
+  if (voiceRealtimePeer) {
+    try { voiceRealtimePeer.close(); } catch {}
+    voiceRealtimePeer = null;
+  }
+  if (voiceRealtimeStream) {
+    voiceRealtimeStream.getTracks().forEach((track) => track.stop());
+    voiceRealtimeStream = null;
+  }
+  if (voiceRealtimeAudio && voiceRealtimeAudio.srcObject) {
+    const stream = voiceRealtimeAudio.srcObject;
+    if (stream && stream.getTracks) stream.getTracks().forEach((track) => track.stop());
+    voiceRealtimeAudio.srcObject = null;
+  }
+  voiceRealtimeAssistantTranscript = "";
+}
+
 function stopVoiceInput(invalidate) {
   if (invalidate !== false) voiceSessionGeneration += 1;
   clearVoiceRestart();
+  stopOpenAIRealtimeVoice();
   if (browserRecognition) {
     const recognition = browserRecognition;
     browserRecognition = null;
@@ -13000,6 +13306,112 @@ async function transcribeVoiceBlob(blob) {
   setRootChatStatus("ready", "voice captured");
 }
 
+function realtimeVoiceErrorMessage(text) {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && parsed.error) {
+      if (typeof parsed.error === "string") return parsed.error;
+      if (parsed.error.message) return parsed.error.message;
+    }
+    if (parsed && parsed.message) return parsed.message;
+  } catch {}
+  return text || "OpenAI realtime voice failed";
+}
+
+function appendRealtimeVoiceMessage(role, content) {
+  const clean = (content || "").replace(/\\s+/g, " ").trim();
+  if (!clean) return;
+  const message = { role: role === "user" ? "user" : "assistant", content: clean };
+  rootChatMessages.push(message);
+  appendRootChatMessage(message.role, clean);
+}
+
+function handleRealtimeVoiceEvent(event) {
+  let payload = null;
+  try {
+    payload = JSON.parse(event.data);
+  } catch {
+    return;
+  }
+  const type = payload && payload.type ? String(payload.type) : "";
+  if (type === "error") {
+    const error = payload.error || {};
+    setRootChatStatus("voicePending", error.message || "OpenAI realtime voice error");
+    return;
+  }
+  if (type.includes("input_audio_transcription.completed")) {
+    appendRealtimeVoiceMessage("user", payload.transcript || "");
+    return;
+  }
+  if (type.includes("response.output_audio_transcript.delta") || type.includes("response.audio_transcript.delta")) {
+    voiceRealtimeAssistantTranscript += payload.delta || "";
+    setRootChatStatus("voicePending", "goblin speaking");
+    return;
+  }
+  if (type.includes("response.output_audio_transcript.done") || type.includes("response.audio_transcript.done")) {
+    appendRealtimeVoiceMessage("assistant", payload.transcript || voiceRealtimeAssistantTranscript);
+    voiceRealtimeAssistantTranscript = "";
+    setRootChatStatus("ready");
+    return;
+  }
+  if (type.includes("speech_started")) setRootChatStatus("voicePending", "live listening");
+  if (type.includes("speech_stopped")) setRootChatStatus("voicePending", "thinking");
+}
+
+async function startOpenAIRealtimeVoice(generation) {
+  const activeGeneration = generation === undefined ? voiceSessionGeneration : generation;
+  if (!window.RTCPeerConnection || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setRootChatStatus("voicePending", "WebRTC microphone capture unavailable");
+    return;
+  }
+  stopVoiceInput(false);
+  setRootChatSpeakEnabled(false);
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  if (voiceSessionGeneration !== activeGeneration) {
+    stream.getTracks().forEach((track) => track.stop());
+    return;
+  }
+  const peer = new RTCPeerConnection();
+  voiceRealtimePeer = peer;
+  voiceRealtimeStream = stream;
+  voiceRealtimeAssistantTranscript = "";
+  stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+  peer.ontrack = (event) => {
+    const [remoteStream] = event.streams || [];
+    if (!remoteStream) return;
+    const audio = ensureRealtimeAudioElement();
+    audio.srcObject = remoteStream;
+    audio.play().catch(() => {});
+  };
+  peer.onconnectionstatechange = () => {
+    if (voiceSessionGeneration !== activeGeneration) return;
+    if (peer.connectionState === "connected") setRootChatStatus("voicePending", "OpenAI live voice connected");
+    if (peer.connectionState === "failed" || peer.connectionState === "closed") {
+      setRootChatStatus("voicePending", "OpenAI live voice disconnected");
+    }
+  };
+  const channel = peer.createDataChannel("oai-events");
+  voiceRealtimeDataChannel = channel;
+  channel.onmessage = handleRealtimeVoiceEvent;
+  channel.onopen = () => {
+    if (voiceSessionGeneration === activeGeneration) setRootChatStatus("voicePending", "live listening");
+  };
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
+  const personality = encodeURIComponent($("root-chat-personality").value || "goblin_mode");
+  const r = await fetch("/api/voice/realtime?personality=" + personality, {
+    method: "POST",
+    headers: { "Content-Type": "application/sdp" },
+    body: offer.sdp || "",
+  });
+  const body = await r.text();
+  if (!r.ok) throw new Error(realtimeVoiceErrorMessage(body));
+  if (voiceSessionGeneration !== activeGeneration) return;
+  const answer = new RTCSessionDescription({ type: "answer", sdp: body });
+  await peer.setRemoteDescription(answer);
+  setRootChatStatus("voicePending", "OpenAI live voice connected");
+}
+
 async function toggleServerVoice(generation) {
   if (voiceRecorder && voiceRecorder.state === "recording") {
     voiceRecorder.stop();
@@ -13051,7 +13463,7 @@ function resetRootChat() {
   const thread = $("chat-thread");
   if (window.speechSynthesis) window.speechSynthesis.cancel();
   stopVoiceInput();
-  showChatThreadSurface();
+  showSidecarSurface();
   rootChatMessages.splice(0, rootChatMessages.length);
   thread.innerHTML = "";
   appendRootChatMessage(
@@ -13082,34 +13494,8 @@ function clearRiteChoiceRows() {
 }
 
 function startNewRiteChatFlow() {
-  showChatMode();
-  showChatThreadSurface();
   setRootChatOffer(null);
-  clearRiteChoiceRows();
-  const node = appendRootChatMessage(
-    "system",
-    "What type of rite should we run?",
-  );
-  const row = document.createElement("div");
-  row.className = "rite-choice-row";
-  [
-    ["regular", "Regular"],
-    ["thesis", "Thesis"],
-    ["onchain", "Crypto/onchain"],
-    ["sentiment", "Sentiment"],
-    ["plan", "Plan"],
-  ].forEach(([choice, label]) => {
-    const button = document.createElement("button");
-    button.className = "rite-choice";
-    button.type = "button";
-    button.setAttribute("data-rite-choice", choice);
-    button.textContent = label;
-    button.addEventListener("click", () => handleRiteChoice(choice));
-    row.appendChild(button);
-  });
-  node.appendChild(row);
-  setRootChatStatus("riteType");
-  setTimeout(() => $("root-chat-input").focus(), 30);
+  openRiteForm(false);
 }
 
 function handleRiteChoice(choice) {
@@ -13136,7 +13522,7 @@ function handleRiteChoice(choice) {
       openRiteForm(true);
       break;
     default:
-      startNewRiteChatFlow();
+      openRiteForm(false);
   }
 }
 
@@ -13173,22 +13559,13 @@ async function startGoblintownFromChat(task) {
     openStream(body.runId, false);
   } catch (err) {
     $("root-chat-status").textContent = chatErrorMessage(err);
-    showChatMode();
+    showSidecarMode();
   } finally {
     runButton.disabled = false;
   }
 }
 
-$("btn-chat").onclick = () => {
-  history.replaceState(null, "", "/");
-  setSidebarSelection("chat", "bounty-72-chat");
-  showChatMode();
-  resetRootChat();
-  setTicker("single goblin chat");
-  setTimeout(() => $("root-chat-input").focus(), 30);
-};
-
-$("btn-regular-rite").onclick = startNewRiteChatFlow;
+$("btn-regular-rite").onclick = () => openRiteForm(false);
 
 document.querySelectorAll("[data-surface-kind]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -13203,7 +13580,7 @@ document.querySelectorAll("[data-surface-kind]").forEach((button) => {
 $("root-rite-resume").onclick = () => {
   const runId = $("root-rite-resume").dataset.runId || "";
   if (!runId || sampleInlineRites[runId]) {
-    startNewRiteChatFlow();
+    openRiteForm(false);
     return;
   }
   showTankMode();
@@ -13213,6 +13590,13 @@ $("root-rite-resume").onclick = () => {
 function beginSpeechInput(generation) {
   const activeGeneration = generation === undefined ? voiceSessionGeneration + 1 : generation;
   voiceSessionGeneration = activeGeneration;
+  if (voiceConfig.provider === "openai" && rootChatVoiceMode === "full") {
+    startOpenAIRealtimeVoice(activeGeneration).catch((err) => {
+      if (voiceSessionGeneration !== activeGeneration) return;
+      setRootChatStatus("voicePending", voiceInputErrorMessage(err));
+    });
+    return;
+  }
   if (voiceConfig.provider && voiceConfig.provider !== "browser") {
     toggleServerVoice(activeGeneration).catch((err) => {
       if (voiceSessionGeneration !== activeGeneration) return;
@@ -13256,7 +13640,7 @@ function setRootChatVoiceMode(mode) {
     setRootChatStatus("ready", "listen only");
     return;
   }
-  setRootChatSpeakEnabled(mode === "full");
+  setRootChatSpeakEnabled(mode === "full" && voiceConfig.provider !== "openai");
   beginSpeechInput();
 }
 
@@ -14452,9 +14836,19 @@ function openThesisForm() {
   setTimeout(() => $("thesis-subject").focus(), 50);
 }
 function closeThesisForm() { $("thesis-overlay").classList.remove("open"); }
-$("btn-rite").onclick = startNewRiteChatFlow;
+$("btn-rite").onclick = () => openRiteForm(false);
 $("btn-thesis").onclick = openThesisForm;
 $("btn-plan").onclick = () => openRiteForm(true);
+$("sidecar-new-rite").onclick = () => openRiteForm(false);
+$("sidecar-new-plan").onclick = () => openRiteForm(true);
+$("sidecar-imports").onclick = () => {
+  showSettingsSurface();
+  showSettingsSection("imports");
+};
+$("sidecar-provider").onclick = () => {
+  showSettingsSurface();
+  showSettingsSection("api");
+};
 $("rf-cancel").onclick = closeRiteForm;
 $("thesis-cancel").onclick = closeThesisForm;
 $("rite-overlay").addEventListener("click", (e) => { if (e.target === $("rite-overlay")) closeRiteForm(); });
@@ -14509,7 +14903,7 @@ $("rite-form").addEventListener("submit", async (e) => {
   } catch (err) {
     setTicker("error: " + (err.message || err));
     setLaunchButtonsDisabled(false);
-    setSurfaceMode("chat");
+    setSurfaceMode("sidecar");
   }
 });
 
@@ -14551,7 +14945,7 @@ $("thesis-form").addEventListener("submit", async (e) => {
   } catch (err) {
     setTicker("thesis error: " + (err.message || err));
     setLaunchButtonsDisabled(false);
-    setSurfaceMode("chat");
+    setSurfaceMode("sidecar");
   }
 });
 
@@ -14641,7 +15035,7 @@ function openStream(runId, isPlan, opts) {
     clearRememberedRun(runId);
     hideResumePanel();
     setLaunchButtonsDisabled(false);
-    setSurfaceMode("chat");
+    setSurfaceMode("sidecar");
     setTimeout(refreshStats, 400);
     setTimeout(() => {
       ["c-raccoon","c-gremlin","c-troll","c-pigeon"].forEach(id => setState(id,"idle"));
@@ -14668,7 +15062,7 @@ function openStream(runId, isPlan, opts) {
         d.riteId ? { href: "/rite/" + d.riteId } : null,
       );
     }
-    setTimeout(showChatMode, 1200);
+    setTimeout(showSidecarMode, 1200);
   });
   es.addEventListener("error", (ev) => {
     if (terminalAttach && replayEnded) {
@@ -14682,7 +15076,7 @@ function openStream(runId, isPlan, opts) {
     es.close();
     activeStream = null;
     setLaunchButtonsDisabled(false);
-    setSurfaceMode("chat");
+    setSurfaceMode("sidecar");
     goHomeAllGoblins(300);
     setTimeout(() => refreshResumePanel(runId, isPlan), 350);
   });
@@ -14940,7 +15334,7 @@ async function attachToRunFromUrl() {
       runId = remembered.runId;
       history.replaceState(null, "", "/?run=" + encodeURIComponent(runId));
     } else {
-      showChatMode();
+      showSidecarMode();
       return;
     }
   }
@@ -14949,7 +15343,7 @@ async function attachToRunFromUrl() {
     if (!r.ok) {
       setTicker("run " + runId + " not found");
       clearRememberedRun(runId);
-      showChatMode();
+      showSidecarMode();
       return;
     }
     const record = await r.json();
@@ -14980,7 +15374,7 @@ async function attachToRunFromUrl() {
     openStream(runId, isPlan, { attach: true, terminal: !!record.done });
   } catch (e) {
     setTicker("attach failed: " + (e.message || e));
-    showChatMode();
+    showSidecarMode();
   }
 }
 attachToRunFromUrl();
