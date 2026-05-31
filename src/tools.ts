@@ -6,6 +6,7 @@
  *   - regex.match:  test a regex against a string (sandboxed; capped runtime)
  *   - http.head:    HEAD a URL, return status + content-type. Disabled unless
  *                   GOBLINTOWN_TOOLS_HTTP=1 (network egress is opt-in).
+ *   - web.fetch:    GET a public http(s) URL and return readable page text.
  *   - shell.run:    run a single shell command. Disabled unless
  *                   GOBLINTOWN_TOOLS_SHELL=1 AND a per-call --shell-cmd
  *                   allowlist is provided to the warren.
@@ -39,6 +40,8 @@ export interface ToolDefinition {
 }
 
 const REGEX_TIMEOUT_MS = 200;
+const WEB_FETCH_TIMEOUT_MS = 8000;
+const WEB_FETCH_MAX_CHARS = 12000;
 
 export const builtinTools: ToolDefinition[] = [
   {
@@ -119,6 +122,59 @@ export const builtinTools: ToolDefinition[] = [
     },
   },
 ];
+
+export function createWebFetchTool(fetchImpl: typeof fetch = fetch): ToolDefinition {
+  return {
+    name: "web.fetch",
+    description: "Fetch a public http(s) URL and return readable title/text. Blocks localhost and private-network hosts.",
+    schema: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        maxChars: { type: "number" },
+      },
+      required: ["url"],
+    },
+    async invoke(args) {
+      const url = String(args.url ?? "");
+      const maxCharsRaw = Number(args.maxChars ?? WEB_FETCH_MAX_CHARS);
+      const maxChars = Number.isFinite(maxCharsRaw)
+        ? Math.max(500, Math.min(WEB_FETCH_MAX_CHARS, Math.floor(maxCharsRaw)))
+        : WEB_FETCH_MAX_CHARS;
+      const safe = validatePublicHttpUrl(url);
+      if (!safe.ok) return safe;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), WEB_FETCH_TIMEOUT_MS);
+      try {
+        const res = await fetchImpl(safe.url, {
+          method: "GET",
+          redirect: "follow",
+          signal: ctrl.signal,
+          headers: {
+            "User-Agent": "Goblintown/0.6 (+local chat web.fetch)",
+            Accept: "text/html,text/plain,application/json;q=0.9,*/*;q=0.2",
+          },
+        });
+        const contentType = res.headers.get("content-type") ?? "";
+        const raw = await res.text();
+        const readable = readableWebText(raw, contentType, maxChars);
+        return {
+          ok: res.ok,
+          url: res.url || safe.url,
+          status: res.status,
+          contentType,
+          title: extractHtmlTitle(raw),
+          text: readable,
+          truncated: readable.length >= maxChars,
+        };
+      } catch (e) {
+        return { ok: false, url: safe.url, error: e instanceof Error ? e.message : String(e) };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
 
 /**
  * Render a tool catalog the LLM sees. Pure.
@@ -215,6 +271,70 @@ export function renderToolResults(results: ToolResult[]): string {
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
+}
+
+function validatePublicHttpUrl(raw: string): { ok: true; url: string } | { ok: false; error: string } {
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return { ok: false, error: "only http(s) urls allowed" };
+    }
+    if (
+      host === "localhost" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host.endsWith(".local") ||
+      /^127\./.test(host) ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^169\.254\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    ) {
+      return { ok: false, error: "private or local hosts are blocked" };
+    }
+    return { ok: true, url: url.toString() };
+  } catch {
+    return { ok: false, error: "invalid url" };
+  }
+}
+
+function extractHtmlTitle(raw: string): string {
+  const match = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return match ? decodeHtml(match[1]).replace(/\s+/g, " ").trim().slice(0, 240) : "";
+}
+
+function readableWebText(raw: string, contentType: string, maxChars: number): string {
+  const isHtml = /html/i.test(contentType) || /<html|<!doctype html/i.test(raw.slice(0, 500));
+  const isJson = /json/i.test(contentType);
+  let text = raw;
+  if (isJson) {
+    try {
+      text = JSON.stringify(JSON.parse(raw), null, 2);
+    } catch {
+      text = raw;
+    }
+  } else if (isHtml) {
+    text = raw
+      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+      .replace(/<[^>]+>/g, " ");
+  }
+  return decodeHtml(text)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxChars);
+}
+
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'");
 }
 
 function extractFirstJsonValue(s: string): string | null {

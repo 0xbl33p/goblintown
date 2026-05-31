@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { makeScribe } from "./creatures.js";
+import { extractFirstJsonObject } from "./json-extract.js";
 import { callCreature } from "./openai-client.js";
 import type {
   Artifact,
@@ -276,31 +277,4 @@ export function renderArtifactContext(artifact: Artifact): string {
 function artifactId(riteId: string, claims: ArtifactClaim[]): string {
   const sig = claims.map((c) => c.text).join("|");
   return `${riteId.slice(0, 8)}-${createHash("sha256").update(sig).digest("hex").slice(0, 8)}`;
-}
-
-function extractFirstJsonObject(s: string): string | null {
-  // Strip code fences if present.
-  const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : s;
-  const start = candidate.indexOf("{");
-  if (start < 0) return null;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < candidate.length; i++) {
-    const ch = candidate[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === "\\") esc = true;
-      else if (ch === '"') inStr = false;
-    } else {
-      if (ch === '"') inStr = true;
-      else if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) return candidate.slice(start, i + 1);
-      }
-    }
-  }
-  return null;
 }
