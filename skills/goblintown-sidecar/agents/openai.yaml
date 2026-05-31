@@ -1,0 +1,6 @@
+interface:
+  display_name: "Goblintown Sidecar"
+  short_description: "Install and use Goblintown MCP locally in autopilot mode"
+  default_prompt: "Use $goblintown-sidecar to install, verify, or use Goblintown as a local Codex MCP sidecar. Goblintown defaults to autopilot Tank mode — the agent drives rites and plans via MCP tools while the Tank displays a live creature diorama."
+policy:
+  allow_implicit_invocation: true

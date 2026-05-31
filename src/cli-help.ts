@@ -5,6 +5,24 @@ Usage:
   goblintown init
       Initialize a Warren in the current directory.
 
+  goblintown install [--port <N>] [--no-serve]
+      Single-command agent setup. Creates a Warren, installs the Codex MCP
+      config and sidecar skill, then starts the Tank in autopilot mode.
+      The agent drives rites and plans via MCP tools (goblintown_rite etc).
+
+  goblintown /ask "<task>"
+      Goblin Mode: Single Goblin, one worker, one answer.
+  goblintown /town "<task>"
+      Goblin Mode: Goblintown planner DAG with multi-agent execution.
+  goblintown /tank "<task>"
+      Goblintown planner DAG intended for the compact live Tank.
+  goblintown /history
+      Show recent persisted runs.
+  goblintown /context ingest <path> [--limit <N>]
+      Import older conversations or project notes as referenceable artifacts.
+  goblintown /context search "<query>" [--limit <N>]
+      Search imported context and prior run artifacts.
+
   goblintown summon <kind> --task "..." [--personality <p>]
       Run a single creature once. Output goes to stdout; loot is stashed.
       Kinds: ${creatureKinds.join(" ")}
@@ -47,6 +65,20 @@ Usage:
       execute them in order. Each sub-rite produces its own artifact;
       dependent sub-rites consume them. On a node failure the planner is
       re-invoked (recursive replan, max depth 2 by default).
+
+  goblintown context ingest <path> [--limit <N>]
+      Import local text files from an old conversation or project folder into
+      the Hoard as file-backed Artifacts. Generated folders are skipped.
+  goblintown context search "<query>" [--limit <N>]
+      Search all stored Artifacts, including imported context, by relevance.
+  goblintown context scan chats [--source codex|chatgpt|folder] [--path <path>] [--query <q>] [--since <date>] [--limit <N>] [--json]
+      Scan previous chats without importing. Defaults to local Codex sessions.
+  goblintown context import chats [--source codex|chatgpt|folder] [--path <path>] [--all|--ids <id,...>] [--query <q>] [--since <date>] [--limit <N>] [--no-vectorize] [--summarize]
+      Import selected previous chats as Hoard Artifacts. Default is local parse
+      plus pre-vectorized embeddings when an embedding provider is configured.
+      AI summaries are opt-in through --summarize.
+  goblintown context vectorize [--missing-only] [--limit <N>]
+      Precompute embeddings for stored Artifacts using the embedding route.
 
   goblintown export-trace <runId> [--out <path.json>]
       Export a run as an LLM-MAS Orchestration Trace (academic schema —
@@ -127,6 +159,17 @@ Usage:
       Show the bundled Goblintown Cloud project, first-run Local Only vs Goblintown Cloud choice,
       Settings -> Account controls, and optional Firebase env overrides.
 
+  goblintown mcp [--doctor|--install-codex|--config-snippet] [--package <npm-spec>]
+      Start the local stdio MCP sidecar for Codex. The sidecar exposes Single
+      Goblin, full Rite, Planner DAG, provider snapshot, and doctor tools from
+      the current Warren. --install-codex writes ~/.codex/config.toml. No hosted
+      MCP is required.
+
+  goblintown skill install [--skills-dir <path>] [--force]
+      Install the bundled goblintown-sidecar Codex skill into ~/.codex/skills
+      so Codex knows when and how to install packages, register MCP, ask for
+      consent, and use the Goblintown MCP tools.
+
   goblintown addon [ls]
   goblintown addon enable solana
   goblintown addon disable solana
@@ -145,9 +188,10 @@ Usage:
       summaries, and store optional API keys locally in .goblintown/secrets.json.
       Sources: coingecko, dune, neynar, santiment, cryptopanic, lunarcrush.
 
-  goblintown serve [--port <N>]
-      Start the Tank UI. Default port=7777.
-      First run asks Local Only vs Goblintown Cloud; later change it in Settings -> Account.
+  goblintown serve [--port <N>] [--chat]
+      Start the Goblin Mode GUI. Default port=7777.
+      By default runs in autopilot mode: the Tank diorama with config menus, no chat surface.
+      The agent drives rites and plans via MCP tools. Use --chat to restore the legacy chat UI.
       Settings also contains Country, Mail, Add-ons, API Provider, and Reset -> Asteroid Mode.
       Bundled sprite sheets and the Goblintown wordmark are loaded from site/assets.
 

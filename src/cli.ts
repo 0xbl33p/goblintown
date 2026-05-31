@@ -17,6 +17,14 @@ import {
 import { printBanner } from "./banners.js";
 import { compareRites } from "./compare.js";
 import {
+  chatRecordPreview,
+  importChatRecords,
+  scanChatImports,
+  type ChatImportSource,
+  vectorizeStoredArtifacts,
+} from "./chat-import.js";
+import { ingestContextPath } from "./context-ingest.js";
+import {
   dispatchRiteToPeer,
   MAX_PEERS,
   normalizeCountryConfig,
@@ -36,6 +44,7 @@ import { loadRewardPlugin } from "./reward-plugin.js";
 import { ensureRunDir, loadAllRuns, loadRun } from "./run-store.js";
 import { previewScan, scavenge } from "./scavenge.js";
 import { serve } from "./server.js";
+import { commandToCliArgs, parseGoblinCommand } from "./slash-commands.js";
 import {
   profileSolanaAddress,
   summarizeSolanaActivity,
@@ -74,191 +83,9 @@ import {
 } from "./types.js";
 import { initWarren, loadWarren, saveWarrenManifest } from "./warren.js";
 import { normalizeOutputFormat } from "./formatting.js";
+import { buildCliHelp } from "./cli-help.js";
 
-const HELP = `Goblintown — agent management protocol.
-
-Usage:
-  goblintown init
-      Initialize a Warren in the current directory.
-
-  goblintown summon <kind> --task "..." [--personality <p>]
-      Run a single creature once. Output goes to stdout; loot is stashed.
-      Kinds: ${CREATURE_KINDS.join(" ")}
-
-  goblintown scavenge --task "..." --scan "<glob>" [--scan "<glob>"]...
-      Run a Raccoon over matched files and stash the distilled facts.
-
-  goblintown quest "<task>" [--pack <N>] [--personality <p>] [--format freeform|markdown|json]
-      Goblin pack with Troll arbitration. Default pack=3. Lightweight.
-
-  goblintown rite "<task>" [--pack <N>] [--scan <glob>]... [--personality <p>] [--no-fallback]
-                          [--budget <tokens>] [--max-output <tokens>]
-                          [--cite <riteId>]... [--remember]
-                          [--no-specialist] [--specialist-cap <N>] [--debate]
-                          [--format freeform|markdown|json]
-      Full ceremony: Raccoon → Goblin pack → [Debate round] → Gremlin chaos →
-                    Troll review → [Specialist re-rite on failure] →
-                    Ogre fallback → Scribe.
-      --cite <riteId>:    load that rite's Artifact as prior context.
-      --remember:         auto-load up to 3 most-relevant prior Artifacts.
-      --no-specialist:    skip the specialist recovery layer (go straight to Ogre).
-      --specialist-cap N: max specialist goblins to spawn (default 3).
-      --debate:           run an inter-agent debate round after the pack proposes.
-      --troll-tools:      enable verifier tool-use during troll review (json/regex/http.head).
-
-  goblintown thesis "<subject>" [--horizon <30d>] [--context "..."] [--scan <glob>]...
-                                [--solana <address>] [--signature <sig>] [--remember]
-      Build a project-quality thesis memo: team, product, technology,
-      ecosystem position, traction, advantages, risks, invalidation triggers,
-      and evidence gaps. It is not a buy/sell recommendation. Solana flags
-      add read-only onchain diligence context. --scan gives the Raccoon repo
-      files to inspect before the pack writes the thesis.
-
-  goblintown ancestry <riteId>
-      Print the artifact lineage for a rite (parents → this → children).
-
-  goblintown plan "<task>" [--max-nodes <N>] [--max-replan <N>] [--budget <tokens>]
-                          [--cite <riteId>]... [--remember] [--format freeform|markdown|json]
-      Use the Planner to decompose the task into a DAG of sub-rites and
-      execute them in order. Each sub-rite produces its own artifact;
-      dependent sub-rites consume them. On a node failure the planner is
-      re-invoked (recursive replan, max depth 2 by default).
-
-  goblintown export-trace <runId> [--out <path.json>]
-      Export a run as an LLM-MAS Orchestration Trace (academic schema —
-      xxzcc/awesome-llm-mas-rl).
-
-  goblintown fold [--threshold <N>] [--min-overlap <K>] [--max-cluster <S>] [--min-age-days <D>]
-      Fold related older artifacts into higher-level summary artifacts
-      (Pigeon-Scribe). Defaults: threshold=30, overlap=2, max=6, age=7d.
-
-  goblintown reset [--all|--hoard|--artifacts|--runs] [--yes]
-      Reset the town. Default scope (--all) clears the entire hoard
-      (loot, quests, rites, artifacts, inbox, outbox) and the SSE run
-      log; preserves warren.json and reward.mjs. Asks for "RESET"
-      confirmation unless --yes is passed.
-      Narrower scopes:
-        --hoard      everything in .goblintown/hoard/
-        --artifacts  only .goblintown/hoard/artifacts/
-        --runs       only .goblintown/runs/
-
-  goblintown reroll <riteId> [--no-fallback] [--budget <tokens>]
-      Re-run an existing rite with identical task / pack / personality / scan.
-
-  goblintown export <riteId> [--out <path.md>]
-      Render a Rite as a self-contained markdown document.
-
-  goblintown compare <riteA> <riteB>
-      Side-by-side comparison of two rites.
-
-  goblintown audit <riteId>
-      Walk a Rite's causal graph; report tokens, drift, longest chain, warnings.
-
-  goblintown graph <riteId|lootId>
-      Render the causal graph as ASCII (rite-shaped if it's a rite id,
-      ancestry chain if it's a loot id).
-
-  goblintown drift
-      Aggregate personality-drift report across all stashed loot.
-
-  goblintown hoard [--kind <k>] [--since <iso|ms>] [--limit <N>] [--rite <id>] [--quest <id>]
-      List the contents of the Hoard, optionally filtered.
-
-  goblintown send --to <warren-path> --loot <id> [--audience "..."]
-      Pigeon-compress a Loot and deliver it to another Warren's inbox.
-
-  goblintown inbox
-      List inbox messages and verify their signatures.
-
-  goblintown outbox
-      List outbox records.
-
-  goblintown route
-      List per-creature provider routes.
-  goblintown route set <slot> --preset <id> [--model <name>] [--base-url <url>] [--api-key-env <ENV>] [--format freeform|markdown|json]
-      Route a specific slot (goblin/ogre/troll/.../embedding) to a provider.
-  goblintown route clear <slot>|--all
-      Remove route overrides.
-
-  goblintown country peer add --name <peer> --url <http://host:port>
-  goblintown country peer rm <peer>
-  goblintown country peer ls
-      Manage Goblin-Country peers in warren.json.
-  goblintown country show
-      Show current country config (backend/mode/code/discoverability/pending requests).
-  goblintown country set [--enabled <true|false>] [--backend <local|firebase>] [--discoverable <true|false>]
-      Update country-mode config in warren.json.
-  goblintown country discover [--code <A1B2C>] [--server <http://host:port>]
-      Query discoverable open countries (3 or fewer members) from a running Goblintown server.
-  goblintown country join --country-id <id> --country-code <code> [--target-url <url>] [--server <http://host:port>]
-      Send join request to a discovered country via server API.
-  goblintown country requests ls [--server <http://host:port>]
-  goblintown country requests approve <requestId> [--server <http://host:port>]
-  goblintown country requests deny <requestId> [--server <http://host:port>]
-      List/resolve pending join requests through server API.
-  goblintown country run --task "..." [--peer <peer>]... [--all] [--pack <N>] [--format freeform|markdown|json]
-      Dispatch a Rite to peer warrens and wait for completion.
-
-  goblintown cloud
-      Show the bundled Goblintown Cloud project, first-run Local Only vs Goblintown Cloud choice,
-      Settings -> Account controls, and optional Firebase env overrides.
-
-  goblintown addon [ls]
-  goblintown addon enable solana
-  goblintown addon disable solana
-  goblintown addon solana <address>
-  goblintown addon solana tx <signature>
-      Manage optional local add-ons. The Solana add-on contributes read-only
-      onchain verifier tools when --troll-tools is enabled, plus direct
-      profile/activity/token/transaction lookup commands.
-
-  goblintown sentiment sources
-  goblintown sentiment market
-  goblintown sentiment project "<query>"
-  goblintown sentiment key set <source> --value <secret>
-  goblintown sentiment key clear <source>
-      Inspect free sentiment sources, run no-key market/project sentiment
-      summaries, and store optional API keys locally in .goblintown/secrets.json.
-      Sources: coingecko, dune, neynar, santiment, cryptopanic, lunarcrush.
-
-  goblintown serve [--port <N>]
-      Start the Tank UI. Default port=7777.
-      First run asks Local Only vs Goblintown Cloud; later change it in Settings -> Account.
-      Settings also contains Country, Mail, Add-ons, API Provider, and Reset -> Asteroid Mode.
-      Bundled sprite sheets and the Goblintown wordmark are loaded from site/assets.
-
-Environment:
-  OPENAI_API_KEY              required (except for init / drift / hoard / inbox / outbox / audit / graph / export / compare / ancestry)
-  OPENAI_BASE_URL             optional; e.g. https://openrouter.ai/api/v1
-  Provider-specific keys      OPENROUTER_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, MISTRAL_API_KEY,
-                              DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY
-  FIREBASE_API_KEY            optional override for forks; normal users use bundled Goblintown Cloud config
-  FIREBASE_AUTH_DOMAIN        optional override
-  FIREBASE_PROJECT_ID         optional override
-  FIREBASE_APP_ID             optional override
-  FIREBASE_STORAGE_BUCKET     optional override
-  FIREBASE_MESSAGING_SENDER_ID optional override
-  FIREBASE_MEASUREMENT_ID     optional override
-  GOBLINTOWN_MODEL_GOBLIN     default: gpt-5.4-mini
-  GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
-  GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini
-  GOBLINTOWN_MODEL_SCRIBE     default: gpt-5.4-mini  (Pigeon-as-Scribe artifact distillation)
-  GOBLINTOWN_EMBEDDING_MODEL  default: text-embedding-3-small  (artifact retrieval)
-  GOBLINTOWN_TOOLS_HTTP       set to 1 to enable http.head verifier tool (default disabled)
-  GOBLINTOWN_TOOLS_SOLANA     set to 1 to enable the Solana onchain add-on without changing warren.json
-  GOBLINTOWN_SOLANA_RPC_URL   optional Solana RPC endpoint (default: https://api.mainnet-beta.solana.com)
-  COINGECKO_API_KEY           optional sentiment key; overrides local .goblintown/secrets.json
-  DUNE_API_KEY                optional sentiment key; overrides local .goblintown/secrets.json
-  NEYNAR_API_KEY              optional sentiment key; overrides local .goblintown/secrets.json
-  SANTIMENT_API_KEY           optional sentiment key; overrides local .goblintown/secrets.json
-  CRYPTOPANIC_AUTH_TOKEN      optional sentiment token; overrides local .goblintown/secrets.json
-  LUNARCRUSH_API_KEY          optional sentiment key; overrides local .goblintown/secrets.json
-  GOBLINTOWN_MAX_CONCURRENCY  default: 5 (in-flight API calls)
-  GOBLINTOWN_SERVER_URL       default base URL for country discover/join/requests commands
-  (also: GREMLIN, RACCOON, PIGEON)
-
-"OpenAI tried to put the goblins back in the box. We built the box for them."
-`;
+const HELP = buildCliHelp(CREATURE_KINDS);
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
@@ -267,6 +94,10 @@ async function main(): Promise<void> {
   if (!cmd || cmd === "--help" || cmd === "-h" || cmd === "help") {
     process.stdout.write(HELP);
     return;
+  }
+
+  if (cmd.startsWith("/")) {
+    return cmdSlash(argv);
   }
 
   switch (cmd) {
@@ -308,6 +139,11 @@ async function main(): Promise<void> {
       return cmdCountry(argv.slice(1));
     case "cloud":
       return cmdCloud(argv.slice(1));
+    case "mcp":
+      return cmdMcp(argv.slice(1));
+    case "skill":
+    case "skills":
+      return cmdSkill(argv.slice(1));
     case "addon":
     case "addons":
       return cmdAddon(argv.slice(1));
@@ -315,12 +151,16 @@ async function main(): Promise<void> {
       return cmdSentiment(argv.slice(1));
     case "serve":
       return cmdServe(argv.slice(1));
+    case "install":
+      return cmdInstall(argv.slice(1));
     case "ancestry":
       return cmdAncestry(argv.slice(1));
     case "export-trace":
       return cmdExportTrace(argv.slice(1));
     case "plan":
       return cmdPlan(argv.slice(1));
+    case "context":
+      return cmdContext(argv.slice(1));
     case "fold":
       return cmdFold(argv.slice(1));
     case "reset":
@@ -328,6 +168,217 @@ async function main(): Promise<void> {
     default:
       process.stderr.write(`Unknown command: ${cmd}\n\n${HELP}`);
       process.exitCode = 1;
+  }
+}
+
+async function cmdSlash(args: string[]): Promise<void> {
+  const parsed = parseGoblinCommand(shellArgsToSlashLine(args));
+  if (parsed.kind === "help") {
+    process.stdout.write(
+      `Goblin Mode slash commands:\n\n` +
+        `  /ask <task>       Single Goblin: one worker, one answer.\n` +
+        `  /run <task>       Use the selected/default mode.\n` +
+        `  /town <task>      Goblintown: planner DAG and multi-agent execution.\n` +
+        `  /tank <task>      Goblintown run intended for the visual Tank.\n` +
+        `  /history          Recent persisted runs.\n` +
+        `  /context ingest <path>    Import old conversations/projects as artifacts.\n` +
+        `  /context search <query>   Search imported context and prior artifacts.\n` +
+        `  /help             Show this help.\n`,
+    );
+    return;
+  }
+  if (parsed.kind === "history") {
+    const runDir = await ensureRunDir(process.cwd());
+    const runs = (await loadAllRuns(runDir)).sort((a, b) => b.startedAt - a.startedAt);
+    if (runs.length === 0) {
+      process.stdout.write("No Goblintown runs yet.\n");
+      return;
+    }
+    for (const r of runs.slice(0, 20)) {
+      process.stdout.write(
+        `${r.runId}  ${r.mode ?? "rite"}  ${r.status ?? (r.done ? "done" : "running")}  ${truncate(r.task, 90)}\n`,
+      );
+    }
+    return;
+  }
+  if (parsed.kind === "context") {
+    return cmdContext(parsed.args);
+  }
+  if (!parsed.task) {
+    process.stderr.write(`usage: goblintown /ask "<task>" or goblintown /town "<task>"\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const mapped = commandToCliArgs(parsed);
+  const target = mapped[0];
+  if (target === "summon") return cmdSummon(mapped.slice(1));
+  if (target === "plan") return cmdPlan(mapped.slice(1));
+  process.stderr.write(`Unsupported Goblin Mode command: /${parsed.kind}\n`);
+  process.exitCode = 1;
+}
+
+async function cmdContext(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const positionals = positionalArgs(args);
+  const action = positionals[0];
+  const limit = clampCliLimit(flags.limit, 10, 1, 100);
+
+  if (action === "scan" && positionals[1] === "chats") {
+    return cmdContextScanChats(args);
+  }
+
+  if (action === "import" && positionals[1] === "chats") {
+    return cmdContextImportChats(args);
+  }
+
+  if (action === "vectorize") {
+    return cmdContextVectorize(args);
+  }
+
+  if (action === "ingest") {
+    const inputPath = positionals[1];
+    if (!inputPath) {
+      process.stderr.write(`usage: goblintown context ingest <path> [--limit N]\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const w = await loadWarren(process.cwd());
+    const result = await ingestContextPath({
+      root: w.root,
+      hoard: w.hoard,
+      inputPath,
+      limit: clampCliLimit(flags.limit, 80, 1, 500),
+    });
+    process.stdout.write(`Ingested ${result.artifacts.length} context artifact(s).\n`);
+    for (const artifact of result.artifacts.slice(0, 20)) {
+      const ref = artifact.evidence[0]?.ref ?? artifact.id;
+      process.stdout.write(`  ${artifact.id}  ${ref}\n`);
+    }
+    if (result.artifacts.length > 20) {
+      process.stdout.write(`  ... ${result.artifacts.length - 20} more\n`);
+    }
+    if (result.skipped.length > 0) {
+      process.stdout.write(`Skipped ${result.skipped.length} file(s).\n`);
+    }
+    return;
+  }
+
+  if (action === "search") {
+    const query = positionals.slice(1).join(" ").trim();
+    if (!query) {
+      process.stderr.write(`usage: goblintown context search "<query>" [--limit N]\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const w = await loadWarren(process.cwd());
+    const all = await w.hoard.allArtifacts();
+    const { findRelevantArtifactsEmbedded } = await import("./embeddings.js");
+    const matches = await findRelevantArtifactsEmbedded({
+      artifacts: all,
+      queryText: query,
+      limit,
+      hoard: w.hoard,
+    });
+    if (matches.length === 0) {
+      process.stdout.write("No matching context artifacts found.\n");
+      return;
+    }
+    for (const artifact of matches) {
+      const ref = artifact.evidence.find((e) => e.kind === "file")?.ref ?? artifact.riteId;
+      const claim = artifact.claims[0]?.text ?? artifact.task;
+      process.stdout.write(`${artifact.id}  ${ref}\n  ${truncate(claim, 140)}\n`);
+    }
+    return;
+  }
+
+  process.stderr.write(
+    `usage: goblintown context ingest <path> [--limit N]\n` +
+      `   or: goblintown context search "<query>" [--limit N]\n` +
+      `   or: goblintown context scan chats [--source codex|chatgpt|folder]\n` +
+      `   or: goblintown context import chats [--all|--ids <id,...>]\n` +
+      `   or: goblintown context vectorize [--missing-only]\n`,
+  );
+  process.exitCode = 1;
+}
+
+async function cmdContextScanChats(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const result = await scanChatImports({
+    source: normalizeChatSource(flags.source),
+    path: flags.path,
+    query: flags.query,
+    since: flags.since,
+    limit: clampCliLimit(flags.limit, 50, 1, 500),
+  });
+  if (flags.json === "true") {
+    process.stdout.write(JSON.stringify({
+      records: result.records.map(chatRecordPreview),
+      skipped: result.skipped,
+    }, null, 2) + "\n");
+    return;
+  }
+  process.stdout.write(`Found ${result.records.length} previous chat(s).\n`);
+  for (const record of result.records) {
+    process.stdout.write(
+      `${record.id}  ${record.source}  ${record.updatedAt ?? record.createdAt ?? "unknown"}  ${truncate(record.title, 90)}\n`,
+    );
+  }
+  if (result.skipped.length > 0) {
+    process.stdout.write(`Skipped ${result.skipped.length} path(s).\n`);
+  }
+}
+
+async function cmdContextImportChats(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const ids = splitCsv(flags.ids);
+  const importAll = flags.all === "true";
+  if (!importAll && ids.length === 0) {
+    process.stderr.write(
+      `usage: goblintown context import chats --all [--source codex|chatgpt|folder] [--path <path>]\n` +
+        `   or: goblintown context import chats --ids <id,...> [--source codex|chatgpt|folder]\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const w = await loadWarren(process.cwd());
+  const scan = await scanChatImports({
+    source: normalizeChatSource(flags.source),
+    path: flags.path,
+    query: flags.query,
+    since: flags.since,
+    limit: clampCliLimit(flags.limit, 50, 1, 500),
+  });
+  const result = await importChatRecords({
+    hoard: w.hoard,
+    records: scan.records,
+    ids: importAll ? undefined : ids,
+    vectorize: flags["no-vectorize"] !== "true",
+    summarize: flags.summarize === "true",
+  });
+  process.stdout.write(
+    `Imported ${result.records.length} chat(s), ${result.artifacts.length} artifact(s), vectorized ${result.vectorized} artifact(s).\n`,
+  );
+  for (const record of result.records.slice(0, 20)) {
+    process.stdout.write(`  ${record.id}  ${record.source}  ${truncate(record.title, 90)}\n`);
+  }
+  if (result.skipped.length > 0) {
+    process.stdout.write(`Vectorization skipped/failed for ${result.skipped.length} artifact(s).\n`);
+  }
+}
+
+async function cmdContextVectorize(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const w = await loadWarren(process.cwd());
+  const result = await vectorizeStoredArtifacts({
+    hoard: w.hoard,
+    missingOnly: flags["missing-only"] === "true",
+    limit: flags.limit ? clampCliLimit(flags.limit, 100, 1, 500) : undefined,
+  });
+  process.stdout.write(
+    `Scanned ${result.scanned} artifact(s), vectorized ${result.vectorized} artifact(s).\n`,
+  );
+  if (result.failed.length > 0) {
+    process.stdout.write(`Failed ${result.failed.length} artifact(s).\n`);
   }
 }
 
@@ -356,12 +407,15 @@ async function cmdSummon(args: string[]): Promise<void> {
     return;
   }
   const personality = flags.personality as Personality | undefined;
+  const outputFormat = normalizeOutputFormat(flags.format);
   const creature = makeCreature(kind, personality);
 
   printBanner(kind);
 
   const { text, usage } = await callCreatureStream(creature, task, (chunk) => {
     process.stdout.write(chunk);
+  }, {
+    outputFormat,
   });
   process.stdout.write("\n");
 
@@ -1612,10 +1666,49 @@ async function cmdCountryRun(args: string[]): Promise<void> {
   }
 }
 
+async function cmdInstall(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const help = flags.help === "true" || flags.h === "true";
+  if (help) {
+    process.stdout.write(
+      [
+        "usage: goblintown install [--port <N>] [--no-serve]",
+        "",
+        "Single-command agent setup:",
+        "  1. Creates a Warren if none exists in the current directory.",
+        "  2. Installs the Codex MCP config into ~/.codex/config.toml.",
+        "  3. Installs the goblintown-sidecar skill into ~/.codex/skills.",
+        "  4. Starts the Tank in autopilot mode (no chat surface).",
+        "",
+        "The agent drives the Tank via MCP tools:",
+        "  goblintown_rite  — full multi-agent rite",
+        "  goblintown_plan  — planner DAG execution",
+        "  goblintown_chat  — single goblin call",
+        "",
+        "Flags:",
+        "  --port <N>    Port for the Tank (default 7777).",
+        "  --no-serve    Skip starting the server.",
+        "",
+      ].join("\n"),
+    );
+    return;
+  }
+  const { goblintownInstall, formatInstallOutput } = await import("./install.js");
+  const port = flags.port ? Number(flags.port) : 7777;
+  const shouldServe = flags["no-serve"] !== "true";
+  const result = await goblintownInstall(process.cwd(), {
+    port,
+    serve: shouldServe,
+  });
+  process.stdout.write(formatInstallOutput(result));
+  if (!result.ok) process.exitCode = 1;
+}
+
 async function cmdServe(args: string[]): Promise<void> {
   const flags = parseFlags(args);
   const port = flags.port ? Number(flags.port) : 7777;
-  await serve({ cwd: process.cwd(), port });
+  const chatMode = flags.chat === "true";
+  await serve({ cwd: process.cwd(), port, autopilot: !chatMode });
 }
 
 async function cmdCloud(args: string[]): Promise<void> {
@@ -2007,7 +2100,6 @@ async function cmdPlan(args: string[]): Promise<void> {
   );
   const rewardPlugin = await loadRewardPlugin(w.root);
 
-  const { findRelevantArtifacts } = await import("./artifact.js");
   const parents: Artifact[] = [];
   for (const r of cites) {
     const a = await w.hoard.getArtifactByRiteId(r);
@@ -2015,7 +2107,13 @@ async function cmdPlan(args: string[]): Promise<void> {
   }
   if (remember) {
     const all = await w.hoard.allArtifacts();
-    const auto = findRelevantArtifacts(all, task, 3).filter(
+    const { findRelevantArtifactsEmbedded } = await import("./embeddings.js");
+    const auto = (await findRelevantArtifactsEmbedded({
+      artifacts: all,
+      queryText: task,
+      limit: 3,
+      hoard: w.hoard,
+    })).filter(
       (a) => !parents.some((p) => p.id === a.id),
     );
     parents.push(...auto);
@@ -2065,6 +2163,97 @@ async function cmdPlan(args: string[]): Promise<void> {
   if (result.finalArtifact) {
     process.stdout.write(`Final artifact: ${result.finalArtifact.id}\n`);
   }
+}
+
+async function cmdMcp(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  if (flags["install-codex"] === "true") {
+    const {
+      installGoblintownCodexMcpConfig,
+      mcpDoctorPayload,
+    } = await import("./mcp.js");
+    const packageSpec = flags.package || flags["package-spec"];
+    const configPath = flags["codex-config"] || flags.config;
+    const install = await installGoblintownCodexMcpConfig({
+      packageSpec,
+      configPath,
+    });
+    const doctor = await mcpDoctorPayload(process.cwd(), { packageSpec });
+    const payload: Record<string, unknown> = {
+      ...doctor,
+      install,
+    };
+    if (install.ok !== true) {
+      payload.ok = false;
+      process.exitCode = 1;
+    }
+    process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+    return;
+  }
+  if (flags["config-snippet"] === "true") {
+    const { buildGoblintownMcpConfig } = await import("./mcp.js");
+    const packageSpec = flags.package || flags["package-spec"];
+    process.stdout.write(JSON.stringify(buildGoblintownMcpConfig({ packageSpec }), null, 2) + "\n");
+    return;
+  }
+  if (flags.doctor === "true") {
+    const { mcpDoctorPayload } = await import("./mcp.js");
+    const packageSpec = flags.package || flags["package-spec"];
+    process.stdout.write(JSON.stringify(await mcpDoctorPayload(process.cwd(), { packageSpec }), null, 2) + "\n");
+    return;
+  }
+  if (flags.help === "true" || flags.h === "true") {
+    process.stdout.write(
+      [
+        "usage: goblintown mcp [--doctor|--config-snippet]",
+        "",
+        "Starts the local stdio MCP sidecar for Codex.",
+        "  --doctor           Check the current Warren and print a config snippet.",
+        "  --install-codex    Add/update [mcp_servers.goblintown] in ~/.codex/config.toml.",
+        "  --codex-config <path>  Config path to update with --install-codex.",
+        "  --config-snippet   Print only the Codex MCP config JSON.",
+        "  --package <spec>   Use an npm package spec in snippets (default: goblintown@latest).",
+        "",
+      ].join("\n"),
+    );
+    return;
+  }
+  const { runGoblintownMcpServer } = await import("./mcp.js");
+  await runGoblintownMcpServer({ cwd: process.cwd() });
+}
+
+async function cmdSkill(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const positionals = positionalArgs(args);
+  const action = positionals[0];
+  const help = [
+    "usage: goblintown skill install [--skills-dir <path>] [--source-dir <path>] [--force]",
+    "",
+    "Installs the bundled goblintown-sidecar Codex skill into ~/.codex/skills.",
+    "Restart Codex after installing or updating the skill.",
+    "",
+  ].join("\n");
+  if (flags.help === "true" || flags.h === "true" || action === "help" || !action) {
+    process.stdout.write(help);
+    return;
+  }
+  if (action === "install") {
+    const { installGoblintownCodexSkill } = await import("./skill-install.js");
+    const result = await installGoblintownCodexSkill({
+      skillsDir: flags["skills-dir"],
+      sourceDir: flags["source-dir"],
+      force: flags.force === "true",
+    });
+    if (!result.ok) process.exitCode = 1;
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return;
+  }
+  if (action === "path") {
+    const { defaultCodexSkillsDir, GOBLINTOWN_SIDECAR_SKILL_NAME } = await import("./skill-install.js");
+    process.stdout.write(`${join(defaultCodexSkillsDir(), GOBLINTOWN_SIDECAR_SKILL_NAME)}\n`);
+    return;
+  }
+  process.stdout.write(help);
 }
 
 async function cmdExportTrace(args: string[]): Promise<void> {
@@ -2297,6 +2486,55 @@ function parseFlags(args: string[]): Record<string, string> {
     }
   }
   return out;
+}
+
+function positionalArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith("--")) {
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("--")) i++;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+function normalizeChatSource(raw: string | undefined): ChatImportSource | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === "codex" || value === "chatgpt" || value === "folder") return value;
+  throw new Error("--source must be codex, chatgpt, or folder");
+}
+
+function splitCsv(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function shellArgsToSlashLine(args: string[]): string {
+  return args.map((arg, index) => (index === 0 ? arg : quoteSlashArg(arg))).join(" ");
+}
+
+function quoteSlashArg(arg: string): string {
+  return /^[^\s"'\\]+$/.test(arg) ? arg : JSON.stringify(arg);
+}
+
+function clampCliLimit(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
 function parseBoolFlag(raw: string, name: string): boolean | null {
