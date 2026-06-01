@@ -5,7 +5,7 @@ Most endpoints are local-first and write to `.goblintown/`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Goblin Mode shell: Single Goblin chat, Rite handoff, settings. |
+| GET | `/` | Sidecar shell: rite controls, local imports, provider settings, hidden compatibility chat plumbing. |
 | GET | `/tank` | Full Tank/live run UI; accepts `?run=<runId>`. |
 | GET | `/rite/new` | Plain HTML Rite form fallback. |
 | GET | `/rite/:id` | Rite detail with artifact lineage. |

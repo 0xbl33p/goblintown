@@ -1,0 +1,6 @@
+interface:
+  display_name: "Goblintown Codex Plugin"
+  short_description: "Goblintown Codex Plugin 1.0"
+  default_prompt: "Use $goblintown-sidecar to open the Tank with goblintown_tank, then install, verify, or use Goblintown as a local Codex MCP sidecar. Goblintown defaults to harness-token rite configuration; use executionMode=local_provider only when the user opts into local Tank/provider execution."
+policy:
+  allow_implicit_invocation: true

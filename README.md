@@ -4,25 +4,47 @@
 
 # Goblintown
 
-Goblintown is a local-first desktop AI app. It opens straight into chat, asks
-which AI API or local model should power it, and keeps the rest of setup behind
-a few guided choices. Start with a single fast answer, then summon the full
+Goblintown is an agent-first, model-augmentable orchestration tool compatible
+with most front ends. The same core can mount behind Codex today, the shipped
+desktop beta shell, the ChatGPT App dev preview, and later host adapters that
+need a Tank, local memory, provider setup, imports, live run inspection, and
+auditable artifacts. Start with a single fast answer, then summon the full
 **town** when the work needs planning, memory, tools, debate, critique, and
 saved artifacts.
 
-Under the hood it is a planning multi-agent orchestrator: **Single Goblin** mode
+Model-augmentable means the front end can carry the model work with its own
+tokens by default, while the local Tank and configured provider can execute only
+when the user explicitly chooses that path.
+
+The core is a planning multi-agent orchestrator: **Single Goblin** mode
 is one worker and one answer; **Goblintown** mode turns the prompt into a small
 fleet of specialized creatures that decompose the task into a DAG, scavenge
 context, race and debate, attack each other's outputs, spawn focused specialists
 when the pack fails, and hand back a signed, content-addressed artifact that
 future runs can build on.
 
-Current beta release line: `goblintown@beta`.
+Current distribution lines:
+
+| Distribution | Version | Status | Front end / adapter |
+| --- | --- | --- | --- |
+| Goblintown Codex Plugin | 1.0 | Current | Codex composer plugin, skill, local stdio MCP, AI-autopilot Tank |
+| Goblintown Desktop | Beta 0.1 | Shipped | Desktop shell for macOS DMG, Windows installer, Linux AppImage |
+| Goblintown ChatGPT App | 1.0 | Dev preview | ChatGPT Apps SDK MCP adapter, Streamable HTTP endpoint, Tank widget resource |
+
+Next front-end adapters should get their own lane and name:
+
+- Goblintown Hermes App
+- Goblintown Opencode App
+- Goblintown OpenGPT App
+- Goblintown Claude Code App
+
+Other harnesses should follow the same pattern when they need the Tank.
 
 ## Download
 
-**Desktop app — recommended.** One-click installers, no build step. The app
-launches into chat and walks you through provider setup and optional features.
+**Desktop Beta 0.1.** One-click installers, no build step. The app
+launches into the sidecar control room and walks you through provider setup,
+imports, local memory, and optional features.
 
 | Platform | Installer |
 | --- | --- |
@@ -35,7 +57,8 @@ launches into chat and walks you through provider setup and optional features.
 
 macOS: open the DMG, drag Goblintown to Applications, launch. Windows: run the
 installer (Start Menu + Desktop shortcuts are created). Linux: mark the AppImage
-executable and run it. All downloads are on the
+executable and run it. Desktop Beta 0.1 currently uses the historical
+`v0.7.0-beta.1` release tag and asset filenames; all downloads are on the
 [v0.7.0-beta.1 release](https://github.com/0xbl33p/goblintown/releases/tag/v0.7.0-beta.1);
 verify with the published `SHA256SUMS.txt`.
 
@@ -50,6 +73,97 @@ own tooling:
 npm install -g goblintown
 goblintown serve        # opens the GUI at http://localhost:7777/
 ```
+
+**Codex Plugin 1.0.** Codex is the first front-end adapter for the orchestration
+core. To let Codex call Goblintown directly, use the simple installer:
+
+```bash
+npx -y goblintown@latest install
+```
+
+`install` creates or finds a Warren, installs Goblintown Codex Plugin 1.0 into
+`~/plugins/goblintown`, adds it to `~/.agents/plugins/marketplace.json`, runs
+`codex plugin add goblintown@personal`, installs the `goblintown-sidecar` skill,
+registers the local MCP server, and starts the Tank in AI-autopilot mode at
+`http://localhost:7777`. Restart Codex after plugin, skill, or MCP installs so
+the composer `+` menu and local tools reload.
+
+For granular setup or troubleshooting, the installer is equivalent to:
+
+```bash
+npx -y goblintown@latest plugin install
+npx -y goblintown@latest skill install
+npx -y goblintown@latest mcp --install-codex
+npx -y goblintown@latest mcp --doctor
+```
+
+`--install-codex` adds or updates the local Codex Desktop config and leaves a
+backup when it changes an existing file. The TOML block it manages is:
+
+```toml
+[mcp_servers.goblintown]
+command = "npx"
+args = ["-y", "goblintown@latest", "mcp"]
+```
+
+For MCP clients that expect JSON, the equivalent local stdio config is:
+
+```json
+{
+  "mcpServers": {
+    "goblintown": {
+      "command": "npx",
+      "args": ["-y", "goblintown@latest", "mcp"]
+    }
+  }
+}
+```
+
+`mcp --doctor` reports `ok: true` when the package can be used as an MCP
+sidecar. Project Warrens still win: if the current folder or one of its parents
+has `.goblintown/warren.json`, Goblintown operates there. If no project Warren
+is found, the MCP uses or creates a Codex-local global Warren at
+`${CODEX_HOME:-$HOME/.codex}/goblintown`, so Codex can run rites from any
+thread. Run `goblintown init` inside a project when you want the rite, Hoard,
+and provider settings to stay project-bound.
+
+The sidecar exposes `goblintown_tank` to launch or reuse the local Tank in
+AI-autopilot mode, `goblintown_chat` for Single Goblin, `goblintown_rite` to
+configure the full pack for the current harness, `goblintown_plan` to configure
+planner DAG work, `goblintown_provider` for model-route inspection, and
+`goblintown_doctor` for setup checks. When the plugin is selected from Codex,
+the agent should call `goblintown_tank` first so the user lands in the Tank
+right away. Rite and plan tools default to harness execution so Codex or another
+connected client spends its own model tokens; pass
+`executionMode: "local_provider"` only when you want the local Tank and
+configured provider to run the model calls. It runs on the user's machine;
+imported chats and Hoard artifacts stay local unless you choose to move them.
+
+**ChatGPT App 1.0.** The ChatGPT adapter is a dev preview for ChatGPT Developer
+Mode. It serves a Streamable HTTP MCP endpoint at `/mcp`, advertises the same
+tool semantics as Codex Plugin 1.0, and includes a Tank widget resource at
+`ui://goblintown/tank.html`.
+
+```bash
+npx -y goblintown@latest chatgpt install
+```
+
+That one command starts the adapter, opens the walkthrough page, creates a quick
+HTTPS tunnel for ChatGPT, and prints the `/mcp` URL to paste into ChatGPT
+Developer Mode. Keep the terminal open while using the app.
+
+For local development:
+
+```bash
+npm run chatgpt
+# or:
+goblintown chatgpt serve --port 8787 --public-base-url https://your-tunnel.example
+```
+
+Use the public HTTPS `/mcp` URL in ChatGPT Developer Mode. Rite and plan tools
+still configure work for the ChatGPT harness by default; choose
+`executionMode: "local_provider"` only when you want local provider spend. The
+adapter package lives in `apps/chatgpt/`.
 
 ## Background
 
@@ -299,7 +413,7 @@ The same package still ships a CLI for development and automation — `goblintow
 serve`, `init`, `rite`, `plan`, `quest`, `thesis`, `context`, `route`, and more.
 It is no longer the primary surface; run `goblintown --help` for the full list.
 
-## What ships in beta 0.7
+## What Ships In Desktop Beta 0.1
 
 | Area | What it does |
 | --- | --- |

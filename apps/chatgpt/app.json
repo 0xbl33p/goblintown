@@ -1,0 +1,8 @@
+{
+  "name": "Goblintown ChatGPT App",
+  "version": "1.0-dev",
+  "status": "dev-preview",
+  "mcpEndpoint": "/mcp",
+  "transport": "streamable-http",
+  "widgetUri": "ui://goblintown/tank.html"
+}

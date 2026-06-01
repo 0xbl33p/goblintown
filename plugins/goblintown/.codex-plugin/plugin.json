@@ -1,0 +1,43 @@
+{
+  "name": "goblintown",
+  "version": "1.0.0",
+  "description": "Goblintown Codex Plugin 1.0 is the Codex adapter for an agent-first, model-augmentable orchestration tool compatible with most front ends.",
+  "author": {
+    "name": "0xbl33p, and Angus Durrie",
+    "url": "https://github.com/0xbl33p"
+  },
+  "homepage": "https://github.com/0xbl33p/goblintown",
+  "repository": "https://github.com/0xbl33p/goblintown",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "codex",
+    "mcp",
+    "multi-agent",
+    "orchestration"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Goblintown",
+    "shortDescription": "Goblintown Codex Plugin 1.0",
+    "longDescription": "Goblintown Codex Plugin 1.0 gives Codex a front-end adapter for Goblintown's agent-first, model-augmentable orchestration core, which is compatible with most front ends through host adapters. It opens or reuses the Tank in AI-autopilot mode first, then lets Codex configure Single Goblin answers, full rites, planner DAGs, provider diagnostics, and Tank-backed progress views. It uses a project Warren when one exists and falls back to a Codex-local Warren for rites from any thread.",
+    "developerName": "0xbl33p, and Angus Durrie",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/0xbl33p/goblintown",
+    "defaultPrompt": [
+      "Open the Goblintown Tank",
+      "Run a Goblintown rite",
+      "Ask a Single Goblin",
+      "Check Goblintown setup"
+    ],
+    "composerIcon": "./assets/mayor-icon-small.png",
+    "logo": "./assets/mayor-icon.png",
+    "screenshots": [],
+    "brandColor": "#23A96E"
+  }
+}

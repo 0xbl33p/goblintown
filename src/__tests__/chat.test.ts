@@ -277,6 +277,7 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /settingsSidebarPanel\.hidden = !open/);
     assert.match(serverSource, /settingsSidebarBack\.onclick = \(\) => \{[\s\S]*setSidebarSettingsMode\(false\);[\s\S]*showSidecarSurface\(\);/);
     assert.match(serverSource, /function showSettingsSurface\(\)/);
+    assert.match(serverSource, /settingsTrigger\.onclick = \(\) => \{[\s\S]*showSettingsSurface\(\);/);
     assert.match(serverSource, /sidebarFullSettings\.onclick = \(\) => \{[\s\S]*showSettingsSurface\(\);/);
     assert.match(serverSource, /function showSettingsSection\(section\)/);
     assert.match(serverSource, /settingsPopover\.classList\.toggle\("open", false\)/);
@@ -314,7 +315,7 @@ describe("single goblin chat", () => {
   it("keeps first-run onboarding from swallowing app control clicks", () => {
     assert.match(serverSource, /const onboardingStorageKey = "goblintown\.onboarding\.v3"/);
     assert.match(serverSource, /id="onboard-provider-actions"[\s\S]*data-onboard-provider="openai"[\s\S]*data-onboard-provider="deepseek"[\s\S]*data-onboard-provider="lmstudio"[\s\S]*data-onboard-provider="ollama"[\s\S]*data-onboard-provider="anthropic"[\s\S]*data-onboard-provider="custom"/);
-    assert.match(serverSource, /title: "Power the Sidecar"/);
+    assert.match(serverSource, /title: "AI Autopilot Tank"/);
     assert.match(serverSource, /async function chooseOnboardingProvider\(preset\)/);
     assert.match(serverSource, /showSettingsSurface\(\);[\s\S]*showSettingsSection\("api"\)/);
     assert.match(serverSource, /fetch\("\/api\/provider"/);
@@ -359,7 +360,7 @@ describe("single goblin chat", () => {
     assert.match(serverSource, /id="root-rite-surface"/);
     assert.match(serverSource, /id="root-rite-discussion"/);
     assert.match(serverSource, /function sidebarRiteButtons\(runs: Map<string, RunState>\)/);
-    assert.match(serverSource, /res\.send\(tankHtml\(warren\.manifest\.name, warren\.manifest\.country, loot\.length, rites\.length, drift, runs\)\)/);
+    assert.match(serverSource, /res\.send\(tankHtml\(warren\.manifest\.name, warren\.manifest\.country, loot\.length, rites\.length, drift, runs, autopilot\)\)/);
     assert.match(serverSource, /\[\.\.\.runs\.values\(\)\][\s\S]*sort\(\(a, b\) => b\.record\.startedAt - a\.record\.startedAt\)[\s\S]*slice\(0, 6\)/);
     assert.match(serverSource, /function selectSidebarSurface\(kind, id\)/);
     assert.match(serverSource, /function renderInlineRite\(record\)/);

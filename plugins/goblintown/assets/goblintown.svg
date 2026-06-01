@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Goblintown">
+  <rect width="256" height="256" rx="44" fill="#13251c"/>
+  <path d="M36 170 L77 86 L111 150 L146 58 L184 154 L214 96 L232 170 Z" fill="#23a96e"/>
+  <path d="M58 174 Q128 220 202 174" fill="#1b3a2b"/>
+  <circle cx="100" cy="148" r="13" fill="#fff6c8"/>
+  <circle cx="158" cy="148" r="13" fill="#fff6c8"/>
+  <path d="M94 190 Q128 213 163 190" fill="none" stroke="#fff6c8" stroke-width="14" stroke-linecap="round"/>
+  <path d="M44 202 H212" stroke="#c6a15b" stroke-width="10" stroke-linecap="round"/>
+</svg>

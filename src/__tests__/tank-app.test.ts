@@ -111,6 +111,26 @@ describe("Tank app smoke", () => {
     assert.doesNotThrow(() => new Script(rootScript, { filename: "goblintown-root.js" }));
   });
 
+  it("keeps the autopilot missing-element fallback from throwing", async () => {
+    const url = await startApp();
+    const html = await (await fetch(url)).text();
+
+    assert.match(html, /function missingElementProxy\(\)/);
+    assert.match(html, /return proxy;/);
+    assert.match(html, /document\.getElementById\(id\) \|\| missingElementProxy\(\)/);
+    assert.doesNotMatch(html, /undefined:t/);
+  });
+
+  it("keeps destructive reset out of the run error dialog", async () => {
+    const url = await startApp();
+    const html = await (await fetch(url)).text();
+
+    assert.match(html, /id="resume-dismiss">Dismiss<\/button>/);
+    assert.match(html, /\$\("resume-dismiss"\)\.onclick = hideResumePanel/);
+    assert.doesNotMatch(html, /id="resume-dismiss">Asteroid Mode<\/button>/);
+    assert.doesNotMatch(html, /\$\("resume-dismiss"\)\.onclick = openAsteroidMode/);
+  });
+
   it("returns useful app API errors instead of a broken chat state", async () => {
     const url = await startApp();
     const response = await fetch(new URL("/api/chat", url), {

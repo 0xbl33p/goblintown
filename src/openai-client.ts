@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import OpenAI from "openai";
 import { sharedSemaphore } from "./concurrency.js";
 import {
@@ -12,6 +13,7 @@ import {
   type ProviderRuntime,
   resolveProviderRuntimeForSlot,
 } from "./providers.js";
+import { readProviderSecretsForRootSync } from "./provider-secrets.js";
 import type {
   Creature,
   ModelSlot,
@@ -20,6 +22,7 @@ import type {
 } from "./types.js";
 
 const _clients = new Map<string, OpenAI>();
+const providerRootStore = new AsyncLocalStorage<string>();
 
 function getClient(runtime: ProviderRuntime): OpenAI {
   if (runtime.missingApiKey) {
@@ -47,6 +50,19 @@ export interface CallOptions {
 export interface CreatureResponse {
   text: string;
   usage: TokenUsage;
+}
+
+export function withProviderRoot<T>(root: string, fn: () => T): T {
+  return providerRootStore.run(root, fn);
+}
+
+export function resolveActiveProviderRuntimeForSlot(
+  slot: ModelSlot,
+): ProviderRuntime {
+  const root = providerRootStore.getStore();
+  const config = loadProviderConfigFromCwd(root);
+  const storedSecrets = root ? readProviderSecretsForRootSync(root) : undefined;
+  return resolveProviderRuntimeForSlot(slot, config, process.env, storedSecrets);
 }
 
 // gpt-5 and o-series reasoning models reject `temperature` and use
@@ -116,9 +132,8 @@ export async function callCreature(
   userPrompt: string,
   opts: CallOptions = {},
 ): Promise<CreatureResponse> {
-  const config = loadProviderConfigFromCwd();
   const slot = creature.modelSlot ?? creature.kind;
-  const runtime = resolveProviderRuntimeForSlot(slot, config);
+  const runtime = resolveActiveProviderRuntimeForSlot(slot);
   const client = getClient(runtime);
   const sem = sharedSemaphore();
   return sem.run(async () => {
@@ -160,9 +175,8 @@ export async function callCreatureStream(
   onChunk: (chunk: string) => void,
   opts: CallOptions = {},
 ): Promise<CreatureResponse> {
-  const config = loadProviderConfigFromCwd();
   const slot = creature.modelSlot ?? creature.kind;
-  const runtime = resolveProviderRuntimeForSlot(slot, config);
+  const runtime = resolveActiveProviderRuntimeForSlot(slot);
   const client = getClient(runtime);
   const sem = sharedSemaphore();
   return sem.run(async () => {

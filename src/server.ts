@@ -151,6 +151,7 @@ export interface ServeOptions {
   cwd: string;
   port: number;
   autopilot?: boolean;
+  quiet?: boolean;
 }
 
 export interface ServeHandle {
@@ -1607,17 +1608,31 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
       .send(layout("Not Found", "<h1>404</h1><p>The Hoard does not contain that.</p>")),
   );
 
-  const server = await new Promise<Server>((resolve) => {
-    const listening = app.listen(opts.port, () => {
+  const server = await new Promise<Server>((resolve, reject) => {
+    const listening = app.listen(opts.port);
+    const cleanup = () => {
+      listening.off("error", onError);
+      listening.off("listening", onListening);
+    };
+    const onError = (err: Error) => {
+      cleanup();
+      reject(err);
+    };
+    const onListening = () => {
+      cleanup();
       const address = listening.address();
       const actualPort =
         typeof address === "object" && address ? address.port : opts.port;
-      process.stdout.write(
-        `Hoard UI listening on http://localhost:${actualPort}/\n` +
-          `Warren: ${warren.manifest.name}  (${warren.root})\n`,
-      );
+      if (!opts.quiet) {
+        process.stdout.write(
+          `Hoard UI listening on http://localhost:${actualPort}/\n` +
+            `Warren: ${warren.manifest.name}  (${warren.root})\n`,
+        );
+      }
       resolve(listening);
-    });
+    };
+    listening.once("error", onError);
+    listening.once("listening", onListening);
   });
   const address = server.address();
   const actualPort =
@@ -6285,17 +6300,17 @@ function tankHtml(
   }
 
   .t1, .t2, .t3, .t4 { display: none; }
-  .warren[data-tier="1"] .t1 { display: block; }
-  .warren[data-tier="2"] .t1, .warren[data-tier="2"] .t2 { display: block; }
-  .warren[data-tier="3"] .t1, .warren[data-tier="3"] .t2, .warren[data-tier="3"] .t3 { display: block; }
-  .warren[data-tier="4"] .t1, .warren[data-tier="4"] .t2,
-  .warren[data-tier="4"] .t3, .warren[data-tier="4"] .t4 { display: block; }
-  .warren[data-tier="2"] .t2-flex { display: flex; }
-  .warren[data-tier="3"] .t2-flex,
-  .warren[data-tier="3"] .t3-flex { display: flex; }
-  .warren[data-tier="4"] .t2-flex,
-  .warren[data-tier="4"] .t3-flex,
-  .warren[data-tier="4"] .t4-flex { display: flex; }
+  .warren[data-visual-tier="1"] .t1 { display: block; }
+  .warren[data-visual-tier="2"] .t1, .warren[data-visual-tier="2"] .t2 { display: block; }
+  .warren[data-visual-tier="3"] .t1, .warren[data-visual-tier="3"] .t2, .warren[data-visual-tier="3"] .t3 { display: block; }
+  .warren[data-visual-tier="4"] .t1, .warren[data-visual-tier="4"] .t2,
+  .warren[data-visual-tier="4"] .t3, .warren[data-visual-tier="4"] .t4 { display: block; }
+  .warren[data-visual-tier="2"] .t2-flex { display: flex; }
+  .warren[data-visual-tier="3"] .t2-flex,
+  .warren[data-visual-tier="3"] .t3-flex { display: flex; }
+  .warren[data-visual-tier="4"] .t2-flex,
+  .warren[data-visual-tier="4"] .t3-flex,
+  .warren[data-visual-tier="4"] .t4-flex { display: flex; }
   .t2-flex, .t3-flex, .t4-flex { display: none; }
 
   .star { position: absolute; color: var(--muted-deep); font-size: 0.7rem; opacity: 0.6; animation: twinkle 4s ease-in-out infinite; }
@@ -6325,17 +6340,17 @@ function tankHtml(
     filter: drop-shadow(0 0 8px rgba(243,223,122,0.6));
     animation: flicker 2.4s ease-in-out infinite; transition: opacity .5s;
   }
-  .warren[data-tier="3"] .lantern,
-  .warren[data-tier="4"] .lantern { opacity: 1; }
+  .warren[data-visual-tier="3"] .lantern,
+  .warren[data-visual-tier="4"] .lantern { opacity: 1; }
   @keyframes flicker { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
 
   .smoke {
     position: absolute; color: var(--muted); font-size: 0.85rem;
     opacity: 0; line-height: 1; animation: smoke 4s ease-out infinite; pointer-events: none;
   }
-  .warren[data-tier="2"] .smoke,
-  .warren[data-tier="3"] .smoke,
-  .warren[data-tier="4"] .smoke { opacity: 1; }
+  .warren[data-visual-tier="2"] .smoke,
+  .warren[data-visual-tier="3"] .smoke,
+  .warren[data-visual-tier="4"] .smoke { opacity: 1; }
   @keyframes smoke {
     0%   { opacity: 0; transform: translateY(0) scale(0.9); }
     25%  { opacity: 0.6; }
@@ -6395,9 +6410,9 @@ function tankHtml(
     filter: drop-shadow(0 0 10px rgba(243,223,122,0.4));
     transition: opacity .5s; text-align: center; z-index: 2;
   }
-  .warren[data-tier="2"] .hoard { opacity: 0.7; }
-  .warren[data-tier="3"] .hoard { opacity: 0.9; }
-  .warren[data-tier="4"] .hoard { opacity: 1; }
+  .warren[data-visual-tier="2"] .hoard { opacity: 0.7; }
+  .warren[data-visual-tier="3"] .hoard { opacity: 0.9; }
+  .warren[data-visual-tier="4"] .hoard { opacity: 1; }
 
   .creature {
     position: absolute; font-size: 2.6rem; line-height: 1; z-index: 4;
@@ -6553,7 +6568,7 @@ function tankHtml(
   }
   .goblin-pile .creature { position: static; font-size: 2.2rem; }
   .goblin-wrap {
-    width: 72px; min-height: 92px;
+    width: 92px; min-height: 112px;
     display: flex; flex-direction: column; align-items: center;
     transition: opacity 0.25s ease, transform 0.25s ease;
   }
@@ -6562,7 +6577,7 @@ function tankHtml(
   .goblin-wrap[data-specialist="true"] .goblin-sprite { filter: invert(1) hue-rotate(160deg) saturate(1.45) contrast(1.08); }
   .goblin-wrap[data-specialist="true"] .personality { color: #9ef8ff; text-shadow: 0 0 8px rgba(158,248,255,0.42); }
   .goblin-sprite {
-    width: 76px; height: 76px; display: block;
+    width: 96px; height: 96px; display: block;
     image-rendering: pixelated;
   }
   .goblin-explosion {
@@ -7068,7 +7083,7 @@ function tankHtml(
 </head>
 <body>
 
-<div class="warren" id="warren" data-tier="0">
+<div class="warren" id="warren" data-tier="0" data-visual-tier="0">
 
   <div class="strip">
     <span class="name" id="town-identity">Goblintown · ${esc(townIdentity)}</span>
@@ -7466,7 +7481,7 @@ function tankHtml(
             <article class="sidecar-card">
               <span>MCP</span>
               <strong>Local stdio server</strong>
-              <p>Install with the bundled skill or run <code>goblintown mcp --doctor</code> to verify the current Warren.</p>
+              <p>Install with the bundled skill or run <code>goblintown mcp --doctor</code> to verify the project or Codex-local global Warren.</p>
             </article>
             <article class="sidecar-card">
               <span>Rites</span>
@@ -7653,7 +7668,7 @@ function tankHtml(
       </div>
       <div class="resume-actions">
         <button class="btn primary" type="button" id="resume-start">Resume</button>
-        <button class="btn" type="button" id="resume-dismiss">Asteroid Mode</button>
+        <button class="btn" type="button" id="resume-dismiss">Dismiss</button>
       </div>
     </div>
 
@@ -7863,7 +7878,21 @@ function tankHtml(
 <script>
 const INITIAL = ${initial};
 
-const $ = (id) => document.getElementById(id)${autopilot ? ` || new Proxy(function t(){ return t }, { get: (o,k) => k==='then'?undefined:t, set: ()=>true, apply: (o) => o })` : ""};
+${autopilot ? `function missingElementProxy() {
+  let proxy;
+  const noop = function missingElement() { return proxy; };
+  proxy = new Proxy(noop, {
+    get: (_target, key) => {
+      if (key === "then") return undefined;
+      if (key === Symbol.toPrimitive) return () => "";
+      return proxy;
+    },
+    set: () => true,
+    apply: () => proxy,
+  });
+  return proxy;
+}
+` : ""}const $ = (id) => document.getElementById(id)${autopilot ? ` || missingElementProxy()` : ""};
 const tank = $("tank");
 const ticker = $("ticker");
 const tickerText = $("ticker-text");
@@ -8000,7 +8029,8 @@ function settingsActionValue(button) {
 }
 
 settingsTrigger.onclick = () => {
-  setSidebarSettingsOpen(!sidebarSettings.classList.contains("open"));
+  closeTopPopovers("");
+  showSettingsSurface();
 };
 
 sidebarFullSettings.onclick = () => {
@@ -9154,13 +9184,15 @@ function tierOf(rites) {
 const tierName = ["unincorporated","hamlet","village","town","city","metropolis","city-state","goblin empire"];
 function applyStats(stats) {
   const t = tierOf(stats.rites);
-  warren.dataset.tier = t;
+  const visualTier = Math.min(4, Math.max(1, t));
+  warren.dataset.tier = String(t);
+  warren.dataset.visualTier = String(visualTier);
   $("stat-loot").textContent = stats.loot;
   $("stat-rites").textContent = stats.rites;
   $("stat-drift").textContent = (stats.drift ?? 0).toFixed(3);
   $("tier-display").textContent = "tier " + t + " · " + tierName[t - 1];
   const piles = ["", "💰", "💰💰", "💰💰💰", "💰💰💰💰💎"];
-  $("hoard").textContent = piles[t] || "";
+  $("hoard").textContent = piles[visualTier] || "";
   if (stats.rites === 0) setTicker("idle — unincorporated, awaiting first rite");
   else if (!ticker.classList.contains("live")) setTicker("idle — " + stats.rites + " rites in this town");
 }
@@ -12207,10 +12239,10 @@ const onboardCloudMode = $("onboard-cloud-mode");
 const onboardingStorageKey = "goblintown.onboarding.v3";
 const onboardingSteps = [
   {
-    title: "Power the Sidecar",
-    body: "Choose the API or local model Codex should route through first. You can save a key now from API settings, or keep moving and fill it in later.",
+    title: "AI Autopilot Tank",
+    body: "This is the landing surface. Codex can configure rites with harness tokens right away; choose a local provider only when you want the Tank to spend your own provider.",
     providerChoice: true,
-    targetId: "sidecar-surface",
+    targetId: "tank",
   },
   {
     title: "Choose Your Town",
@@ -12247,8 +12279,8 @@ const onboardingSteps = [
   },
   {
     title: "You are ready",
-    body: "Use Codex for prompts, start rites from the sidecar or sidebar, and keep deeper configuration inside Settings.",
-    targetId: "sidecar-surface",
+    body: "Call the Goblintown plugin to open this Tank, then let Codex drive rites, plans, setup, imports, and inspection from the sidecar.",
+    targetId: "tank",
   },
 ];
 let onboardingIndex = 0;
@@ -13895,6 +13927,31 @@ function goHomeGoblinSlot(slot, delayMs) {
   }, delay);
 }
 
+function bringGoblinOutForTurn(slot, action, options) {
+  if (!slot) return;
+  options = options || {};
+  const state = options.state || "active";
+  const actionDuration = options.durationMs || 1600;
+  const homeDelay = typeof options.homeAfterMs === "number" ? options.homeAfterMs : 2600;
+  const shouldLoop = !!options.loop && homeDelay < 0;
+  const playTurnAction = () => {
+    if (!slot || slot.wrap.dataset.home === "true") return;
+    playGoblinAction(slot, action, { durationMs: actionDuration, loop: shouldLoop, state });
+    if (homeDelay >= 0) goHomeGoblinSlot(slot, homeDelay);
+  };
+  if (slot.wrap.dataset.home === "true") {
+    const comeOutDuration = options.comeOutDurationMs || 780;
+    playGoblinAction(slot, "come-out", { state, durationMs: comeOutDuration });
+    const comeOutToken = slot.actionToken;
+    setTimeout(() => {
+      if (slot.actionToken !== comeOutToken) return;
+      playTurnAction();
+    }, comeOutDuration + 90);
+  } else {
+    playTurnAction();
+  }
+}
+
 function goHomeAllGoblins(delayMs) {
   clearAllTextBubbles();
   Object.values(goblinByIndex).forEach((slot) => goHomeGoblinSlot(slot, delayMs || 0));
@@ -14033,8 +14090,10 @@ function updateThinkingBubble(slot, text) {
     const goblin = slot.indexOf("specialist#") === 0
       ? specialistSlotForIndex(+slot.slice("specialist#".length))
       : goblinByIndex[idx] || goblinByIndex[idx % Math.max(1, Object.keys(goblinByIndex).length)];
-    if (goblin && goblin.wrap.dataset.home !== "true" && goblin.el.dataset.action !== "argue") {
-      playGoblinAction(goblin, "argue", { loop: true, durationMs: 1600 });
+    if (goblin && (goblin.wrap.dataset.home === "true" || goblin.el.dataset.action !== "argue")) {
+      bringGoblinOutForTurn(goblin, "argue", { durationMs: 1600, homeAfterMs: 2800 });
+    } else if (goblin) {
+      goHomeGoblinSlot(goblin, 2800);
     }
   }
   let b = thinkingBubbles[slot];
@@ -14274,7 +14333,7 @@ function hideResumePanel() {
   resumePanel.classList.remove("open");
 }
 
-$("resume-dismiss").onclick = openAsteroidMode;
+$("resume-dismiss").onclick = hideResumePanel;
 $("btn-asteroid").onclick = openAsteroidMode;
 
 async function refreshResumePanel(runId, fallbackIsPlan) {
@@ -14972,9 +15031,11 @@ function openStream(runId, isPlan, opts) {
     replayEnded = true;
     // Flush the last thinking text per slot once, so the user sees where each
     // creature got to during the replayed period.
-    Object.keys(replayLatestThinking).forEach((slot) => {
-      updateThinkingBubble(slot, replayLatestThinking[slot]);
-    });
+    if (!terminalAttach) {
+      Object.keys(replayLatestThinking).forEach((slot) => {
+        updateThinkingBubble(slot, replayLatestThinking[slot]);
+      });
+    }
     if (!terminalAttach) setTicker("(live) — caught up", true);
   });
 
@@ -15106,15 +15167,6 @@ async function handleStep(step, opts) {
     case "pack:start":
       setTicker("pack of " + step.size + " dispatched", true);
       renderGoblinSlots(step.size);
-      Object.values(goblinByIndex).forEach((slot, i) => {
-        if (!replay) {
-          playGoblinAction(slot, "come-out", { state: "active", durationMs: 1300 + i * 90 });
-        } else {
-          slot.wrap.dataset.home = "false";
-          slot.el.dataset.state = "active";
-          holdGoblinStanding(slot);
-        }
-      });
       break;
     case "pack:goblin": {
       const slot = goblinByIndex[step.index] || goblinByIndex[step.index % Math.max(1, Object.keys(goblinByIndex).length)];
@@ -15125,7 +15177,7 @@ async function handleStep(step, opts) {
           slot.personality = step.personality;
           slot.tag.textContent = step.personality;
         }
-        if (!replay) playGoblinAction(slot, "argue", { durationMs: 1600 });
+        if (!replay) bringGoblinOutForTurn(slot, "argue", { durationMs: 1600, homeAfterMs: 2400 });
         clearThinkingBubble("goblin#" + step.index);
         if (!replay) {
           const snippet = await fetchLootSnippet(step.lootId, 70);
@@ -15136,10 +15188,6 @@ async function handleStep(step, opts) {
     }
     case "debate:start":
       setTicker("debate round " + step.round + " · " + step.size + " goblins exchanging", true);
-      Object.values(goblinByIndex).forEach((slot) => {
-        if (!replay) playGoblinAction(slot, "argue", { loop: true, durationMs: 1800 });
-        else slot.el.dataset.state = "active";
-      });
       break;
     case "debate:goblin": {
       const slot = goblinByIndex[step.index];
@@ -15148,7 +15196,7 @@ async function handleStep(step, opts) {
         goblinByLootId[step.lootId] = slot;
         clearThinkingBubble("goblin#" + step.index);
         if (!replay) {
-          playGoblinAction(slot, "argue", { durationMs: 1600 });
+          bringGoblinOutForTurn(slot, "argue", { durationMs: 1600, homeAfterMs: 2400 });
           const snippet = await fetchLootSnippet(step.lootId, 70);
           if (snippet) dispatchBubble(slot.el, "↻ " + snippet);
         }
@@ -15162,17 +15210,13 @@ async function handleStep(step, opts) {
       setState("c-gremlin","active");
       pounceVariant();
       setTicker("gremlin attacking", true);
-      Object.values(goblinByIndex).forEach((slot) => {
-        if (!replay) playGoblinAction(slot, "defend", { loop: true, durationMs: 1800 });
-        else slot.el.dataset.state = "active";
-      });
       break;
     case "chaos:done": {
       if (!replay) {
         const snippet = await fetchLootSnippet(step.gremlinId, 70);
         if (snippet) dispatchBubble($("c-gremlin"), snippet, "attack");
         const slot = goblinByLootId[step.goblinId];
-        if (slot) playGoblinAction(slot, "defend", { durationMs: 1400 });
+        if (slot) bringGoblinOutForTurn(slot, "defend", { durationMs: 1400, homeAfterMs: 2200 });
       }
       setState("c-gremlin","idle");
       break;
@@ -15201,10 +15245,10 @@ async function handleStep(step, opts) {
       // Mark winning goblin if known
       const slot = goblinByLootId[v.lootId];
       if (slot && passed) {
-        slot.el.dataset.state = "winner";
+        bringGoblinOutForTurn(slot, "argue", { state: "winner", durationMs: 1500, homeAfterMs: 3200 });
         dispatchBubble(slot.el, "👑 winner · " + v.score.toFixed(2) + " shinies", "win");
       } else if (slot && !passed) {
-        slot.el.dataset.state = "fail";
+        bringGoblinOutForTurn(slot, "defend", { state: "fail", durationMs: 1300, homeAfterMs: 2400 });
       }
       break;
     }
@@ -15240,6 +15284,7 @@ async function handleStep(step, opts) {
         slot.tag.textContent = "specialist";
         slot.el.dataset.state = "active";
         if (!replay) {
+          bringGoblinOutForTurn(slot, "argue", { durationMs: 1500, homeAfterMs: 2800 });
           hopGoblin(slot.el);
           dispatchBubble(slot.el, "focus: " + step.focus.slice(0, 60));
         }
@@ -15254,7 +15299,10 @@ async function handleStep(step, opts) {
       clearThinkingBubble("specialist#" + step.index);
       if (!replay && slot) {
         const snippet = await fetchLootSnippet(step.lootId, 70);
-        if (snippet) dispatchBubble(slot.el, snippet);
+        if (snippet) {
+          bringGoblinOutForTurn(slot, "argue", { durationMs: 1600, homeAfterMs: 2600 });
+          dispatchBubble(slot.el, snippet);
+        }
       }
       break;
     }
@@ -15263,10 +15311,10 @@ async function handleStep(step, opts) {
       if (slot) {
         specialistByIndex[step.index] = slot;
         if (step.verdict.passed) {
-          slot.el.dataset.state = "winner";
+          bringGoblinOutForTurn(slot, "argue", { state: "winner", durationMs: 1500, homeAfterMs: 3200 });
           dispatchBubble(slot.el, "👑 specialist won · " + step.verdict.score.toFixed(2), "win");
         } else {
-          slot.el.dataset.state = "fail";
+          bringGoblinOutForTurn(slot, "defend", { state: "fail", durationMs: 1300, homeAfterMs: 2400 });
         }
       }
       setTicker(

@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  buildOpenAIRealtimeSessionConfig,
   buildVoiceTranscriptionRequest,
   normalizeVoiceConfig,
   parseVoiceTranscript,
@@ -85,6 +86,44 @@ describe("voice connectors", () => {
     assert.equal(request.bodyKind, "form");
     assert.equal(request.formFields.model, "gpt-4o-mini-transcribe");
     assert.equal(request.formFields.prompt, "Goblintown terms: rite, Tank, Hoard.");
+  });
+
+  it("builds OpenAI realtime sessions with live audio and Goblintown instructions", () => {
+    const session = buildOpenAIRealtimeSessionConfig(
+      normalizeVoiceConfig({
+        provider: "openai",
+        model: "gpt-realtime-2",
+        prompt: "Use Goblintown nouns: rite, Tank, Hoard, loot.",
+        outputVoice: "cedar",
+      }),
+      { personality: "goblin_mode" },
+    );
+
+    assert.equal(session.type, "realtime");
+    assert.equal(session.model, "gpt-realtime-2");
+    assert.deepEqual(session.output_modalities, ["audio"]);
+    assert.equal(session.audio.output.voice, "cedar");
+    assert.equal(session.audio.input.transcription.model, "gpt-4o-mini-transcribe");
+    assert.equal(session.audio.input.turn_detection.type, "server_vad");
+    assert.equal(session.audio.input.turn_detection.create_response, true);
+    assert.match(session.instructions, /Goblintown/i);
+    assert.match(session.instructions, /goblin_mode/);
+    assert.match(session.instructions, /sound/i);
+  });
+
+  it("keeps OpenAI realtime model names out of transcription-only requests", () => {
+    const request = buildVoiceTranscriptionRequest({
+      config: normalizeVoiceConfig({
+        provider: "openai",
+        model: "gpt-realtime-2",
+      }),
+      apiKey: "sk-test",
+      audio: Buffer.from("audio"),
+      mimeType: "audio/webm",
+    });
+
+    assert.equal(request.url, "https://api.openai.com/v1/audio/transcriptions");
+    assert.equal(request.formFields.model, "gpt-4o-mini-transcribe");
   });
 
   it("builds Deepgram transcription requests as direct audio uploads", () => {
@@ -175,7 +214,13 @@ describe("voice connectors", () => {
     assert.match(serverSource, /app\.get\("\/api\/voice"/);
     assert.match(serverSource, /app\.post\("\/api\/voice"/);
     assert.match(serverSource, /app\.post\("\/api\/voice\/transcribe"/);
+    assert.match(serverSource, /app\.post\(\s*"\/api\/voice\/realtime"/);
+    assert.match(serverSource, /express\.text\(\{ type: \["application\/sdp", "text\/plain"\]/);
+    assert.match(serverSource, /buildOpenAIRealtimeSessionConfig/);
     assert.match(serverSource, /SpeechRecognition \|\| window\.webkitSpeechRecognition/);
+    assert.match(serverSource, /RTCPeerConnection/);
+    assert.match(serverSource, /fetch\("\/api\/voice\/realtime/);
+    assert.match(serverSource, /setRemoteDescription\(answer\)/);
     assert.match(serverSource, /function goblinifyVoiceTranscript/);
     assert.match(serverSource, /function voiceInputErrorMessage\(err\)/);
     assert.match(serverSource, /microphone permission denied; allow/);
@@ -204,7 +249,9 @@ describe("voice connectors", () => {
     assert.match(serverSource, /data-settings-section="voice"/);
     assert.match(serverSource, /settings-live-voice/);
     assert.match(serverSource, /settings-voice-config/);
-    assert.match(serverSource, /settings-live-voice[\s\S]*setRootChatSpeakEnabled\(true\)[\s\S]*beginSpeechInput\(\)/);
+    assert.match(serverSource, /settings-live-voice[\s\S]*setRootChatVoiceMode\("full"\)/);
+    assert.match(serverSource, /settings-speak-only[\s\S]*setRootChatVoiceMode\("stt"\)/);
+    assert.match(serverSource, /settings-listen-only[\s\S]*setRootChatVoiceMode\("tts"\)/);
     assert.match(serverSource, /settings-voice-config[\s\S]*voiceChip\.click\(\)/);
   });
 });

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "goblintown": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "goblintown@latest",
+        "mcp"
+      ]
+    }
+  }
+}

@@ -40,8 +40,9 @@ Release readiness:
 npm run release:ready
 ```
 
-That readiness script validates the beta artifact set, SHA256 sums, and signing
-credentials. If it fails because certificates are missing, believe it.
+That readiness script validates the Desktop Beta 0.1 artifact set, SHA256 sums,
+and signing credentials. If it fails because certificates are missing, believe
+it.
 
 ## Tests
 

@@ -11,6 +11,9 @@ const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
 const siteIndex = readFileSync(join(repoRoot, "site", "index.html"), "utf8");
 const desktopReleaseWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "desktop-release.yml"), "utf8");
 const beta07ReleaseNote = readFileSync(join(repoRoot, "docs", "releases", "0.7.0-beta.1.md"), "utf8");
+const distributionsDoc = readFileSync(join(repoRoot, "docs", "distributions.md"), "utf8");
+const cliReference = readFileSync(join(repoRoot, "docs", "reference", "cli.md"), "utf8");
+const chatGptAppReadme = readFileSync(join(repoRoot, "apps", "chatgpt", "README.md"), "utf8");
 const assetReadme = readFileSync(join(repoRoot, "site", "assets", "README.md"), "utf8");
 const packageJson = readFileSync(join(repoRoot, "package.json"), "utf8");
 
@@ -41,17 +44,43 @@ describe("docs and CLI help", () => {
     assert.match(cliHelpSource, /goblintown context import chats/);
     assert.match(cliHelpSource, /goblintown context vectorize/);
     assert.match(cliHelpSource, /file-backed Artifacts/);
+    assert.match(cliHelpSource, /goblintown mcp/);
+    assert.match(cliHelpSource, /local stdio MCP sidecar/);
+    assert.match(cliHelpSource, /Codex-local global Warren/);
+    assert.match(cliHelpSource, /goblintown chatgpt install/);
+    assert.match(cliHelpSource, /npx -y goblintown@latest chatgpt install/);
+    assert.match(cliHelpSource, /Streamable\s+HTTP MCP endpoint at \/mcp/);
+    assert.match(cliHelpSource, /ChatGPT\s+Developer\s+Mode/);
+    assert.match(cliHelpSource, /GOBLINTOWN_CHATGPT_ALLOWED_HOSTS/);
+    assert.match(cliHelpSource, /goblintown plugin install/);
+    assert.match(cliHelpSource, /composer \+ menu/);
 
     // cli.ts still dispatches and implements the cloud command.
     assert.match(cliSource, /case "cloud":/);
+    assert.match(cliSource, /case "mcp":/);
+    assert.match(cliSource, /case "chatgpt":/);
+    assert.match(cliSource, /case "plugin":/);
+    assert.match(cliSource, /async function cmdChatGpt/);
+    assert.match(cliSource, /async function cmdPlugin/);
     assert.match(cliSource, /async function cmdCloud/);
     assert.match(cliSource, /goblintown-88fd6/);
     assert.match(cliSource, /Use Goblintown Cloud/);
   });
 
-  it("README leads with the desktop app, real download links, and no HTTP endpoints", () => {
+  it("README leads with front-end adapter positioning, real download links, and no HTTP endpoints", () => {
     assert.match(readme, /<img src="site\/assets\/gtownlogo\.svg"/);
+    assert.match(readme, /agent-first, model-augmentable orchestration tool compatible\s+with most front ends/);
+    assert.match(readme, /Codex is the first front-end adapter/);
     assert.match(readme, /## Download/);
+    assert.match(readme, /Goblintown Codex Plugin\s+\| 1\.0/);
+    assert.match(readme, /Goblintown Desktop\s+\| Beta 0\.1/);
+    assert.match(readme, /Goblintown ChatGPT App\s+\| 1\.0\s+\| Dev preview/);
+    assert.match(readme, /Goblintown Hermes App/);
+    assert.match(readme, /ChatGPT App 1\.0/);
+    assert.match(readme, /Streamable HTTP MCP endpoint at `\/mcp`/);
+    assert.match(readme, /npx -y goblintown@latest chatgpt install/);
+    assert.match(readme, /creates a quick\s+HTTPS tunnel/);
+    assert.match(readme, /goblintown chatgpt serve/);
     // Per-platform installer links point at the canonical GitHub Release assets.
     assert.match(readme, /releases\/download\/v0\.7\.0-beta\.1\/Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/);
     assert.match(readme, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe/);
@@ -99,14 +128,43 @@ describe("docs and CLI help", () => {
     assert.match(desktopReleaseWorkflow, /gh release upload/);
   });
 
-  it("documents the beta 0.7 release on the canonical repo", () => {
+  it("documents Desktop Beta 0.1 on the canonical repo while preserving legacy asset names", () => {
+    assert.match(distributionsDoc, /agent-first, model-augmentable orchestration tool compatible\s+with most front ends/);
+    assert.match(distributionsDoc, /Each front-end adapter owns installation/);
+    assert.match(distributionsDoc, /Goblintown Codex Plugin\s+\| 1\.0/);
+    assert.match(distributionsDoc, /Goblintown Desktop\s+\| Beta 0\.1/);
+    assert.match(distributionsDoc, /Goblintown ChatGPT App\s+\| 1\.0\s+\| Dev preview/);
+    assert.match(distributionsDoc, /Streamable HTTP `\/mcp`/);
+    assert.match(distributionsDoc, /ui:\/\/goblintown\/tank\.html/);
+    assert.match(distributionsDoc, /chatgpt install/);
+    assert.match(distributionsDoc, /Goblintown Hermes App/);
+    assert.match(distributionsDoc, /Goblintown Opencode App/);
+    assert.match(distributionsDoc, /Goblintown OpenGPT App/);
+    assert.match(distributionsDoc, /Goblintown Claude Code App/);
     assert.match(beta07ReleaseNote, /0xbl33p\/goblintown/);
+    assert.match(beta07ReleaseNote, /Desktop Beta 0\.1/);
     assert.match(beta07ReleaseNote, /releases\/tag\/v0\.7\.0-beta\.1/);
     assert.match(beta07ReleaseNote, /Gatekeeper friction/);
     assert.match(beta07ReleaseNote, /SmartScreen warnings/);
     assert.match(beta07ReleaseNote, /Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/);
     assert.match(beta07ReleaseNote, /shasum -a 256 -c/);
     assert.doesNotMatch(beta07ReleaseNote, /water-bear86/);
+  });
+
+  it("documents the ChatGPT App 1.0 dev preview package", () => {
+    assert.match(chatGptAppReadme, /# Goblintown ChatGPT App 1\.0/);
+    assert.match(chatGptAppReadme, /dev preview/);
+    assert.match(chatGptAppReadme, /Streamable HTTP MCP endpoint/);
+    assert.match(chatGptAppReadme, /`\/mcp`/);
+    assert.match(chatGptAppReadme, /npx -y goblintown@latest chatgpt install/);
+    assert.match(chatGptAppReadme, /quick HTTPS tunnel/);
+    assert.match(chatGptAppReadme, /ui:\/\/goblintown\/tank\.html/);
+    assert.match(chatGptAppReadme, /ChatGPT Developer Mode/);
+    assert.match(chatGptAppReadme, /--public-base-url/);
+    assert.match(chatGptAppReadme, /GOBLINTOWN_CHATGPT_ALLOWED_HOSTS/);
+    assert.match(cliReference, /goblintown chatgpt install/);
+    assert.match(cliReference, /goblintown chatgpt serve --port 8787/);
+    assert.match(cliReference, /Streamable\s+HTTP MCP endpoint at `\/mcp`/);
   });
 
   it("documents the mayor app icon as the distribution icon source", () => {
@@ -125,6 +183,14 @@ describe("docs and CLI help", () => {
 
   it("marketing site offers real installer downloads and the GUI story", () => {
     assert.match(siteIndex, /assets\/mayor-icon\.png/);
+    assert.match(siteIndex, /agent-first, model-augmentable orchestration tool compatible with most front ends/);
+    assert.match(siteIndex, /Each package adapts that orchestration layer to\s+a different front end/);
+    assert.match(siteIndex, /Codex Plugin 1\.0/);
+    assert.match(siteIndex, /Desktop Beta 0\.1/);
+    assert.match(siteIndex, /ChatGPT App 1\.0/);
+    assert.match(siteIndex, /ChatGPT App 1\.0\s+dev preview/);
+    assert.match(siteIndex, /Streamable HTTP MCP endpoint at <code>\/mcp<\/code>/);
+    assert.match(siteIndex, /npx -y goblintown@latest chatgpt install/);
     assert.match(siteIndex, /releases\/download\/v0\.7\.0-beta\.1\/Goblintown-0\.7\.0-beta\.1-mac-arm64\.dmg/);
     assert.match(siteIndex, /Goblintown-0\.7\.0-beta\.1-win-x64\.exe/);
     assert.match(siteIndex, /npm install -g goblintown/);

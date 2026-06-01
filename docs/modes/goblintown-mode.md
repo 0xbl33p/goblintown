@@ -20,6 +20,16 @@ Browser:
 - `POST /api/plan`
 - `GET /api/rite/:runId/stream`
 
+MCP:
+
+- `goblintown_tank` launches or reuses the local Tank in AI-autopilot mode and
+  returns the URL. Codex should call it first when the plugin is selected.
+- `goblintown_rite` and `goblintown_plan` default to harness execution. The
+  sidecar configures the rite/plan and the connected harness spends its own
+  model tokens.
+- Use `executionMode: "local_provider"` only when the user wants the local Tank
+  and configured provider to execute the model calls.
+
 ## Rite Mode
 
 A Rite runs the pipeline directly against one task. Useful flags:

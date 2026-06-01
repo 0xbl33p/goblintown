@@ -303,8 +303,14 @@ export interface VoiceConfig {
   baseURL?: string;
   apiKeyEnv?: string;
   model?: string;
+  outputVoice?: string;
   language?: string;
   prompt?: string;
+}
+
+export interface OnboardingConfig {
+  version?: number;
+  dismissedAt?: string;
 }
 
 export interface AddonConfig {
@@ -371,6 +377,7 @@ export interface WarrenManifest {
   defaultModelTroll: string;
   provider?: ProviderConfig;
   voice?: VoiceConfig;
+  onboarding?: OnboardingConfig;
   /** Optional installable Goblintown add-ons keyed by add-on id. */
   addons?: Record<string, AddonConfig>;
   /** Optional shared secret for HMAC-authenticated federation. */

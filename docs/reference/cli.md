@@ -7,9 +7,25 @@ local development, and checking what the browser UI is doing underneath.
 
 ```bash
 goblintown init
+goblintown install --port 7777
 goblintown serve --port 7777
+goblintown chatgpt install
+goblintown chatgpt serve --port 8787
 goblintown cloud
 ```
+
+`goblintown install` is the simple Goblintown Codex Plugin 1.0 installer: it
+creates or finds a Warren, installs the MCP config, installs the sidecar skill,
+installs the composer plugin, and starts the Tank in AI-autopilot mode.
+
+`goblintown chatgpt install` is the easy ChatGPT App 1.0 path: it starts the
+adapter, opens the walkthrough page, creates a quick HTTPS tunnel, and prints
+the `/mcp` URL to paste into ChatGPT Developer Mode.
+
+`goblintown chatgpt serve` starts the same adapter for development: a Streamable
+HTTP MCP endpoint at `/mcp` plus the Tank widget resource. Use
+`--public-base-url` with your own HTTPS tunnel or deployment URL when
+registering it in ChatGPT.
 
 ## Goblin Mode Slash Commands
 
