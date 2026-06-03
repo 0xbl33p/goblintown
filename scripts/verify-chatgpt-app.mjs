@@ -11,6 +11,7 @@ const LOCAL_REQUIRED_TOOLS = [
   "goblintown_rite",
   "goblintown_plan",
   "goblintown_provider",
+  "goblintown_capabilities",
   "goblintown_doctor",
 ];
 const HOSTED_REQUIRED_TOOLS = [
@@ -18,6 +19,7 @@ const HOSTED_REQUIRED_TOOLS = [
   "goblintown_rite",
   "goblintown_plan",
   "goblintown_provider",
+  "goblintown_capabilities",
   "goblintown_doctor",
 ];
 const WIDGET_URI = "ui://goblintown/tank-v2.html";
@@ -73,6 +75,14 @@ async function verifyHttpSurface() {
   assert.equal(jsonGet.status, 405, "JSON GET /mcp should remain method-not-allowed");
   assert.equal(jsonGet.headers.get("allow"), "POST", "JSON GET /mcp should advertise Allow: POST");
   assert.equal(json.error?.message, "Method not allowed. Use POST /mcp.");
+
+  const dashboard = await requestText(new URL("/dashboard.html", publicBaseUrl));
+  assert.equal(dashboard.status, 200, "Dashboard placeholder should be served");
+  assert.match(dashboard.body, /User dashboard/);
+
+  const admin = await requestText(new URL("/admin.html", publicBaseUrl));
+  assert.equal(admin.status, 200, "Admin placeholder should be served");
+  assert.match(admin.body, /Operator admin/);
   return health;
 }
 
@@ -104,6 +114,16 @@ async function verifyMcpSurface() {
       assert.equal(resolve(String(tank.structuredContent?.warrenRoot)), expectedWarrenRoot);
       assert.equal(tank.structuredContent?.warrenScope, "project");
     }
+
+    const capabilities = await client.callTool({
+      name: "goblintown_capabilities",
+      arguments: { surface: "all" },
+    });
+    assert.equal(capabilities.isError ?? false, false);
+    assert.equal(capabilities.structuredContent?.openAiApiKeyRequired, false);
+    assert.match(JSON.stringify(capabilities.structuredContent), /Userland DB/);
+    assert.match(JSON.stringify(capabilities.structuredContent), /\/dashboard/);
+    assert.match(JSON.stringify(capabilities.structuredContent), /archive_legacy/);
 
     const widget = await client.readResource({ uri: WIDGET_URI });
     const content = widget.contents?.[0];

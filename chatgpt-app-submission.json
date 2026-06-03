@@ -56,6 +56,18 @@
         "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
       }
     },
+    "goblintown_capabilities": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Returns a static capability map for ChatGPT, local Tank, website dashboard/admin, model profiles, embeddings, and cloud/userland boundaries.",
+        "open_world_justification": "Does not call external systems or publish content; it only describes Goblintown feature availability by surface.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
     "goblintown_doctor": {
       "annotations": {
         "readOnlyHint": false,
@@ -100,6 +112,14 @@
       "file_attachment_urls": null,
       "tools_triggered": "goblintown_provider",
       "expected_output": "Returns provider id, label, model routes, key source, and missing-key status without revealing API keys.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Explain which Goblintown features are hosted, local-only, or planned for user sign-in/dashboard/admin.",
+      "user_prompt": "Which Goblintown features work in ChatGPT, which need the local Tank, and can users have a signed-in dashboard or admin panel?",
+      "file_attachment_urls": null,
+      "tools_triggered": "goblintown_capabilities",
+      "expected_output": "Returns the capability map, model profiles, embedding boundaries, planned /dashboard and /admin website surfaces, and the rule that ChatGPT-hosted mode does not spend local provider tokens.",
       "expected_output_url": null
     },
     {

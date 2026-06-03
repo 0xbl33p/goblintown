@@ -42,10 +42,12 @@ describe("Goblintown ChatGPT App", () => {
     const tank = tools.find((tool) => tool.name === "goblintown_tank");
     const rite = tools.find((tool) => tool.name === "goblintown_rite");
     const plan = tools.find((tool) => tool.name === "goblintown_plan");
+    const capabilities = tools.find((tool) => tool.name === "goblintown_capabilities");
 
     assert.ok(tank);
     assert.ok(rite);
     assert.ok(plan);
+    assert.ok(capabilities);
     assert.equal(tank._meta?.["openai/outputTemplate"], GOBLINTOWN_CHATGPT_WIDGET_URI);
     assert.equal(tank._meta?.["openai/widgetAccessible"], true);
     assert.deepEqual(tank._meta?.securitySchemes, [{ type: "noauth" }]);
@@ -60,6 +62,7 @@ describe("Goblintown ChatGPT App", () => {
     };
     assert.deepEqual(riteSchema.properties?.executionMode?.enum, ["board"]);
     assert.deepEqual(planSchema.properties?.executionMode?.enum, ["board"]);
+    assert.match(String(capabilities.description), /capability map/);
   });
 
   it("accepts requests for the public base URL after it changes", async () => {
@@ -124,6 +127,14 @@ describe("Goblintown ChatGPT App", () => {
       const termsPage = await fetch(`${handle.url}/terms.html`);
       assert.equal(termsPage.status, 200);
       assert.match(await termsPage.text(), /Terms of Service/);
+
+      const dashboardPage = await fetch(`${handle.url}/dashboard.html`);
+      assert.equal(dashboardPage.status, 200);
+      assert.match(await dashboardPage.text(), /User dashboard/);
+
+      const adminPage = await fetch(`${handle.url}/admin.html`);
+      assert.equal(adminPage.status, 200);
+      assert.match(await adminPage.text(), /Operator admin/);
 
       const browserGet = await fetch(handle.mcpUrl, {
         headers: { Accept: "text/html" },
@@ -316,6 +327,7 @@ describe("Goblintown ChatGPT App", () => {
       assert.equal(health.mcpUrl, "https://goblintown-mcp.vercel.app/mcp");
       assert.equal(health.widgetUri, GOBLINTOWN_CHATGPT_WIDGET_URI);
       assert.ok(health.tools.includes("goblintown_rite"));
+      assert.ok(health.tools.includes("goblintown_capabilities"));
       assert.ok(!health.tools.includes("goblintown_chat"));
 
       const hostedLandingPage = await fetch(localBaseUrl).then((res) => res.text());
@@ -360,6 +372,21 @@ describe("Goblintown ChatGPT App", () => {
         assert.equal(hostedRiteContent?.runMode, "chatgpt");
         assert.equal(hostedRiteContent?.tokenPolicy?.default, "chatgpt_host");
         assert.equal(hostedRiteContent?.hostRun?.openAiApiKeyRequired, false);
+
+        const capabilities = await client.callTool({
+          name: "goblintown_capabilities",
+          arguments: { surface: "all" },
+        });
+        assert.equal(capabilities.isError ?? false, false);
+        const capabilityContent = capabilities.structuredContent as {
+          openAiApiKeyRequired?: boolean;
+          websiteSurfaces?: Array<{ path?: string; status?: string }>;
+          modelProfiles?: Record<string, string>;
+        } | undefined;
+        assert.equal(capabilityContent?.openAiApiKeyRequired, false);
+        assert.equal(capabilityContent?.modelProfiles?.archive_legacy.includes("text-embedding-ada-002"), true);
+        assert.ok(capabilityContent?.websiteSurfaces?.some((surface) => surface.path === "/dashboard" && surface.status === "planned"));
+        assert.ok(capabilityContent?.websiteSurfaces?.some((surface) => surface.path === "/admin" && surface.status === "planned"));
 
         const localProvider = await client.callTool({
           name: "goblintown_plan",

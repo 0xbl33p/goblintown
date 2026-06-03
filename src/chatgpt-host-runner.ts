@@ -18,6 +18,95 @@ type JsonObject = Record<string, unknown>;
 
 const PACK_PERSONALITIES: Personality[] = ["nerdy", "cynical", "chipper", "stoic", "feral"];
 const MAX_HOST_CONTEXT_CHARS = 28_000;
+export const CHATGPT_HOST_MODEL_PROFILES = [
+  "host",
+  "scout",
+  "elder",
+  "archive",
+  "archive_legacy",
+] as const;
+export type ChatGptHostModelProfile = typeof CHATGPT_HOST_MODEL_PROFILES[number];
+
+export const CHATGPT_HOST_MODEL_PROFILE_NOTES: Record<ChatGptHostModelProfile, string> = {
+  host: "Use ChatGPT as the host model. The app cannot force the exact ChatGPT model snapshot.",
+  scout: "Prefer a small/fast model lane when local/provider execution is available; in ChatGPT-hosted mode, keep the work concise.",
+  elder: "Prefer a stronger reasoning model lane when local/provider execution is available; in ChatGPT-hosted mode, ask ChatGPT for deeper reasoning.",
+  archive: "Use current embedding/retrieval lanes for Hoard or imported chat memory before synthesis when backend embeddings are available.",
+  archive_legacy: "Use only for compatibility checks against older embedding stores such as text-embedding-ada-002; do not prefer it for new hosted work.",
+};
+
+export const CHATGPT_HOST_CAPABILITIES = [
+  {
+    key: "planner_dag",
+    label: "Planner + DAG executor",
+    hosted: "packet",
+    local: "native",
+    note: "Hosted mode returns planner and sub-rite instructions for ChatGPT to execute; local Tank can run the DAG directly.",
+  },
+  {
+    key: "pack_personalities",
+    label: "Per-goblin personalities",
+    hosted: "packet",
+    local: "native",
+    note: "Hosted rite packets assign distinct personalities from the Goblintown personality pool.",
+  },
+  {
+    key: "debate_gremlin_troll",
+    label: "Debate, Gremlin attack, Troll verification",
+    hosted: "packet",
+    local: "native",
+    note: "Hosted mode encodes the debate/review prompts; local mode can execute them with provider routes and tools.",
+  },
+  {
+    key: "specialist_ogre_scribe",
+    label: "Specialist recovery, Ogre fallback, Pigeon/Scribe note",
+    hosted: "packet",
+    local: "native",
+    note: "Hosted mode tells ChatGPT when to spawn specialists, summon Ogre, and write the final scribe note.",
+  },
+  {
+    key: "artifact_memory_embeddings",
+    label: "Typed Artifact memory + embeddings",
+    hosted: "limited",
+    local: "native",
+    note: "Hosted mode can include loaded/cited artifacts in the packet. Local mode owns Hoard import, vectorization, fold, lineage, and persistent storage.",
+  },
+  {
+    key: "tank_ui",
+    label: "Tank UI",
+    hosted: "widget",
+    local: "native",
+    note: "Hosted mode renders the ChatGPT widget diorama; local Tank owns full settings, resumable runs, streaming, and first-run choices.",
+  },
+  {
+    key: "research_tools",
+    label: "Solana, thesis, sentiment, onchain panels",
+    hosted: "local_only",
+    local: "native",
+    note: "The public ChatGPT app does not expose wallet/RPC/settings tools yet. Local Tank and CLI keep these read-only tools.",
+  },
+  {
+    key: "provider_routing",
+    label: "Provider menu and model routing",
+    hosted: "metadata",
+    local: "native",
+    note: "Hosted mode defaults to ChatGPT host execution. Local provider keys and OpenAI-compatible routes stay local unless the user explicitly opts in locally.",
+  },
+  {
+    key: "cloud_identity_dashboard",
+    label: "Userland DB, sign-in, dashboard, and admin",
+    hosted: "planned_website",
+    local: "optional_cloud",
+    note: "The website can host user sign-in, a user dashboard, and an operator admin panel backed by the userland DB server. ChatGPT should treat account data as opt-in and permissioned.",
+  },
+  {
+    key: "trace_hoard_ops",
+    label: "Trace export, drift, reroll, compare, ancestry, federation, rewards",
+    hosted: "local_only",
+    local: "native",
+    note: "Hosted mode can describe these affordances. Local Tank/CLI owns content-addressed Hoard operations and trace export.",
+  },
+] as const;
 
 export interface ChatGptHostRiteOptions {
   task: string;
@@ -32,6 +121,7 @@ export interface ChatGptHostRiteOptions {
   debate?: boolean;
   trollTools?: boolean;
   outputFormat?: unknown;
+  modelProfile?: ChatGptHostModelProfile;
 }
 
 export interface ChatGptHostPlanOptions {
@@ -41,12 +131,14 @@ export interface ChatGptHostPlanOptions {
   maxNodes: number;
   maxReplan: number;
   outputFormat?: unknown;
+  modelProfile?: ChatGptHostModelProfile;
 }
 
 export interface ChatGptHostChatOptions {
   messages: { role: "user" | "assistant"; content: string }[];
   personality?: Personality;
   modelSlot?: string;
+  modelProfile?: ChatGptHostModelProfile;
 }
 
 export async function buildChatGptHostRitePacket(
@@ -78,6 +170,7 @@ export async function buildChatGptHostRitePacket(
 
   const instructions = [
     "Execute this Goblintown rite now using ChatGPT as the host model. Do not ask for an OpenAI API key.",
+    `Model profile: ${opts.modelProfile ?? "host"} - ${CHATGPT_HOST_MODEL_PROFILE_NOTES[opts.modelProfile ?? "host"]}`,
     "Keep the orchestration deterministic: run the phases in order and apply the gate rules exactly.",
     "Treat each goblin prompt as a separate candidate answer. If you cannot literally run parallel calls, emulate independent passes by not letting later candidates copy earlier ones.",
     "After the troll reviews, if any candidate passes, choose the passing candidate with the highest score.",
@@ -142,6 +235,9 @@ export async function buildChatGptHostRitePacket(
     runId,
     runner: "chatgpt_host",
     openAiApiKeyRequired: false,
+    modelProfile: opts.modelProfile ?? "host",
+    modelPolicy: CHATGPT_HOST_MODEL_PROFILE_NOTES[opts.modelProfile ?? "host"],
+    capabilities: CHATGPT_HOST_CAPABILITIES,
     task: opts.task,
     scannedFiles: scan.files,
     parentArtifactIds: (opts.parentArtifacts ?? []).map((artifact) => artifact.id),
@@ -178,6 +274,7 @@ export function buildChatGptHostPlanPacket(
   });
   const instructions = [
     "Execute this Goblintown planner run using ChatGPT as the host model. Do not ask for an OpenAI API key.",
+    `Model profile: ${opts.modelProfile ?? "host"} - ${CHATGPT_HOST_MODEL_PROFILE_NOTES[opts.modelProfile ?? "host"]}`,
     `First produce a valid DAG with at most ${opts.maxNodes} nodes from the planner prompt.`,
     `Execute each node as a ChatGPT-hosted Goblintown rite. If a node fails, replan up to ${opts.maxReplan} times.`,
     "Feed completed node artifacts into dependent nodes, then synthesize the final answer.",
@@ -198,6 +295,9 @@ export function buildChatGptHostPlanPacket(
     runId,
     runner: "chatgpt_host",
     openAiApiKeyRequired: false,
+    modelProfile: opts.modelProfile ?? "host",
+    modelPolicy: CHATGPT_HOST_MODEL_PROFILE_NOTES[opts.modelProfile ?? "host"],
+    capabilities: CHATGPT_HOST_CAPABILITIES,
     task: opts.task,
     parentArtifactIds: (opts.parentArtifacts ?? []).map((artifact) => artifact.id),
     maxNodes: opts.maxNodes,
@@ -234,6 +334,8 @@ export function buildChatGptHostChatPacket(
     runId,
     runner: "chatgpt_host",
     openAiApiKeyRequired: false,
+    modelProfile: opts.modelProfile ?? "host",
+    modelPolicy: CHATGPT_HOST_MODEL_PROFILE_NOTES[opts.modelProfile ?? "host"],
     modelSlot: opts.modelSlot ?? "goblin",
     personality: creature.personality,
     systemPrompt: creature.systemPrompt,

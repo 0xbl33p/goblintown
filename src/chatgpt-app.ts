@@ -223,6 +223,14 @@ export function createGoblintownChatGptExpressApp(
     sendSitePage(res, "terms.html");
   });
 
+  app.get(["/dashboard", "/dashboard.html"], (_req, res) => {
+    sendSitePage(res, "dashboard.html");
+  });
+
+  app.get(["/admin", "/admin.html"], (_req, res) => {
+    sendSitePage(res, "admin.html");
+  });
+
   app.get("/healthz", (req, res) => {
     const currentBaseUrl = resolveBaseUrl(req);
     res.json({
@@ -612,7 +620,10 @@ function renderLandingPage(base: string): string {
 </html>`;
 }
 
-function sendSitePage(res: Response, fileName: "privacy.html" | "terms.html"): void {
+function sendSitePage(
+  res: Response,
+  fileName: "privacy.html" | "terms.html" | "dashboard.html" | "admin.html",
+): void {
   try {
     res.type("html").send(readFileSync(join(SITE_DIR, fileName), "utf8"));
   } catch {

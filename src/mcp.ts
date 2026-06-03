@@ -17,9 +17,13 @@ import {
   type ChatMessage,
 } from "./chat.js";
 import {
+  CHATGPT_HOST_CAPABILITIES,
+  CHATGPT_HOST_MODEL_PROFILES,
+  CHATGPT_HOST_MODEL_PROFILE_NOTES,
   buildChatGptHostChatPacket,
   buildChatGptHostPlanPacket,
   buildChatGptHostRitePacket,
+  type ChatGptHostModelProfile,
 } from "./chatgpt-host-runner.js";
 import { buildToolRegistry } from "./addons.js";
 import { findRelevantArtifactsEmbedded } from "./embeddings.js";
@@ -298,6 +302,51 @@ const DOCTOR_OUTPUT_SCHEMA: ToolOutputSchema = {
   },
   required: ["ok", "cwd", "tools", "config", "codexToml", "projectReady", "warren"],
 };
+const CAPABILITIES_OUTPUT_SCHEMA: ToolOutputSchema = {
+  type: "object",
+  properties: {
+    surface: { type: "string", enum: ["chatgpt_app", "local_tank", "website", "all"] },
+    defaultRunner: { type: "string", enum: ["chatgpt_host", "configured_providers"] },
+    openAiApiKeyRequired: { type: "boolean" },
+    modelProfiles: { type: "object", additionalProperties: { type: "string" } },
+    capabilities: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          key: { type: "string" },
+          label: { type: "string" },
+          hosted: { type: "string" },
+          local: { type: "string" },
+          note: { type: "string" },
+        },
+        required: ["key", "label", "hosted", "local", "note"],
+      },
+    },
+    websiteSurfaces: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          label: { type: "string" },
+          audience: { type: "string" },
+          status: { type: "string" },
+          note: { type: "string" },
+        },
+        required: ["path", "label", "audience", "status", "note"],
+      },
+    },
+    boundaries: { type: "array", items: { type: "string" } },
+  },
+  required: ["surface", "defaultRunner", "openAiApiKeyRequired", "modelProfiles", "capabilities", "boundaries"],
+};
+const MODEL_PROFILE_INPUT_SCHEMA = {
+  type: "string",
+  enum: [...CHATGPT_HOST_MODEL_PROFILES],
+  description:
+    "Hint for which Goblintown model lane to use. ChatGPT-hosted mode cannot force the underlying ChatGPT model, but it records the intended lane and maps it to local/provider routes when available.",
+};
 
 export const GOBLINTOWN_MCP_TOOLS: Tool[] = [
   {
@@ -412,6 +461,7 @@ export const GOBLINTOWN_MCP_TOOLS: Tool[] = [
         budgetTokens: { type: "number", minimum: 1 },
         maxOutputTokens: { type: "number", minimum: 64, maximum: 12000 },
         outputFormat: { type: "string", enum: ["freeform", "markdown", "json"] },
+        modelProfile: MODEL_PROFILE_INPUT_SCHEMA,
       },
       required: ["task"],
     },
@@ -445,6 +495,7 @@ export const GOBLINTOWN_MCP_TOOLS: Tool[] = [
         budgetTokens: { type: "number", minimum: 1 },
         maxOutputTokens: { type: "number", minimum: 64, maximum: 12000 },
         outputFormat: { type: "string", enum: ["freeform", "markdown", "json"] },
+        modelProfile: MODEL_PROFILE_INPUT_SCHEMA,
       },
       required: ["task"],
     },
@@ -474,6 +525,29 @@ export const GOBLINTOWN_MCP_TOOLS: Tool[] = [
     outputSchema: PROVIDER_OUTPUT_SCHEMA,
     annotations: {
       readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "goblintown_capabilities",
+    title: "Goblintown Capabilities",
+    description:
+      "Return the Goblintown product capability map for ChatGPT, the local Tank, website dashboard/admin, model profiles, embeddings, memory, research tools, and cloud/userland boundaries. Use this before promising that a feature is available in the hosted ChatGPT app.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        surface: {
+          type: "string",
+          enum: ["chatgpt_app", "local_tank", "website", "all"],
+          description: "Surface to summarize. Defaults to all.",
+        },
+      },
+    },
+    outputSchema: CAPABILITIES_OUTPUT_SCHEMA,
+    annotations: {
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
@@ -681,6 +755,14 @@ export async function installGoblintownCodexMcpConfig(
       error: errorMessage(err),
     };
   }
+}
+
+function normalizeChatGptHostModelProfile(value: unknown): ChatGptHostModelProfile | undefined {
+  const raw = stringValue(value);
+  if (!raw) return undefined;
+  return (CHATGPT_HOST_MODEL_PROFILES as readonly string[]).includes(raw)
+    ? raw as ChatGptHostModelProfile
+    : undefined;
 }
 
 export function normalizeMcpChatArgs(input: unknown): NormalizedMcpChatArgs {
@@ -1027,6 +1109,11 @@ export function createGoblintownMcpServer(
           });
         case "goblintown_provider":
           return await callMcpProvider(cwd, args, { chatgptApp: opts.chatgptApp });
+        case "goblintown_capabilities":
+          return callMcpCapabilities(args, {
+            chatgptApp: opts.chatgptApp,
+            hostedApp: opts.hostedApp,
+          });
         case "goblintown_doctor":
           return textResult(await mcpDoctorPayload(cwd, {
             packageSpec: stringValue(objectValue(args).packageSpec),
@@ -1263,6 +1350,7 @@ async function callMcpRite(
     budgetTokens: numberValue(raw.budgetTokens, 1),
     maxOutputTokens: numberValue(raw.maxOutputTokens, 64, 12000),
     outputFormat: raw.outputFormat,
+    modelProfile: normalizeChatGptHostModelProfile(raw.modelProfile),
     cite: arrayOfStrings(raw.citeRiteIds),
     remember: booleanValue(raw.remember),
   };
@@ -1325,6 +1413,7 @@ async function callMcpPlan(
     budgetTokens: numberValue(raw.budgetTokens, 1),
     maxOutputTokens: numberValue(raw.maxOutputTokens, 64, 12000),
     outputFormat: raw.outputFormat,
+    modelProfile: normalizeChatGptHostModelProfile(raw.modelProfile),
   };
   const executionMode = normalizeMcpExecutionMode(
     raw.executionMode,
@@ -1385,6 +1474,7 @@ async function runMcpChatGptHostRite(
     debate: booleanValue(payload.debate),
     trollTools: booleanValue(payload.trollTools),
     outputFormat: payload.outputFormat,
+    modelProfile: normalizeChatGptHostModelProfile(payload.modelProfile),
     parentArtifacts,
   });
   const output = String(hostRun.prompt ?? "");
@@ -1396,6 +1486,8 @@ async function runMcpChatGptHostRite(
     output,
     parentArtifactIds: parentArtifacts.map((artifact) => artifact.id),
     hostRun,
+    modelProfile: hostRun.modelProfile,
+    capabilities: CHATGPT_HOST_CAPABILITIES,
     warrenRoot: warren.root,
     warrenScope: warren.scope,
     tokenPolicy: {
@@ -1419,6 +1511,7 @@ async function runMcpChatGptHostPlan(
     maxNodes: numberValue(payload.maxNodes, 1, 12) ?? 6,
     maxReplan: numberValue(payload.maxReplan, 0, 6) ?? 2,
     outputFormat: payload.outputFormat,
+    modelProfile: normalizeChatGptHostModelProfile(payload.modelProfile),
   });
   const output = String(hostRun.prompt ?? "");
   return textResult({
@@ -1429,6 +1522,8 @@ async function runMcpChatGptHostPlan(
     output,
     parentArtifactIds: parentArtifacts.map((artifact) => artifact.id),
     hostRun,
+    modelProfile: hostRun.modelProfile,
+    capabilities: CHATGPT_HOST_CAPABILITIES,
     warrenRoot: warren.root,
     warrenScope: warren.scope,
     tokenPolicy: {
@@ -1619,6 +1714,70 @@ async function callMcpProvider(
   });
 }
 
+function callMcpCapabilities(
+  input: unknown,
+  opts: { chatgptApp?: boolean; hostedApp?: boolean } = {},
+): CallToolResult {
+  const raw = objectValue(input);
+  const surface = stringValue(raw.surface) ?? "all";
+  const normalizedSurface = ["chatgpt_app", "local_tank", "website", "all"].includes(surface)
+    ? surface
+    : "all";
+  const payload = {
+    surface: normalizedSurface,
+    defaultRunner: opts.chatgptApp || opts.hostedApp ? "chatgpt_host" : "configured_providers",
+    openAiApiKeyRequired: !(opts.chatgptApp || opts.hostedApp),
+    modelProfiles: CHATGPT_HOST_MODEL_PROFILE_NOTES,
+    capabilities: CHATGPT_HOST_CAPABILITIES,
+    websiteSurfaces: [
+      {
+        path: "/",
+        label: "Marketing and install guide",
+        audience: "public",
+        status: "available",
+        note: "Public website and ChatGPT Developer Mode instructions.",
+      },
+      {
+        path: "/dashboard",
+        label: "User dashboard",
+        audience: "signed_in_user",
+        status: "planned",
+        note: "Userland DB-backed account, Warren metadata, cloud mode, friend codes, discovery, mail, and user settings.",
+      },
+      {
+        path: "/admin",
+        label: "Operator admin",
+        audience: "staff_admin",
+        status: "planned",
+        note: "Operational moderation, account support, feature flags, and app-store/demo telemetry. Should be role-gated separately from the user dashboard.",
+      },
+    ],
+    boundaries: [
+      "The ChatGPT app cannot force ChatGPT to use an older model or an embeddings model directly.",
+      "Embeddings belong to the backend/local Hoard lane; ChatGPT consumes retrieved text, not raw vectors.",
+      "Hosted ChatGPT mode must not spend local provider tokens or expose local provider keys.",
+      "User sign-in, userland DB storage, dashboard, and operator admin belong to the website/cloud surface and should be opt-in.",
+      "Local Tank remains the full-fidelity surface for streaming, settings, provider routing, research tools, Hoard ops, trace export, and reset flows.",
+    ],
+  };
+  const summary = [
+    "Goblintown capability map",
+    "",
+    `Surface: ${normalizedSurface}`,
+    `Default runner: ${payload.defaultRunner}`,
+    `OpenAI API key required here: ${payload.openAiApiKeyRequired ? "yes" : "no"}`,
+    "",
+    "Hosted-safe:",
+    ...payload.capabilities
+      .filter((capability) => capability.hosted !== "local_only")
+      .map((capability) => `- ${capability.label}: ${capability.hosted}`),
+    "",
+    "Website/cloud:",
+    ...payload.websiteSurfaces.map((surface) => `- ${surface.path} ${surface.label}: ${surface.status}`),
+  ].join("\n");
+  return textResult(payload, summary);
+}
+
 function safeProviderRuntime(runtime: ReturnType<typeof resolveProviderRuntime>): JsonObject {
   return {
     id: runtime.id,
@@ -1644,6 +1803,8 @@ function chatGptInvokingLabel(toolName: string): string {
       return "Asking Single Goblin";
     case "goblintown_provider":
       return "Checking provider";
+    case "goblintown_capabilities":
+      return "Mapping capabilities";
     case "goblintown_doctor":
       return "Checking setup";
     default:
@@ -1663,6 +1824,8 @@ function chatGptInvokedLabel(toolName: string): string {
       return "Single Goblin answered";
     case "goblintown_provider":
       return "Provider checked";
+    case "goblintown_capabilities":
+      return "Capabilities mapped";
     case "goblintown_doctor":
       return "Setup checked";
     default:
@@ -2761,7 +2924,6 @@ bootLoopingSprite({
   fps: 6
 });
 renderGoblinSlots(3, ["goblin", "goblin", "goblin"]);
-setTimeout(() => wakeGoblins("come-out"), 500);
 render();
 </script>
 </body>
