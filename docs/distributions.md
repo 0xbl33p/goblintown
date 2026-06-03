@@ -55,8 +55,15 @@ continue to work.
 ChatGPT App 1.0 is the current dev preview for ChatGPT Developer Mode. It
 reuses the Codex Plugin 1.0 tool semantics, exposes a Streamable HTTP MCP
 endpoint at `/mcp`, serves the Tank widget resource at
-`ui://goblintown/tank.html`, uses the host front end's model tokens by default,
+`ui://goblintown/tank-v2.html`, uses the host front end's model tokens by default,
 and makes local-provider execution explicit. The tepid-friendly installer is
 `npx -y goblintown@latest chatgpt install`; it starts the adapter, opens the
 walkthrough, creates a quick HTTPS tunnel, and prints the MCP URL to paste into
 ChatGPT Developer Mode.
+
+The production-ready hosted shape targets Vercel with a stable MCP URL:
+`https://goblintown-mcp.vercel.app/mcp`. That hosted endpoint is safe for ChatGPT and
+Codex because it serves the Streamable HTTP MCP contract without attempting to
+open `localhost:7777`, run local Single Goblin, or spend local provider tokens.
+Local Tank and local-file workflows remain the job of the Codex plugin or the
+local ChatGPT dev adapter.

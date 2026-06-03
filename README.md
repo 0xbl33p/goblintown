@@ -129,20 +129,24 @@ and provider settings to stay project-bound.
 
 The sidecar exposes `goblintown_tank` to launch or reuse the local Tank in
 AI-autopilot mode, `goblintown_chat` for Single Goblin, `goblintown_rite` to
-configure the full pack for the current harness, `goblintown_plan` to configure
-planner DAG work, `goblintown_provider` for model-route inspection, and
+run the full pack through the existing board loop, `goblintown_plan` to run
+planner DAG work through sub-rite loops, `goblintown_provider` for model-route inspection, and
 `goblintown_doctor` for setup checks. When the plugin is selected from Codex,
 the agent should call `goblintown_tank` first so the user lands in the Tank
-right away. Rite and plan tools default to harness execution so Codex or another
-connected client spends its own model tokens; pass
-`executionMode: "local_provider"` only when you want the local Tank and
-configured provider to run the model calls. It runs on the user's machine;
-imported chats and Hoard artifacts stay local unless you choose to move them.
+right away. Rite and plan tools default to `executionMode: "board"`. In the
+Codex/local sidecar, that means Goblintown's own logic gates run the configured
+provider routes. In the ChatGPT app, that means the tool returns a
+ChatGPT-hosted board packet and ChatGPT performs the OpenAI-model steps itself,
+so `OPENAI_API_KEY` is not required. Pass `executionMode: "local_provider"`
+only when you want the local Tank run UI or explicit local/provider spend. It
+runs on the user's machine; imported chats and Hoard artifacts stay local
+unless you choose to move them.
 
 **ChatGPT App 1.0.** The ChatGPT adapter is a dev preview for ChatGPT Developer
 Mode. It serves a Streamable HTTP MCP endpoint at `/mcp`, advertises the same
-tool semantics as Codex Plugin 1.0, and includes a Tank widget resource at
-`ui://goblintown/tank.html`.
+board-loop shape as Codex Plugin 1.0, and includes a Tank widget resource at
+`ui://goblintown/tank-v2.html`. Its default board path does not require local
+OpenAI API keys: ChatGPT is the host model surface for OpenAI-model work.
 
 ```bash
 npx -y goblintown@latest chatgpt install
@@ -161,9 +165,16 @@ goblintown chatgpt serve --port 8787 --public-base-url https://your-tunnel.examp
 ```
 
 Use the public HTTPS `/mcp` URL in ChatGPT Developer Mode. Rite and plan tools
-still configure work for the ChatGPT harness by default; choose
-`executionMode: "local_provider"` only when you want local provider spend. The
-adapter package lives in `apps/chatgpt/`.
+return the real Goblintown board packet by default; ChatGPT is the host model
+surface that executes the OpenAI-model steps after the tool returns. The adapter
+package lives in `apps/chatgpt/`.
+
+For production, the repo includes a Vercel-ready hosted adapter. Deploy it with
+`GOBLINTOWN_CHATGPT_PUBLIC_BASE_URL=https://goblintown-mcp.vercel.app`, then use
+`https://goblintown-mcp.vercel.app/mcp` for ChatGPT Developer Mode or Codex remote MCP
+configuration. Hosted mode will not try to launch the local
+Tank. Hosted board execution does not require `OPENAI_API_KEY`; local files,
+local provider spend, and the local Tank stay on the local adapter path.
 
 ## Background
 
@@ -454,8 +465,8 @@ there.
 | Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | `GEMINI_API_KEY` |
 | Custom | user supplied | user supplied |
 
-Defaults: Goblin / Gremlin / Raccoon / Troll / Pigeon run on `gpt-5.4-mini`, Ogre
-on `gpt-5.5`. Per-creature provider routes let you mix backends — e.g. cheap
+Defaults: Goblin / Gremlin / Raccoon / Troll / Pigeon run on `gpt-5-mini`, Ogre
+on `gpt-5`. Per-creature provider routes let you mix backends — e.g. cheap
 local goblins with a hosted ogre. Output format can be `freeform`, `markdown`,
 or `json`. `gpt-5*`, `o*`, `deepseek-r*`, and `-thinking` models are detected
 and switched to reasoning-model parameters automatically.

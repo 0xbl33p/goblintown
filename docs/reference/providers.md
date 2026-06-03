@@ -27,7 +27,7 @@ Routes are per creature slot:
 ```bash
 goblintown route set goblin --preset ollama --model gemma3:27b
 goblintown route set troll --preset openrouter --model openai/gpt-4o-mini
-goblintown route set ogre --preset openai --model gpt-5.5
+goblintown route set ogre --preset openai --model gpt-5
 goblintown route set scribe --preset openai --model gpt-4o-mini
 ```
 

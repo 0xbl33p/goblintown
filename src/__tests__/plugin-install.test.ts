@@ -48,6 +48,15 @@ describe("Goblintown Codex plugin", () => {
     assert.equal(manifest.interface?.developerName, "0xbl33p, and Angus Durrie");
     assert.equal(manifest.interface?.category, "Developer Tools");
     assert.equal(manifest.interface?.shortDescription, "Goblintown Codex Plugin 1.0");
+    assert.equal(manifest.interface?.websiteURL, "https://goblintown-mcp.vercel.app");
+    assert.equal(
+      manifest.interface?.privacyPolicyURL,
+      "https://goblintown-mcp.vercel.app/privacy.html",
+    );
+    assert.equal(
+      manifest.interface?.termsOfServiceURL,
+      "https://goblintown-mcp.vercel.app/terms.html",
+    );
     assert.equal(manifest.interface?.composerIcon, "./assets/mayor-icon-small.png");
     assert.equal(manifest.interface?.logo, "./assets/mayor-icon.png");
     const defaultPrompt = manifest.interface?.defaultPrompt;
@@ -62,6 +71,8 @@ describe("Goblintown Codex plugin", () => {
     assert.match(skill, /goblintown_tank/);
     assert.match(skill, /npx -y goblintown@latest install/);
     assert.match(skill, /goblintown plugin install/);
+    assert.match(skill, /Privacy Policy: https:\/\/goblintown-mcp\.vercel\.app\/privacy\.html/);
+    assert.match(skill, /Terms of Service: https:\/\/goblintown-mcp\.vercel\.app\/terms\.html/);
   });
 
   it("installs the plugin and personal marketplace entry idempotently", async () => {

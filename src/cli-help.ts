@@ -224,10 +224,10 @@ Environment:
   FIREBASE_STORAGE_BUCKET     optional override
   FIREBASE_MESSAGING_SENDER_ID optional override
   FIREBASE_MEASUREMENT_ID     optional override
-  GOBLINTOWN_MODEL_GOBLIN     default: gpt-5.4-mini
-  GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
-  GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini
-  GOBLINTOWN_MODEL_SCRIBE     default: gpt-5.4-mini  (Pigeon-as-Scribe artifact distillation)
+  GOBLINTOWN_MODEL_GOBLIN     default: gpt-5-mini
+  GOBLINTOWN_MODEL_OGRE       default: gpt-5
+  GOBLINTOWN_MODEL_TROLL      default: gpt-5-mini
+  GOBLINTOWN_MODEL_SCRIBE     default: gpt-5-mini  (Pigeon-as-Scribe artifact distillation)
   GOBLINTOWN_EMBEDDING_MODEL  default: text-embedding-3-small  (artifact retrieval)
   GOBLINTOWN_TOOLS_HTTP       set to 1 to enable http.head verifier tool (default disabled)
   GOBLINTOWN_TOOLS_SOLANA     set to 1 to enable the Solana onchain add-on without changing warren.json

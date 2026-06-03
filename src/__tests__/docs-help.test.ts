@@ -9,13 +9,20 @@ const cliSource = readFileSync(join(repoRoot, "src", "cli.ts"), "utf8");
 const cliHelpSource = readFileSync(join(repoRoot, "src", "cli-help.ts"), "utf8");
 const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
 const siteIndex = readFileSync(join(repoRoot, "site", "index.html"), "utf8");
+const sitePrivacy = readFileSync(join(repoRoot, "site", "privacy.html"), "utf8");
+const siteTerms = readFileSync(join(repoRoot, "site", "terms.html"), "utf8");
 const desktopReleaseWorkflow = readFileSync(join(repoRoot, ".github", "workflows", "desktop-release.yml"), "utf8");
 const beta07ReleaseNote = readFileSync(join(repoRoot, "docs", "releases", "0.7.0-beta.1.md"), "utf8");
 const distributionsDoc = readFileSync(join(repoRoot, "docs", "distributions.md"), "utf8");
 const cliReference = readFileSync(join(repoRoot, "docs", "reference", "cli.md"), "utf8");
 const chatGptAppReadme = readFileSync(join(repoRoot, "apps", "chatgpt", "README.md"), "utf8");
+const chatGptAppJson = readFileSync(join(repoRoot, "apps", "chatgpt", "app.json"), "utf8");
 const assetReadme = readFileSync(join(repoRoot, "site", "assets", "README.md"), "utf8");
 const packageJson = readFileSync(join(repoRoot, "package.json"), "utf8");
+const vercelJson = readFileSync(join(repoRoot, "vercel.json"), "utf8");
+const vercelApiIndex = readFileSync(join(repoRoot, "api", "index.js"), "utf8");
+const vercelSource = readFileSync(join(repoRoot, "src", "vercel.ts"), "utf8");
+const chatGptSubmission = readFileSync(join(repoRoot, "chatgpt-app-submission.json"), "utf8");
 
 describe("docs and CLI help", () => {
   it("documents every command in cli-help and wires it into the CLI", () => {
@@ -135,8 +142,11 @@ describe("docs and CLI help", () => {
     assert.match(distributionsDoc, /Goblintown Desktop\s+\| Beta 0\.1/);
     assert.match(distributionsDoc, /Goblintown ChatGPT App\s+\| 1\.0\s+\| Dev preview/);
     assert.match(distributionsDoc, /Streamable HTTP `\/mcp`/);
-    assert.match(distributionsDoc, /ui:\/\/goblintown\/tank\.html/);
+    assert.match(distributionsDoc, /ui:\/\/goblintown\/tank-v2\.html/);
     assert.match(distributionsDoc, /chatgpt install/);
+    assert.match(distributionsDoc, /https:\/\/goblintown-mcp\.vercel\.app\/mcp/);
+    assert.match(distributionsDoc, /Vercel/);
+    assert.match(distributionsDoc, /without attempting to\s+open `localhost:7777`/);
     assert.match(distributionsDoc, /Goblintown Hermes App/);
     assert.match(distributionsDoc, /Goblintown Opencode App/);
     assert.match(distributionsDoc, /Goblintown OpenGPT App/);
@@ -158,10 +168,38 @@ describe("docs and CLI help", () => {
     assert.match(chatGptAppReadme, /`\/mcp`/);
     assert.match(chatGptAppReadme, /npx -y goblintown@latest chatgpt install/);
     assert.match(chatGptAppReadme, /quick HTTPS tunnel/);
-    assert.match(chatGptAppReadme, /ui:\/\/goblintown\/tank\.html/);
+    assert.match(chatGptAppReadme, /ui:\/\/goblintown\/tank-v2\.html/);
     assert.match(chatGptAppReadme, /ChatGPT Developer Mode/);
+    assert.match(chatGptAppReadme, /npm run verify:chatgpt/);
+    assert.match(chatGptAppReadme, /--connect-url/);
+    assert.match(chatGptAppReadme, /npm run ensure:chatgpt/);
+    assert.match(chatGptAppReadme, /## Deploy on Vercel/);
+    assert.match(chatGptAppReadme, /hosted Vercel shape/);
+    assert.match(chatGptAppReadme, /does not\s+advertise local Single Goblin/);
+    assert.match(chatGptAppReadme, /rejects\s+`executionMode: "local_provider"`/);
+    assert.match(chatGptAppReadme, /real Goblintown board/);
+    assert.match(chatGptAppReadme, /no OpenAI API key is required/);
+    assert.match(chatGptAppReadme, /npm run verify:vercel/);
+    assert.match(chatGptAppReadme, /https:\/\/goblintown-mcp\.vercel\.app\/mcp/);
+    assert.match(chatGptAppReadme, /\[mcp_servers\.goblintown_hosted\]/);
     assert.match(chatGptAppReadme, /--public-base-url/);
     assert.match(chatGptAppReadme, /GOBLINTOWN_CHATGPT_ALLOWED_HOSTS/);
+    assert.match(chatGptAppReadme, /Privacy Policy: https:\/\/goblintown-mcp\.vercel\.app\/privacy\.html/);
+    assert.match(chatGptAppReadme, /Terms of Service: https:\/\/goblintown-mcp\.vercel\.app\/terms\.html/);
+    assert.match(chatGptAppJson, /"productionMcpUrl": "https:\/\/goblintown-mcp\.vercel\.app\/mcp"/);
+    assert.match(chatGptAppJson, /"websiteUrl": "https:\/\/goblintown-mcp\.vercel\.app"/);
+    assert.match(chatGptAppJson, /"privacyPolicyUrl": "https:\/\/goblintown-mcp\.vercel\.app\/privacy\.html"/);
+    assert.match(chatGptAppJson, /"termsOfServiceUrl": "https:\/\/goblintown-mcp\.vercel\.app\/terms\.html"/);
+    assert.match(vercelJson, /"buildCommand": "npm run build"/);
+    assert.match(vercelJson, /"destination": "\/api"/);
+    assert.match(vercelApiIndex, /..\/dist\/vercel\.js/);
+    assert.match(vercelSource, /createGoblintownChatGptExpressApp/);
+    assert.match(vercelSource, /hostedMode: true/);
+    assert.match(packageJson, /"verify:vercel": "node scripts\/verify-vercel-entry\.mjs"/);
+    assert.match(chatGptSubmission, /existing board loop/);
+    assert.match(chatGptSubmission, /does not require an OpenAI API key/);
+    assert.match(chatGptSubmission, /"goblintown_rite"/);
+    assert.doesNotMatch(chatGptSubmission, /"goblintown_chat"/);
     assert.match(cliReference, /goblintown chatgpt install/);
     assert.match(cliReference, /goblintown chatgpt serve --port 8787/);
     assert.match(cliReference, /Streamable\s+HTTP MCP endpoint at `\/mcp`/);
@@ -199,6 +237,14 @@ describe("docs and CLI help", () => {
     assert.match(siteIndex, /Solana add-on/);
     assert.match(siteIndex, /Thesis engine/);
     assert.match(siteIndex, /Sentiment sources/);
+    assert.match(siteIndex, /href="privacy\.html">privacy/);
+    assert.match(siteIndex, /href="terms\.html">terms/);
+    assert.match(sitePrivacy, /Goblintown does not sell personal data/);
+    assert.match(sitePrivacy, /ChatGPT App dev preview/);
+    assert.match(sitePrivacy, /Private local files are not uploaded by Goblintown unless you ask/);
+    assert.match(siteTerms, /No Professional Advice/);
+    assert.match(siteTerms, /Local-provider execution can spend your configured provider tokens or credits/);
+    assert.match(packageJson, /"site\/\*\.html"/);
 
     // The split-parts download ritual and the old CLI command dump are gone.
     assert.doesNotMatch(siteIndex, /water-bear86/);

@@ -13,9 +13,9 @@ function manifest(): WarrenManifest {
     name: "test-town",
     version: 1,
     createdAt: "2026-01-01T00:00:00.000Z",
-    defaultModelGoblin: "gpt-5.4-mini",
-    defaultModelOgre: "gpt-5.5",
-    defaultModelTroll: "gpt-5.4-mini",
+    defaultModelGoblin: "gpt-5-mini",
+    defaultModelOgre: "gpt-5",
+    defaultModelTroll: "gpt-5-mini",
   };
 }
 

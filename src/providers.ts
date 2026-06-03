@@ -50,13 +50,13 @@ export interface ProviderRuntime {
 }
 
 const OPENAI_MODELS: Record<ModelSlot, string> = {
-  goblin: "gpt-5.4-mini",
-  gremlin: "gpt-5.4-mini",
-  raccoon: "gpt-5.4-mini",
-  troll: "gpt-5.4-mini",
-  ogre: "gpt-5.5",
-  pigeon: "gpt-5.4-mini",
-  scribe: "gpt-5.4-mini",
+  goblin: "gpt-5-mini",
+  gremlin: "gpt-5-mini",
+  raccoon: "gpt-5-mini",
+  troll: "gpt-5-mini",
+  ogre: "gpt-5",
+  pigeon: "gpt-5-mini",
+  scribe: "gpt-5-mini",
   embedding: "text-embedding-3-small",
 };
 
@@ -288,12 +288,20 @@ export function resolveProviderRuntimeForSlot(
     ...(normalized.models ?? {}),
   };
   if (route.model) models[slot] = route.model;
+  const routeUsesGlobalPreset = route.preset === normalized.preset;
   return resolveProviderRuntime(
     {
-      ...normalized,
       preset: route.preset,
-      baseURL: route.baseURL ?? normalized.baseURL,
-      apiKeyEnv: route.apiKeyEnv ?? normalized.apiKeyEnv,
+      ...(route.baseURL
+        ? { baseURL: route.baseURL }
+        : routeUsesGlobalPreset && normalized.baseURL
+          ? { baseURL: normalized.baseURL }
+          : {}),
+      ...(route.apiKeyEnv
+        ? { apiKeyEnv: route.apiKeyEnv }
+        : routeUsesGlobalPreset && normalized.apiKeyEnv
+          ? { apiKeyEnv: normalized.apiKeyEnv }
+          : {}),
       outputFormat: route.outputFormat ?? normalized.outputFormat,
       models,
     },
@@ -335,11 +343,15 @@ function resolveApiKey(
   env: Env,
   storedApiKeys: Record<string, string>,
 ): { apiKey: string; source: "env" | "stored" | "dummy" | "none" } {
+  const openAiFallback =
+    apiKeyEnv === "OPENAI_API_KEY" || preset.id === "openai" || preset.id === "custom"
+      ? ["OPENAI_API_KEY"]
+      : [];
   const candidates = [
     apiKeyEnv,
     preset.apiKeyEnv,
     ...(preset.apiKeyEnvAliases ?? []),
-    "OPENAI_API_KEY",
+    ...openAiFallback,
   ];
   for (const key of Array.from(new Set(candidates))) {
     const value = stringOrUndefined(env[key]);

@@ -59,6 +59,7 @@ import {
   loadAllRuns,
   markRunFinished,
   markRunInterrupted,
+  originalTaskForResume,
   saveRun,
   type RunRecord,
 } from "./run-store.js";
@@ -167,6 +168,7 @@ interface RunState {
 interface StartRunOptions {
   bodyOverride?: Record<string, unknown>;
   resumedFromRunId?: string;
+  originalTask?: string;
 }
 
 const DISCOVERY_OPEN_MEMBER_LIMIT = 3;
@@ -314,15 +316,27 @@ function inferRunRequest(record: RunRecord): { mode: "rite" | "plan"; payload: R
   };
 }
 
-function resumePayloadForRun(
+export function resumePayloadForRun(
   record: RunRecord,
   payload: Record<string, unknown>,
 ): Record<string, unknown> {
   const next = sanitizeRunPayload({
     ...payload,
-    task: record.resumePrompt ?? buildResumePrompt(record),
+    task: buildResumePrompt(record),
     remember: true,
   });
+  if (isBudgetExceededRun(record)) {
+    next.packSize = 1;
+    next.debate = false;
+    next.trollTools = false;
+    next.noSpecialist = true;
+    next.maxOutputTokens = 800;
+    const currentBudget =
+      typeof next.budgetTokens === "number" && next.budgetTokens > 0
+        ? next.budgetTokens
+        : 12_000;
+    next.budgetTokens = Math.max(12_000, Math.floor(currentBudget));
+  }
   const cite = Array.isArray(payload.cite)
     ? payload.cite.filter((v): v is string => typeof v === "string")
     : [];
@@ -332,6 +346,10 @@ function resumePayloadForRun(
     next.cite = cite;
   }
   return next;
+}
+
+function isBudgetExceededRun(record: RunRecord): boolean {
+  return /budget exceeded/i.test(record.error ?? "");
 }
 
 function cspHeaderForRequest(): string {
@@ -480,6 +498,9 @@ export async function serve(opts: ServeOptions): Promise<ServeHandle> {
   });
   app.get("/api/onboarding", (_req, res) => {
     res.json(onboardingPayload(warren));
+  });
+  app.get("/api/identity", (_req, res) => {
+    res.json(tankIdentityPayload(warren, autopilot));
   });
   app.post("/api/onboarding", async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -1786,6 +1807,7 @@ async function startRiteRun(
   const record: RunRecord = {
     runId,
     task: body.task,
+    originalTask: options.originalTask,
     packSize,
     scanGlobs,
     personality,
@@ -1991,6 +2013,7 @@ async function startPlanRun(
   const record: RunRecord = {
     runId,
     task: body.task,
+    originalTask: options.originalTask,
     packSize: 0, // not directly meaningful for plans
     scanGlobs: [],
     mode: "plan",
@@ -2127,10 +2150,12 @@ async function resumeRun(
       ? await startPlanRun(warren, runs, runDir, req, res, {
           bodyOverride: payload,
           resumedFromRunId: source.runId,
+          originalTask: originalTaskForResume(source),
         })
       : await startRiteRun(warren, runs, runDir, req, res, {
           bodyOverride: payload,
           resumedFromRunId: source.runId,
+          originalTask: originalTaskForResume(source),
         });
 
   if (nextRunId) {
@@ -2326,6 +2351,17 @@ function onboardingPayload(warren: Warren): {
     done,
     version: ONBOARDING_VERSION,
     ...(dismissedAt ? { dismissedAt } : {}),
+  };
+}
+
+function tankIdentityPayload(warren: Warren, autopilot: boolean): Record<string, unknown> {
+  return {
+    ok: true,
+    name: warren.manifest.name,
+    root: warren.root,
+    scope: warren.scope,
+    manifestPath: warren.manifestPath,
+    autopilot,
   };
 }
 

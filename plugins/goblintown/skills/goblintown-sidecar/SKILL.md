@@ -17,6 +17,11 @@ Beta 0.1**. The upcoming ChatGPT integration should be named **Goblintown
 ChatGPT App 1.0**. Future harness packages should use the same pattern:
 **Goblintown <Host> App/Plugin <major.minor>**.
 
+Policy links for the Codex plugin listing and review:
+
+- Privacy Policy: https://goblintown-mcp.vercel.app/privacy.html
+- Terms of Service: https://goblintown-mcp.vercel.app/terms.html
+
 ## Consent Rules
 
 Safe inspection can run without asking when the user has already requested

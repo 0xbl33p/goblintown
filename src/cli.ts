@@ -1741,7 +1741,8 @@ async function cmdChatGpt(args: string[]): Promise<void> {
     "  --port <N>             Port for the local adapter (default 8787).",
     "  --host <host>          Bind host (default 127.0.0.1).",
     "  --public-base-url <u>  Public HTTPS base URL from a tunnel or deployment.",
-    "  --tunnel               Start a quick Cloudflare tunnel. Default for install.",
+    "                         Install default: https://goblintown-mcp.vercel.app",
+    "  --tunnel               Start a quick Cloudflare tunnel. Use with local testing only.",
     "  --no-tunnel            Do not start a tunnel during install.",
     "  --no-open              Do not open the local walkthrough page.",
     "  --allowed-host <host>  Extra allowed Host header. Repeatable.",
@@ -1750,6 +1751,7 @@ async function cmdChatGpt(args: string[]): Promise<void> {
     "Environment:",
     "  GOBLINTOWN_CHATGPT_PORT",
     "  GOBLINTOWN_CHATGPT_HOST",
+    "  GOBLINTOWN_CHATGPT_PUBLIC_BASE_URL",
     "  GOBLINTOWN_CHATGPT_ALLOWED_HOSTS",
     "",
   ].join("\n");
@@ -1775,24 +1777,64 @@ async function cmdChatGpt(args: string[]): Promise<void> {
     return;
   }
   const installMode = action === "install" || action === "setup";
-  const useTunnel = installMode ? flags["no-tunnel"] !== "true" : flags.tunnel === "true";
+  const installPublicBaseUrl = installMode
+    ? (flags["public-base-url"] ??
+      process.env.GOBLINTOWN_CHATGPT_PUBLIC_BASE_URL ??
+      "https://goblintown-mcp.vercel.app")
+    : flags["public-base-url"];
+  const useTunnel = installMode
+    ? flags.tunnel === "true" && flags["no-tunnel"] !== "true"
+    : flags.tunnel === "true";
   const allowedHosts = [
+    ...(useTunnel ? ["localhost", "127.0.0.1", "[::1]"] : []),
     ...collectFlag(args, "allowed-host"),
     ...splitCsv(flags["allowed-hosts"]),
   ];
+  if (installMode && !useTunnel && installPublicBaseUrl) {
+    const hostedBaseUrl = normalizeChatGptInstallBaseUrl(installPublicBaseUrl);
+    if (flags["no-open"] !== "true") {
+      openUrl(hostedBaseUrl);
+    }
+    process.stdout.write(
+      `Goblintown ChatGPT App 1.0 hosted installer ready.\n` +
+        `  walkthrough: ${hostedBaseUrl}\n` +
+        `  MCP URL:     ${hostedBaseUrl}/mcp\n` +
+        `  health:    ${hostedBaseUrl}/healthz\n` +
+        `\n` +
+        `Next:\n` +
+        `  1. Open ChatGPT Developer Mode.\n` +
+        `  2. Add a new MCP server/app.\n` +
+        `  3. Paste this MCP URL: ${hostedBaseUrl}/mcp\n` +
+        `\n` +
+        `This endpoint is hosted on Vercel; no local terminal needs to stay open.\n`,
+    );
+    return;
+  }
   const handle = await startGoblintownChatGptApp({
     cwd: process.cwd(),
     host: flags.host ?? (useTunnel ? "0.0.0.0" : undefined),
     port,
-    publicBaseUrl: flags["public-base-url"],
+    publicBaseUrl: installPublicBaseUrl,
     allowedHosts: allowedHosts.length > 0 ? allowedHosts : undefined,
   });
-  const localGuideUrl = handle.url;
+  const localGuideUrl = useTunnel ? `http://localhost:${handle.port}` : handle.url;
   let tunnel: Awaited<ReturnType<typeof startGoblintownChatGptQuickTunnel>> | undefined;
   if (useTunnel && !flags["public-base-url"]) {
     process.stdout.write("Starting a public HTTPS tunnel for ChatGPT...\n");
-    tunnel = await startGoblintownChatGptQuickTunnel(localGuideUrl);
-    handle.setPublicBaseUrl(tunnel.url);
+    try {
+      tunnel = await startGoblintownChatGptQuickTunnel(localGuideUrl, {
+        onTunnelUrl: (url) => {
+          handle.addAllowedHost(url);
+          handle.setPublicBaseUrl(url);
+          process.stdout.write(`Tunnel candidate: ${url}\n`);
+        },
+      });
+      handle.addAllowedHost(tunnel.url);
+      handle.setPublicBaseUrl(tunnel.url);
+    } catch (err) {
+      await handle.close();
+      throw err;
+    }
   }
   if (installMode && flags["no-open"] !== "true") {
     openUrl(localGuideUrl);
@@ -1822,6 +1864,12 @@ async function cmdChatGpt(args: string[]): Promise<void> {
   await new Promise<never>(() => {
     // Keep the adapter alive until the user stops the process.
   });
+}
+
+function normalizeChatGptInstallBaseUrl(value: string): string {
+  const trimmed = value.trim();
+  const withProtocol = /^https?:\/\//iu.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return withProtocol.replace(/\/+$/u, "");
 }
 
 async function cmdCloud(args: string[]): Promise<void> {

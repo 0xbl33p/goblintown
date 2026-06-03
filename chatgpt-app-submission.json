@@ -1,0 +1,148 @@
+{
+  "$schema": "https://developers.openai.com/apps-sdk/schemas/chatgpt-app-submission.v1.json",
+  "schema_version": 1,
+  "app_info": {
+    "display_name": "Goblintown",
+    "subtitle": "Run agent workflows",
+    "description": "Goblintown helps developers open a hosted handoff page, prepare multi-agent rites and planner DAGs through Goblintown's existing board loop, inspect optional provider setup, and check sidecar readiness from ChatGPT. ChatGPT is the host model surface for OpenAI-model steps, so the ChatGPT app does not require an OpenAI API key.",
+    "category": "DEVELOPER_TOOLS"
+  },
+  "tools": {
+    "goblintown_tank": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Returns the hosted handoff URL and may initialize private runtime state used by the adapter, so it is not strictly read-only.",
+        "open_world_justification": "Does not publish content, send messages, or write to public internet services.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "goblintown_rite": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Prepares a Goblintown rite packet and may create private run metadata, so it is not strictly read-only.",
+        "open_world_justification": "Returns model-visible prompts for ChatGPT-hosted execution; optional verifier-tool instructions may ask ChatGPT to inspect public URLs.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "goblintown_plan": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Prepares a planner DAG packet and sub-rite instructions and may create private run metadata, so it is not strictly read-only.",
+        "open_world_justification": "Returns model-visible prompts for ChatGPT-hosted planner and sub-rite execution.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "goblintown_provider": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Reports provider configuration and may initialize private runtime folders needed to inspect that configuration.",
+        "open_world_justification": "Only inspects provider configuration and does not publish content or call external systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "goblintown_doctor": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Checks setup and may initialize private runtime folders used by the sidecar.",
+        "open_world_justification": "Only inspects setup and returns configuration snippets without publishing content or calling external systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    }
+  },
+  "test_cases": [
+    {
+      "description": "Open the hosted Goblintown handoff page from ChatGPT.",
+      "user_prompt": "Open the Goblintown handoff page for this workflow.",
+      "file_attachment_urls": null,
+      "tools_triggered": "goblintown_tank",
+      "expected_output": "Returns the stable hosted handoff URL and indicates that no local Tank server was started.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Prepare and execute a full rite using the real Goblintown board loop in ChatGPT.",
+      "user_prompt": "Run a Goblintown rite for auditing this implementation plan.",
+      "file_attachment_urls": null,
+      "tools_triggered": "goblintown_rite",
+      "expected_output": "Returns the real rite gate packet for ChatGPT to execute without requiring an OpenAI API key, then ChatGPT provides the final answer.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Configure a planner DAG for a multi-step task.",
+      "user_prompt": "Plan a Goblintown DAG for shipping this MCP adapter, with no more than six nodes.",
+      "file_attachment_urls": null,
+      "tools_triggered": "goblintown_plan",
+      "expected_output": "Returns planner and sub-rite gate packets for ChatGPT-hosted execution without requiring an OpenAI API key, then ChatGPT provides the final output or failure summary.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Inspect provider setup without exposing secrets.",
+      "user_prompt": "Check which Goblintown provider and model route are configured.",
+      "file_attachment_urls": null,
+      "tools_triggered": "goblintown_provider",
+      "expected_output": "Returns provider id, label, model routes, key source, and missing-key status without revealing API keys.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Check sidecar readiness and install configuration.",
+      "user_prompt": "Run the Goblintown doctor and show me whether setup is ready.",
+      "file_attachment_urls": null,
+      "tools_triggered": "goblintown_doctor",
+      "expected_output": "Returns setup status, Warren readiness, available tools, and local MCP install snippets.",
+      "expected_output_url": null
+    }
+  ],
+  "negative_test_cases": [
+    {
+      "description": "Do not trigger for ordinary weather questions.",
+      "user_prompt": "What will the weather be tomorrow in Vancouver?",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because weather lookup is outside Goblintown's supported workflows.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for unrelated restaurant booking.",
+      "user_prompt": "Book a table for two at an Italian restaurant tonight.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because it does not make reservations or interact with restaurants.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not perform destructive local file operations.",
+      "user_prompt": "Delete my project files and clean up this folder.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked for destructive file deletion because Goblintown's exposed ChatGPT tools do not delete project files.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for sending external messages.",
+      "user_prompt": "Send this status update to my team by email.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because it does not send email or messages to external recipients.",
+      "expected_output_url": null
+    }
+  ]
+}

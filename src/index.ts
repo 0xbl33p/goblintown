@@ -15,16 +15,20 @@ export {
   startMcpTankRun,
 } from "./mcp.js";
 export {
+  createGoblintownChatGptExpressApp,
   defaultChatGptAllowedHosts,
   defaultChatGptAppHost,
   defaultChatGptAppPort,
+  defaultChatGptPublicBaseUrl,
   startGoblintownChatGptApp,
   startGoblintownChatGptQuickTunnel,
+  type GoblintownChatGptExpressAppHandle,
   type GoblintownChatGptAppHandle,
   type GoblintownChatGptAppOptions,
   type GoblintownChatGptQuickTunnelHandle,
   type GoblintownChatGptQuickTunnelOptions,
 } from "./chatgpt-app.js";
+export { createGoblintownVercelApp } from "./vercel.js";
 export {
   GOBLINTOWN_SIDECAR_SKILL_NAME,
   defaultCodexSkillsDir,

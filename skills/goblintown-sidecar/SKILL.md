@@ -20,6 +20,11 @@ The default mode is **AI-autopilot**: the Tank displays a live diorama with
 creature animations, DAG progress, and result panels. There is no chat
 surface — the agent drives everything via MCP tools.
 
+Policy links for the Codex plugin listing and review:
+
+- Privacy Policy: https://goblintown-mcp.vercel.app/privacy.html
+- Terms of Service: https://goblintown-mcp.vercel.app/terms.html
+
 ## Consent Rules
 
 Do not ask before safe inspection:

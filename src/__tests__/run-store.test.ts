@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   appendRunEvent,
+  buildResumePrompt,
   ensureRunDir,
   loadAllRuns,
   loadRun,
@@ -147,5 +148,50 @@ describe("run-store", () => {
     assert.match(r.error ?? "", /interrupted/);
     assert.match(r.resumePrompt ?? "", /Continue the interrupted rite run/);
     assert.match(r.resumePrompt ?? "", /review:start/);
+  });
+
+  it("builds chained resume prompts from the original task", () => {
+    const original = rec("first", true);
+    original.task = "Subjectively answer who was best before Michael Jordan.";
+    original.status = "error";
+    original.error = "Budget exceeded: 25014 / 12000 tokens";
+    original.resumePrompt = buildResumePrompt(original);
+
+    const resumed = rec("second", true);
+    resumed.task = original.resumePrompt;
+    resumed.status = "error";
+    resumed.error = "Budget exceeded: 25117 / 12000 tokens";
+    resumed.resumedFromRunId = original.runId;
+
+    const prompt = buildResumePrompt(resumed);
+
+    assert.match(prompt, /Original task: Subjectively answer who was best before Michael Jordan\./);
+    assert.doesNotMatch(prompt, /Original task: Continue the interrupted/);
+  });
+
+  it("repairs stale nested resume prompts when loading runs", async () => {
+    const path = await ensureRunDir(dir);
+    const first = rec("first", true);
+    first.task = "Subjectively answer who was best before Michael Jordan.";
+    first.status = "error";
+    first.error = "Budget exceeded: 25014 / 12000 tokens";
+
+    const stale = rec("stale", true);
+    stale.task = buildResumePrompt(first);
+    stale.status = "error";
+    stale.error = "Budget exceeded: 25117 / 12000 tokens";
+    stale.resumePrompt = [
+      "Continue the interrupted rite run stale.",
+      "Original task: Continue the interrupted rite run first.",
+      "Original task: Subjectively answer who was best before Michael Jordan.",
+      "Last error: Budget exceeded: 25117 / 12000 tokens",
+    ].join("\n");
+
+    await saveRun(path, stale);
+    const got = await loadRun(path, "stale");
+
+    assert.ok(got);
+    assert.match(got!.resumePrompt ?? "", /Original task: Subjectively answer who was best before Michael Jordan\./);
+    assert.doesNotMatch(got!.resumePrompt ?? "", /Original task: Continue the interrupted/);
   });
 });

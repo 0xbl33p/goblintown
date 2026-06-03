@@ -13,7 +13,7 @@ const makeLoot = (id: string, output: string, reward = 0): Loot => ({
   riteId: "rite-1",
   creatureKind: "goblin",
   personality: "nerdy",
-  model: "gpt-5.4-mini",
+  model: "gpt-5-mini",
   prompt: "p",
   output,
   reward,

@@ -28,7 +28,9 @@
       "Interactive",
       "Write"
     ],
-    "websiteURL": "https://github.com/0xbl33p/goblintown",
+    "websiteURL": "https://goblintown-mcp.vercel.app",
+    "privacyPolicyURL": "https://goblintown-mcp.vercel.app/privacy.html",
+    "termsOfServiceURL": "https://goblintown-mcp.vercel.app/terms.html",
     "defaultPrompt": [
       "Open the Goblintown Tank",
       "Run a Goblintown rite",

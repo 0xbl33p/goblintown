@@ -4,12 +4,11 @@ import { once } from "node:events";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server as NetServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   GOBLINTOWN_MCP_TOOLS,
-  buildMcpHarnessRunConfig,
   buildGoblintownMcpConfig,
   installGoblintownCodexMcpConfig,
   mcpDoctorPayload,
@@ -24,6 +23,12 @@ import { installGoblintownCodexSkill } from "../skill-install.js";
 import { initWarren, saveWarrenManifest } from "../warren.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+function busyPortError(): Error {
+  const err = new Error("listen EADDRINUSE: address already in use") as NodeJS.ErrnoException;
+  err.code = "EADDRINUSE";
+  return err;
+}
 
 describe("Goblintown MCP sidecar", () => {
   it("advertises the local sidecar tools Codex needs", () => {
@@ -42,28 +47,24 @@ describe("Goblintown MCP sidecar", () => {
     assert.match(JSON.stringify(GOBLINTOWN_MCP_TOOLS), /full Goblintown rite/);
     assert.match(JSON.stringify(GOBLINTOWN_MCP_TOOLS), /planner DAG/);
     assert.match(JSON.stringify(GOBLINTOWN_MCP_TOOLS), /executionMode/);
-    assert.match(JSON.stringify(GOBLINTOWN_MCP_TOOLS), /host harness/);
+    assert.match(JSON.stringify(GOBLINTOWN_MCP_TOOLS), /board loop/);
   });
 
-  it("defaults rites and plans to host-harness token execution", () => {
-    assert.equal(normalizeMcpExecutionMode(undefined, {}), "harness");
+  it("declares output schemas for every exposed tool", () => {
+    for (const tool of GOBLINTOWN_MCP_TOOLS) {
+      assert.equal(tool.outputSchema?.type, "object", `${tool.name} outputSchema`);
+      assert.ok(tool.outputSchema.properties, `${tool.name} outputSchema properties`);
+    }
+  });
+
+  it("defaults rites and plans to the real board loop", () => {
+    assert.equal(normalizeMcpExecutionMode(undefined, {}), "board");
+    assert.equal(normalizeMcpExecutionMode("board", {}), "board");
+    assert.equal(normalizeMcpExecutionMode("harness", {}), "board");
     assert.equal(normalizeMcpExecutionMode("local_provider", {}), "local_provider");
     assert.equal(normalizeMcpExecutionMode(undefined, {
       GOBLINTOWN_MCP_EXECUTION_MODE: "local_provider",
     }), "local_provider");
-
-    const config = buildMcpHarnessRunConfig({
-      mode: "rite",
-      task: "compare options",
-      warrenRoot: "/tmp/example-warren",
-      warrenScope: "global",
-      payload: { task: "compare options", packSize: 4, debate: true },
-    });
-
-    assert.equal(config.runMode, "harness");
-    assert.equal(config.tokenPolicy.default, "host_harness");
-    assert.match(config.harnessPrompt, /current host model tokens only/);
-    assert.match(config.harnessPrompt, /Pack size: 4/);
   });
 
   it("prints a Codex-compatible local install snippet", () => {
@@ -184,6 +185,53 @@ describe("Goblintown MCP sidecar", () => {
 
     assert.equal(result.tankUrl, "http://127.0.0.1:7788/");
     assert.equal(result.serverStarted, true);
+  });
+
+  it("reuses an existing Tank only after its Warren identity matches", async () => {
+    const result = await openMcpTank({
+      warrenRoot: "/tmp/example-warren",
+      port: 7789,
+      serveImpl: async () => {
+        throw busyPortError();
+      },
+      fetchImpl: async (
+        input: Parameters<typeof fetch>[0],
+      ) => {
+        assert.equal(String(input), "http://localhost:7789/api/identity");
+        return new Response(JSON.stringify({
+          ok: true,
+          root: "/tmp/example-warren",
+          scope: "project",
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+
+    assert.equal(result.tankUrl, "http://localhost:7789/");
+    assert.equal(result.serverStarted, false);
+  });
+
+  it("rejects an occupied Tank port when it belongs to another Warren", async () => {
+    await assert.rejects(
+      () => openMcpTank({
+        warrenRoot: "/tmp/project-warren",
+        port: 7790,
+        serveImpl: async () => {
+          throw busyPortError();
+        },
+        fetchImpl: async () => new Response(JSON.stringify({
+          ok: true,
+          root: "/tmp/other-warren",
+          scope: "global",
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      }),
+      new RegExp(`Tank port 7790 is already in use by Warren ${resolve("/tmp/other-warren")}, not /tmp/project-warren`),
+    );
   });
 
   it("starts MCP rites through the Tank run API", async () => {

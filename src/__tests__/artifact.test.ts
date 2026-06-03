@@ -15,7 +15,7 @@ const sampleLoot = (over: Partial<Loot> = {}): Loot => ({
   riteId: "rite-1",
   creatureKind: "goblin",
   personality: "nerdy",
-  model: "gpt-5.4-mini",
+  model: "gpt-5-mini",
   prompt: "p",
   output: "winning output",
   timestamp: Date.now(),

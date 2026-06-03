@@ -169,6 +169,19 @@ describe("Tank app smoke", () => {
     assert.match(html, /saveOnboardingDone\(\)/);
   });
 
+  it("reports the Tank identity for MCP port ownership checks", async () => {
+    const url = await startApp();
+    const response = await fetch(new URL("/api/identity", url));
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.root, warrenRoot);
+    assert.equal(body.scope, "project");
+    assert.equal(body.autopilot, true);
+    assert.match(String(body.manifestPath), /\.goblintown\/warren\.json$/);
+  });
+
   it("serves default voice config without coupling it to text provider config", async () => {
     const url = await startApp();
     const response = await fetch(new URL("/api/voice", url));

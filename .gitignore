@@ -8,3 +8,4 @@ release/
 
 # per-project Warren state
 .goblintown/
+.vercel

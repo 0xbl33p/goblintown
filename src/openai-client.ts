@@ -23,6 +23,7 @@ import type {
 
 const _clients = new Map<string, OpenAI>();
 const providerRootStore = new AsyncLocalStorage<string>();
+const MIN_FIXED_COMPLETION_TOKENS = 512;
 
 function getClient(runtime: ProviderRuntime): OpenAI {
   if (runtime.missingApiKey) {
@@ -76,8 +77,8 @@ export function isFixedSamplingModel(model: string): boolean {
 
 // OpenRouter addresses models as `vendor/name`. When OPENAI_BASE_URL points
 // at OpenRouter and the configured model has no vendor prefix, default to
-// the `openai/` namespace so the project's defaults (`gpt-5.4-mini`,
-// `gpt-5.5`, etc.) keep working unchanged.
+// the `openai/` namespace so the project's defaults (`gpt-5-mini`,
+// `gpt-5`, etc.) keep working unchanged.
 export function resolveModel(
   model: string,
   baseURL: string | undefined = process.env.OPENAI_BASE_URL,
@@ -86,6 +87,16 @@ export function resolveModel(
   if (!baseURL) return model;
   if (!/openrouter\.ai/i.test(baseURL)) return model;
   return `openai/${model}`;
+}
+
+export function completionTokenParamForModel(
+  model: string,
+  requested: number,
+): { max_tokens?: number; max_completion_tokens?: number } {
+  if (isFixedSamplingModel(model)) {
+    return { max_completion_tokens: Math.max(requested, MIN_FIXED_COMPLETION_TOKENS) };
+  }
+  return { max_tokens: requested };
 }
 
 interface BaseParams {
@@ -121,8 +132,7 @@ function buildBaseParams(
     params.temperature = creature.temperature;
   }
   if (opts.maxOutputTokens !== undefined) {
-    if (fixed) params.max_completion_tokens = opts.maxOutputTokens;
-    else params.max_tokens = opts.maxOutputTokens;
+    Object.assign(params, completionTokenParamForModel(model, opts.maxOutputTokens));
   }
   return params;
 }

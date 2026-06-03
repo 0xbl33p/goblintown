@@ -99,7 +99,7 @@ goblintown graph <riteId|lootId>
 ```bash
 goblintown route
 goblintown route set goblin --preset ollama --model gemma3:27b
-goblintown route set ogre --preset openai --model gpt-5.5
+goblintown route set ogre --preset openai --model gpt-5
 goblintown route clear goblin
 ```
 
@@ -145,7 +145,7 @@ goblintown country run --task "Audit this migration plan" --all --pack 2
 
 | Variable | Purpose |
 | --- | --- |
-| `OPENAI_API_KEY` | Default hosted provider key. |
+| `OPENAI_API_KEY` | Optional OpenAI provider key for local/provider execution. |
 | `OPENAI_BASE_URL` | OpenAI-compatible base URL override. |
 | `OPENROUTER_API_KEY` | OpenRouter key. |
 | `GROQ_API_KEY` | Groq key. |

@@ -17,7 +17,7 @@ export function makeGoblin(personality: Personality = "nerdy"): Creature {
   return {
     kind: "goblin",
     modelSlot: "goblin",
-    model: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5.4-mini",
+    model: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5-mini",
     temperature: 0.9,
     personality,
     systemPrompt:
@@ -37,7 +37,7 @@ export function makeSpecialistGoblin(focus: string, personality: Personality = "
   return {
     kind: "goblin",
     modelSlot: "goblin",
-    model: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5.4-mini",
+    model: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5-mini",
     temperature: 0.5,
     personality,
     systemPrompt:
@@ -56,7 +56,7 @@ export function makeGremlin(personality: Personality = "feral"): Creature {
   return {
     kind: "gremlin",
     modelSlot: "gremlin",
-    model: process.env.GOBLINTOWN_MODEL_GREMLIN ?? "gpt-5.4-mini",
+    model: process.env.GOBLINTOWN_MODEL_GREMLIN ?? "gpt-5-mini",
     temperature: 1.1,
     personality,
     systemPrompt:
@@ -72,7 +72,7 @@ export function makeRaccoon(personality: Personality = "stoic"): Creature {
   return {
     kind: "raccoon",
     modelSlot: "raccoon",
-    model: process.env.GOBLINTOWN_MODEL_RACCOON ?? "gpt-5.4-mini",
+    model: process.env.GOBLINTOWN_MODEL_RACCOON ?? "gpt-5-mini",
     temperature: 0.4,
     personality,
     systemPrompt:
@@ -88,7 +88,7 @@ export function makeTroll(personality: Personality = "cynical"): Creature {
   return {
     kind: "troll",
     modelSlot: "troll",
-    model: process.env.GOBLINTOWN_MODEL_TROLL ?? "gpt-5.4-mini",
+    model: process.env.GOBLINTOWN_MODEL_TROLL ?? "gpt-5-mini",
     temperature: 0.2,
     personality,
     systemPrompt:
@@ -106,7 +106,7 @@ export function makeOgre(personality: Personality = "stoic"): Creature {
   return {
     kind: "ogre",
     modelSlot: "ogre",
-    model: process.env.GOBLINTOWN_MODEL_OGRE ?? "gpt-5.5",
+    model: process.env.GOBLINTOWN_MODEL_OGRE ?? "gpt-5",
     temperature: 0.3,
     personality,
     systemPrompt:
@@ -122,7 +122,7 @@ export function makePigeon(personality: Personality = "chipper"): Creature {
   return {
     kind: "pigeon",
     modelSlot: "pigeon",
-    model: process.env.GOBLINTOWN_MODEL_PIGEON ?? "gpt-5.4-mini",
+    model: process.env.GOBLINTOWN_MODEL_PIGEON ?? "gpt-5-mini",
     temperature: 0.5,
     personality,
     systemPrompt:
@@ -142,7 +142,7 @@ export function makeScribe(personality: Personality = "stoic"): Creature {
   return {
     kind: "pigeon",
     modelSlot: "scribe",
-    model: process.env.GOBLINTOWN_MODEL_SCRIBE ?? "gpt-5.4-mini",
+    model: process.env.GOBLINTOWN_MODEL_SCRIBE ?? "gpt-5-mini",
     temperature: 0.2,
     personality,
     systemPrompt:
