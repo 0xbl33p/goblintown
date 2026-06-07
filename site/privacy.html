@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goblintown Privacy Policy</title>
+<meta name="description" content="Privacy policy for Goblintown, including the website, Codex Plugin, ChatGPT App dev preview, CLI, and local Tank." />
+<meta name="theme-color" content="#0d1410" />
+<link rel="icon" href="assets/mayor-icon.png" />
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0d1410;
+    --bg-deep: #0a0e08;
+    --fg: #b9d3a8;
+    --fg-bright: #d8efb6;
+    --accent: #8fcf52;
+    --accent-hot: #c2f37a;
+    --muted: #5a7042;
+    --line: #1f2d18;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.65 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { color: var(--accent-hot); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 1.25rem; }
+  header, footer { padding: 2rem 0; }
+  nav { display: flex; gap: 1.2rem; align-items: center; flex-wrap: wrap; }
+  nav .brand { color: var(--fg-bright); font-weight: 700; letter-spacing: .04em; margin-right: auto; }
+  main { padding: 1rem 0 3rem; }
+  section { border-top: 1px solid var(--line); padding: 2rem 0; }
+  .hero { border-top: 0; padding-top: 2.5rem; }
+  h1, h2 { color: var(--fg-bright); line-height: 1.2; }
+  h1 { font-size: clamp(2rem, 6vw, 4rem); margin: 0 0 .75rem; }
+  h2 { font-size: 1.2rem; margin: 0 0 .75rem; }
+  p, li { max-width: 76ch; }
+  code { background: var(--bg-deep); color: var(--fg-bright); padding: 1px 5px; border-radius: 2px; }
+  ul { padding-left: 1.2rem; }
+  li { margin: .45rem 0; }
+  .meta, footer { color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <nav>
+    <a class="brand" href="index.html">goblintown</a>
+    <a href="terms.html">terms</a>
+    <a href="https://github.com/0xbl33p/goblintown">github</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero">
+    <h1>Privacy Policy</h1>
+    <p class="meta">Effective date: June 1, 2026</p>
+    <p>
+      Goblintown is a local-first orchestration tool. This policy covers the
+      website, Codex Plugin, ChatGPT App dev preview, CLI, local Tank, and
+      related package docs.
+    </p>
+  </section>
+
+  <section>
+    <h2>Short Version</h2>
+    <p>
+      Goblintown does not sell personal data, does not use data for ads, and
+      does not add hidden remote analytics to the local package. The local
+      tools run from your machine and store local state only when you ask them
+      to create or reuse a Warren, run history, settings, or artifacts.
+    </p>
+  </section>
+
+  <section>
+    <h2>Data Goblintown May Handle</h2>
+    <p>Depending on what you choose to run, Goblintown may handle:</p>
+    <ul>
+      <li>Prompts, tasks, questions, and tool inputs you submit.</li>
+      <li>Local project context or files you explicitly ask Goblintown to scan, import, or summarize.</li>
+      <li>Run artifacts, local settings, provider route choices, and setup diagnostics.</li>
+      <li>Provider status such as missing-key state, without intentionally exposing secret values.</li>
+      <li>Optional ChatGPT or Codex host context that the host includes in a tool call.</li>
+      <li>Optional cloud-mode account, country, mail, discovery, or sync fields when cloud features are enabled by you.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Where Data Goes</h2>
+    <ul>
+      <li>Local-first state stays on your machine, usually under a project <code>.goblintown</code> folder or the Codex-local Goblintown folder.</li>
+      <li>When you use the ChatGPT App dev preview, ChatGPT and OpenAI receive the content needed to call the app tools.</li>
+      <li>When you use Codex, the Codex host receives the content needed to call the plugin tools.</li>
+      <li>When you run local-provider execution, configured model providers may receive prompts, context, and tool outputs needed for that run.</li>
+      <li>When you provide URLs or enable tools that fetch remote content, those remote services may receive normal request metadata.</li>
+      <li>Private local files are not uploaded by Goblintown unless you ask a tool to read, scan, import, summarize, or send them to a provider or host.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Keys And Secrets</h2>
+    <p>
+      API keys are meant to stay in your local environment, local settings, or
+      provider configuration. Goblintown diagnostics should report whether a key
+      is present or missing, not the secret value itself. You are responsible
+      for choosing which providers to configure and for removing secrets from
+      prompts, files, screenshots, logs, or artifacts before sharing them.
+    </p>
+  </section>
+
+  <section>
+    <h2>Retention And Deletion</h2>
+    <p>
+      Local files, Warrens, run logs, and artifacts remain on your machine until
+      you delete them or reset that local state. Hosts and providers may retain
+      data according to their own policies. To remove local Goblintown data,
+      delete the relevant project <code>.goblintown</code> folder and any
+      Codex-local Goblintown state you no longer want.
+    </p>
+  </section>
+
+  <section>
+    <h2>Children</h2>
+    <p>
+      Goblintown is built for developers and is not directed to children. Do not
+      use it to intentionally collect children's personal information.
+    </p>
+  </section>
+
+  <section>
+    <h2>Changes And Contact</h2>
+    <p>
+      This policy may change as Goblintown changes. For privacy questions,
+      issues, or corrections, open an issue at
+      <a href="https://github.com/0xbl33p/goblintown/issues">github.com/0xbl33p/goblintown/issues</a>.
+    </p>
+  </section>
+</main>
+
+<footer>
+  <a href="index.html">home</a> ·
+  <a href="terms.html">terms</a> ·
+  <a href="https://github.com/0xbl33p/goblintown">github</a>
+</footer>
+</div>
+</body>
+</html>

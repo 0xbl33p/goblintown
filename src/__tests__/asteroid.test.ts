@@ -38,7 +38,7 @@ describe("Asteroid Mode", () => {
   });
 
   it("wires the destructive tank reset behind Asteroid Mode confirmations", () => {
-    assert.match(serverSource, /id="resume-dismiss"[^>]*>Asteroid Mode<\/button>/);
+    assert.match(serverSource, /id="resume-dismiss"[^>]*>Dismiss<\/button>/);
     assert.match(serverSource, /id="btn-asteroid"[\s\S]*Asteroid Mode[\s\S]*<\/button>/);
     assert.match(serverSource, /id="asteroid-overlay"/);
     assert.match(serverSource, /id="asteroid-confirm"/);

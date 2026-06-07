@@ -34,6 +34,7 @@ export interface RunStartRequest {
 export interface RunRecord {
   runId: string;
   task: string;
+  originalTask?: string;
   packSize: number;
   scanGlobs: string[];
   personality?: Personality;
@@ -156,9 +157,10 @@ export function markRunFinished(
 export function buildResumePrompt(rec: RunRecord): string {
   const mode = rec.mode ?? rec.request?.mode ?? "rite";
   const checkpoint = rec.checkpoint;
+  const originalTask = originalTaskForResume(rec);
   const lines = [
     `Continue the interrupted ${mode} run ${rec.runId}.`,
-    `Original task: ${truncateForPrompt(rec.task, 1_200)}`,
+    `Original task: ${truncateForPrompt(originalTask, 1_200)}`,
   ];
   if (rec.error) {
     lines.push(`Last error: ${truncateForPrompt(rec.error, 500)}`);
@@ -184,6 +186,13 @@ export function buildResumePrompt(rec: RunRecord): string {
     "Resume from the next useful checkpoint. Do not replay already completed work unless it is needed to recover context. Produce a final user-observable result.",
   );
   return lines.join("\n");
+}
+
+export function originalTaskForResume(rec: RunRecord): string {
+  if (typeof rec.originalTask === "string" && rec.originalTask.trim().length > 0) {
+    return rec.originalTask.trim();
+  }
+  return extractOriginalTask(rec.task) ?? rec.task;
 }
 
 function compactRunRecord(rec: RunRecord): RunRecord {
@@ -391,6 +400,18 @@ function truncateForPrompt(value: string, max: number): string {
   return `${value.slice(0, max)}...`;
 }
 
+function extractOriginalTask(task: string): string | undefined {
+  const originals = [...task.matchAll(/^Original task:\s*(.+)$/gm)]
+    .map((m) => m[1]?.trim())
+    .filter((value): value is string => !!value);
+  if (!originals.length) return undefined;
+  const nonResume = originals
+    .slice()
+    .reverse()
+    .find((value) => !value.startsWith("Continue the interrupted "));
+  return nonResume ?? originals[originals.length - 1];
+}
+
 async function readRunFile(path: string): Promise<RunRecord> {
   const file = await stat(path);
   if (file.size > MAX_LEGACY_JSON_BYTES) {
@@ -450,7 +471,7 @@ function normalizeLoadedRecord(rec: RunRecord): RunRecord {
   rec.mode = rec.mode ?? rec.request?.mode;
   if (rec.status === "interrupted" || rec.status === "error") {
     rec.resumable = rec.resumable ?? true;
-    rec.resumePrompt = rec.resumePrompt ?? buildResumePrompt(rec);
+    rec.resumePrompt = buildResumePrompt(rec);
   }
   return rec;
 }

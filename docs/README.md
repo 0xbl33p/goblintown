@@ -8,7 +8,9 @@ architecture legible.
 
 | Need | Read |
 | --- | --- |
-| Install beta 0.7 | [install/beta-0.7.md](install/beta-0.7.md) |
+| Distribution names and release lanes | [distributions.md](distributions.md) |
+| ChatGPT App 1.0 dev preview | [../apps/chatgpt/README.md](../apps/chatgpt/README.md) |
+| Install Desktop Beta 0.1 | [install/beta-0.7.md](install/beta-0.7.md) |
 | Understand the pipeline | [architecture/pipeline.md](architecture/pipeline.md) |
 | Use one fast worker | [modes/single-goblin.md](modes/single-goblin.md) |
 | Run the whole town | [modes/goblintown-mode.md](modes/goblintown-mode.md) |
@@ -17,7 +19,9 @@ architecture legible.
 
 ## Product Manual
 
-- [Install beta 0.7](install/beta-0.7.md)
+- [Distribution names](distributions.md)
+- [ChatGPT App 1.0 dev preview](../apps/chatgpt/README.md)
+- [Install Desktop Beta 0.1](install/beta-0.7.md)
 - [Single Goblin mode](modes/single-goblin.md)
 - [Goblintown mode](modes/goblintown-mode.md)
 - [Cloud and country](features/cloud-country.md)

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, access, rm } from "node:fs/promises";
 import { constants as FS } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   makeCountryName,
@@ -22,6 +23,12 @@ export interface Warren {
   manifestPath: string;
   manifest: WarrenManifest;
   hoard: Hoard;
+  scope: "project" | "global";
+}
+
+export interface LoadWarrenOptions {
+  globalFallback?: boolean;
+  initGlobalFallback?: boolean;
 }
 
 export async function initWarren(root: string): Promise<Warren> {
@@ -35,9 +42,9 @@ export async function initWarren(root: string): Promise<Warren> {
     name: pathBasename(root),
     version: 1,
     createdAt: new Date().toISOString(),
-    defaultModelGoblin: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5.4-mini",
-    defaultModelOgre: process.env.GOBLINTOWN_MODEL_OGRE ?? "gpt-5.5",
-    defaultModelTroll: process.env.GOBLINTOWN_MODEL_TROLL ?? "gpt-5.4-mini",
+    defaultModelGoblin: process.env.GOBLINTOWN_MODEL_GOBLIN ?? "gpt-5-mini",
+    defaultModelOgre: process.env.GOBLINTOWN_MODEL_OGRE ?? "gpt-5",
+    defaultModelTroll: process.env.GOBLINTOWN_MODEL_TROLL ?? "gpt-5-mini",
     provider: defaultProviderConfig(),
     voice: normalizeVoiceConfig(undefined),
     addons: {},
@@ -52,7 +59,13 @@ export async function initWarren(root: string): Promise<Warren> {
   };
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
 
-  return { root, manifestPath, manifest, hoard };
+  return {
+    root,
+    manifestPath,
+    manifest,
+    hoard,
+    scope: root === globalWarrenRoot() ? "global" : "project",
+  };
 }
 
 export async function resetWarren(root: string): Promise<Warren> {
@@ -60,13 +73,36 @@ export async function resetWarren(root: string): Promise<Warren> {
   return initWarren(root);
 }
 
-export async function loadWarren(cwd: string): Promise<Warren> {
+export async function loadWarren(
+  cwd: string,
+  opts: LoadWarrenOptions = {},
+): Promise<Warren> {
   const root = await findWarrenRoot(cwd);
-  if (!root) {
-    throw new Error(
-      `No Warren found above ${cwd}. Run \`goblintown init\` first.`,
-    );
+  if (root) return loadWarrenRoot(root, "project");
+
+  if (opts.globalFallback) {
+    const globalRoot = globalWarrenRoot();
+    if (await hasWarrenManifest(globalRoot)) {
+      return loadWarrenRoot(globalRoot, "global");
+    }
+    if (opts.initGlobalFallback !== false) return initWarren(globalRoot);
   }
+
+  const nextStep = opts.globalFallback
+    ? "Run `goblintown init` in a project folder, or let Goblintown create its Codex-local global Warren."
+    : "Run `goblintown init` first.";
+  throw new Error(`No Warren found above ${cwd}. ${nextStep}`);
+}
+
+export function globalWarrenRoot(): string {
+  const codexHome = process.env.CODEX_HOME || join(homedir(), ".codex");
+  return join(codexHome, "goblintown");
+}
+
+async function loadWarrenRoot(
+  root: string,
+  scope: Warren["scope"],
+): Promise<Warren> {
   const manifestPath = join(root, WARREN_DIRNAME, MANIFEST_FILE);
   const manifest = JSON.parse(
     await readFile(manifestPath, "utf8"),
@@ -81,7 +117,16 @@ export async function loadWarren(cwd: string): Promise<Warren> {
   // before later subdirs were added (e.g. .goblintown/hoard/artifacts) get
   // upgraded transparently here.
   await hoard.init();
-  return { root, manifestPath, manifest, hoard };
+  return { root, manifestPath, manifest, hoard, scope };
+}
+
+async function hasWarrenManifest(root: string): Promise<boolean> {
+  try {
+    await access(join(root, WARREN_DIRNAME, MANIFEST_FILE), FS.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function saveWarrenManifest(warren: Warren): Promise<void> {

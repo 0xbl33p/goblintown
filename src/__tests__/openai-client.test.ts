@@ -1,6 +1,17 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { isFixedSamplingModel, resolveModel } from "../openai-client.js";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  completionTokenParamForModel,
+  isFixedSamplingModel,
+  resolveActiveProviderRuntimeForSlot,
+  resolveModel,
+  withProviderRoot,
+} from "../openai-client.js";
+import { setProviderSecretForRoot } from "../provider-secrets.js";
+import { initWarren, saveWarrenManifest } from "../warren.js";
 
 // `isFixedSamplingModel` is a small but load-bearing heuristic: it decides
 // whether a model rejects `temperature` and uses `max_completion_tokens`.
@@ -13,8 +24,8 @@ describe("isFixedSamplingModel", () => {
   describe("matches reasoning-style models", () => {
     it("matches gpt-5 family", () => {
       assert.equal(isFixedSamplingModel("gpt-5"), true);
-      assert.equal(isFixedSamplingModel("gpt-5.4-mini"), true);
-      assert.equal(isFixedSamplingModel("gpt-5.5"), true);
+      assert.equal(isFixedSamplingModel("gpt-5-mini"), true);
+      assert.equal(isFixedSamplingModel("gpt-5"), true);
     });
 
     it("matches o-series", () => {
@@ -24,7 +35,7 @@ describe("isFixedSamplingModel", () => {
 
     it("matches openai/* via OpenRouter", () => {
       assert.equal(isFixedSamplingModel("openai/o3-mini"), true);
-      assert.equal(isFixedSamplingModel("openai/gpt-5.4-mini"), true);
+      assert.equal(isFixedSamplingModel("openai/gpt-5-mini"), true);
     });
 
     it("matches deepseek-r* family", () => {
@@ -80,7 +91,7 @@ describe("isFixedSamplingModel", () => {
 });
 
 // `resolveModel` lets the project ship its OpenAI-flavored defaults
-// (`gpt-5.4-mini`, `gpt-5.5`, ...) unchanged and still work when
+// (`gpt-5-mini`, `gpt-5`, ...) unchanged and still work when
 // `OPENAI_BASE_URL` points at OpenRouter. It must:
 //   - prepend `openai/` only when the base URL is OpenRouter,
 //   - never touch a model that already carries a vendor prefix,
@@ -90,8 +101,8 @@ describe("resolveModel", () => {
   const OPENROUTER = "https://openrouter.ai/api/v1";
 
   it("prepends openai/ for an unprefixed model on OpenRouter", () => {
-    assert.equal(resolveModel("gpt-5.4-mini", OPENROUTER), "openai/gpt-5.4-mini");
-    assert.equal(resolveModel("gpt-5.5", OPENROUTER), "openai/gpt-5.5");
+    assert.equal(resolveModel("gpt-5-mini", OPENROUTER), "openai/gpt-5-mini");
+    assert.equal(resolveModel("gpt-5", OPENROUTER), "openai/gpt-5");
     assert.equal(resolveModel("o3-mini", OPENROUTER), "openai/o3-mini");
   });
 
@@ -111,14 +122,14 @@ describe("resolveModel", () => {
   });
 
   it("does not prefix when no base URL is set (default OpenAI)", () => {
-    assert.equal(resolveModel("gpt-5.4-mini", undefined), "gpt-5.4-mini");
-    assert.equal(resolveModel("gpt-5.5", undefined), "gpt-5.5");
+    assert.equal(resolveModel("gpt-5-mini", undefined), "gpt-5-mini");
+    assert.equal(resolveModel("gpt-5", undefined), "gpt-5");
   });
 
   it("does not prefix on non-OpenRouter custom endpoints", () => {
     assert.equal(
-      resolveModel("gpt-5.4-mini", "https://api.groq.com/openai/v1"),
-      "gpt-5.4-mini",
+      resolveModel("gpt-5-mini", "https://api.groq.com/openai/v1"),
+      "gpt-5-mini",
     );
     assert.equal(
       resolveModel("llama-3.3", "http://localhost:11434/v1"),
@@ -128,8 +139,59 @@ describe("resolveModel", () => {
 
   it("matches openrouter.ai case-insensitively", () => {
     assert.equal(
-      resolveModel("gpt-5.5", "https://OpenRouter.AI/api/v1"),
-      "openai/gpt-5.5",
+      resolveModel("gpt-5", "https://OpenRouter.AI/api/v1"),
+      "openai/gpt-5",
     );
+  });
+});
+
+describe("completionTokenParamForModel", () => {
+  it("floors tiny caps for reasoning-style models", () => {
+    assert.deepEqual(completionTokenParamForModel("gpt-5-mini", 64), {
+      max_completion_tokens: 512,
+    });
+    assert.deepEqual(completionTokenParamForModel("openai/gpt-5", 2048), {
+      max_completion_tokens: 2048,
+    });
+  });
+
+  it("leaves standard sampling model caps unchanged", () => {
+    assert.deepEqual(completionTokenParamForModel("gpt-4o-mini", 64), {
+      max_tokens: 64,
+    });
+  });
+});
+
+describe("provider root context", () => {
+  it("resolves model calls against an explicit Warren root without changing process cwd", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "goblintown-provider-root-"));
+    const priorCwd = process.cwd();
+    try {
+      const root = join(tmp, "global-warren");
+      const outside = join(tmp, "outside");
+      await mkdir(outside, { recursive: true });
+      const warren = await initWarren(root);
+      warren.manifest.provider = {
+        preset: "deepseek",
+        apiKeyEnv: "DEEPSEEK_API_KEY",
+        models: { goblin: "deepseek-chat" },
+      };
+      await saveWarrenManifest(warren);
+      await setProviderSecretForRoot(root, "DEEPSEEK_API_KEY", "sk-stored");
+
+      process.chdir(outside);
+      const activeOutside = process.cwd();
+      const runtime = withProviderRoot(root, () =>
+        resolveActiveProviderRuntimeForSlot("goblin"),
+      );
+
+      assert.equal(process.cwd(), activeOutside);
+      assert.equal(runtime.id, "deepseek");
+      assert.equal(runtime.models.goblin, "deepseek-chat");
+      assert.equal(runtime.apiKeySource, "stored");
+    } finally {
+      process.chdir(priorCwd);
+      await rm(tmp, { recursive: true, force: true });
+    }
   });
 });

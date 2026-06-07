@@ -1,0 +1,12 @@
+{
+  "name": "Goblintown ChatGPT App",
+  "version": "1.0-dev",
+  "status": "dev-preview",
+  "websiteUrl": "https://goblintown-mcp.vercel.app",
+  "privacyPolicyUrl": "https://goblintown-mcp.vercel.app/privacy.html",
+  "termsOfServiceUrl": "https://goblintown-mcp.vercel.app/terms.html",
+  "productionMcpUrl": "https://goblintown-mcp.vercel.app/mcp",
+  "mcpEndpoint": "/mcp",
+  "transport": "streamable-http",
+  "widgetUri": "ui://goblintown/tank-v2.html"
+}

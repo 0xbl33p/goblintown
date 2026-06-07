@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import OpenAI from "openai";
 import { sharedSemaphore } from "./concurrency.js";
 import {
@@ -12,6 +13,7 @@ import {
   type ProviderRuntime,
   resolveProviderRuntimeForSlot,
 } from "./providers.js";
+import { readProviderSecretsForRootSync } from "./provider-secrets.js";
 import type {
   Creature,
   ModelSlot,
@@ -20,6 +22,8 @@ import type {
 } from "./types.js";
 
 const _clients = new Map<string, OpenAI>();
+const providerRootStore = new AsyncLocalStorage<string>();
+const MIN_FIXED_COMPLETION_TOKENS = 512;
 
 function getClient(runtime: ProviderRuntime): OpenAI {
   if (runtime.missingApiKey) {
@@ -49,6 +53,19 @@ export interface CreatureResponse {
   usage: TokenUsage;
 }
 
+export function withProviderRoot<T>(root: string, fn: () => T): T {
+  return providerRootStore.run(root, fn);
+}
+
+export function resolveActiveProviderRuntimeForSlot(
+  slot: ModelSlot,
+): ProviderRuntime {
+  const root = providerRootStore.getStore();
+  const config = loadProviderConfigFromCwd(root);
+  const storedSecrets = root ? readProviderSecretsForRootSync(root) : undefined;
+  return resolveProviderRuntimeForSlot(slot, config, process.env, storedSecrets);
+}
+
 // gpt-5 and o-series reasoning models reject `temperature` and use
 // `max_completion_tokens` instead of `max_tokens`. Also covers the same
 // families when accessed through OpenRouter as `openai/gpt-5...` or
@@ -60,8 +77,8 @@ export function isFixedSamplingModel(model: string): boolean {
 
 // OpenRouter addresses models as `vendor/name`. When OPENAI_BASE_URL points
 // at OpenRouter and the configured model has no vendor prefix, default to
-// the `openai/` namespace so the project's defaults (`gpt-5.4-mini`,
-// `gpt-5.5`, etc.) keep working unchanged.
+// the `openai/` namespace so the project's defaults (`gpt-5-mini`,
+// `gpt-5`, etc.) keep working unchanged.
 export function resolveModel(
   model: string,
   baseURL: string | undefined = process.env.OPENAI_BASE_URL,
@@ -70,6 +87,16 @@ export function resolveModel(
   if (!baseURL) return model;
   if (!/openrouter\.ai/i.test(baseURL)) return model;
   return `openai/${model}`;
+}
+
+export function completionTokenParamForModel(
+  model: string,
+  requested: number,
+): { max_tokens?: number; max_completion_tokens?: number } {
+  if (isFixedSamplingModel(model)) {
+    return { max_completion_tokens: Math.max(requested, MIN_FIXED_COMPLETION_TOKENS) };
+  }
+  return { max_tokens: requested };
 }
 
 interface BaseParams {
@@ -105,8 +132,7 @@ function buildBaseParams(
     params.temperature = creature.temperature;
   }
   if (opts.maxOutputTokens !== undefined) {
-    if (fixed) params.max_completion_tokens = opts.maxOutputTokens;
-    else params.max_tokens = opts.maxOutputTokens;
+    Object.assign(params, completionTokenParamForModel(model, opts.maxOutputTokens));
   }
   return params;
 }
@@ -116,9 +142,8 @@ export async function callCreature(
   userPrompt: string,
   opts: CallOptions = {},
 ): Promise<CreatureResponse> {
-  const config = loadProviderConfigFromCwd();
   const slot = creature.modelSlot ?? creature.kind;
-  const runtime = resolveProviderRuntimeForSlot(slot, config);
+  const runtime = resolveActiveProviderRuntimeForSlot(slot);
   const client = getClient(runtime);
   const sem = sharedSemaphore();
   return sem.run(async () => {
@@ -160,9 +185,8 @@ export async function callCreatureStream(
   onChunk: (chunk: string) => void,
   opts: CallOptions = {},
 ): Promise<CreatureResponse> {
-  const config = loadProviderConfigFromCwd();
   const slot = creature.modelSlot ?? creature.kind;
-  const runtime = resolveProviderRuntimeForSlot(slot, config);
+  const runtime = resolveActiveProviderRuntimeForSlot(slot);
   const client = getClient(runtime);
   const sem = sharedSemaphore();
   return sem.run(async () => {

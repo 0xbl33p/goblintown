@@ -1,28 +1,28 @@
-# Installing Beta 0.7
+# Installing Desktop Beta 0.1
 
-Beta `0.7.0-beta.1` ships desktop installer packages for macOS, Windows, and
-Linux. They are real installer payloads, but this beta is not yet the final
-signed public release.
+Goblintown Desktop Beta 0.1 ships desktop installer packages for macOS,
+Windows, and Linux. They are real installer payloads, but this beta is not yet
+the final signed public release. The historical tag and asset filenames still
+use `0.7.0-beta.1`; keep those names when downloading or verifying files.
 
-## Current Download Reality
+## Current Downloads
 
-The intended GitHub Release URL is:
-
-```text
-https://github.com/water-bear86/goblintown/releases/tag/v0.7.0-beta.1
-```
-
-Repository rules currently block creating the `v0.7.0-beta.1` tag, so the
-current canonical public fallback is the split-parts branch:
+Canonical GitHub Release URL:
 
 ```text
-https://github.com/water-bear86/goblintown/tree/release/v0.7.0-beta.1/release/parts
+https://github.com/0xbl33p/goblintown/releases/tag/v0.7.0-beta.1
 ```
 
-The split route exists because regular git blobs above 100 MB are blocked and
-this fork cannot rely on new Git LFS objects. Each large installer is split into
-90 MB parts. Download every matching `*.part-*` file for your platform, keep
-lexical order, concatenate, then verify.
+If release assets cannot be downloaded directly, the fallback is the split-parts
+branch:
+
+```text
+https://github.com/0xbl33p/goblintown/tree/release/v0.7.0-beta.1/release/parts
+```
+
+The split route exists because regular git blobs above 100 MB are blocked. Each
+large installer is split into 90 MB parts. Download every matching `*.part-*`
+file for your platform, keep lexical order, concatenate, then verify.
 
 ## Reconstruct
 
@@ -81,9 +81,10 @@ Before calling a release public, run:
 npm run release:ready
 ```
 
-That readiness gate checks the beta 0.7 artifact set, verifies checksums, and
-refuses to pass without Apple Developer ID, Apple notarization, and Windows
-signing credentials. It is supposed to be rude. A silent ad-hoc release is worse.
+That readiness gate checks the Desktop Beta 0.1 artifact set, verifies
+checksums, and refuses to pass without Apple Developer ID, Apple notarization,
+and Windows signing credentials. It is supposed to be rude. A silent ad-hoc
+release is worse.
 
 ## Temporary Uploads
 

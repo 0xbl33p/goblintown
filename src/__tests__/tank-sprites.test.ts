@@ -87,17 +87,57 @@ describe("tank sprite assets", () => {
     assert.match(serverSource, /function playGoblinAction/);
     assert.match(serverSource, /function holdGoblinStanding/);
     assert.match(serverSource, /function goHomeGoblinSlot/);
+    assert.match(serverSource, /function bringGoblinOutForTurn/);
     assert.match(serverSource, /function goHomeAllGoblins/);
     assert.match(serverSource, /const visible = Math\.max\(1, Math\.floor\(packSize \|\| 1\)\)/);
     assert.doesNotMatch(serverSource, /Math\.min\(packSize,\s*3\)/);
     assert.match(serverSource, /renderGoblinSlots\(step\.size\)/);
     assert.match(serverSource, /playGoblinAction\(slot, "come-out"/);
-    assert.match(serverSource, /playGoblinAction\(slot, "argue"/);
-    assert.match(serverSource, /playGoblinAction\(slot, "defend"/);
+    assert.match(serverSource, /bringGoblinOutForTurn\(slot, "argue"/);
+    assert.match(serverSource, /bringGoblinOutForTurn\(slot, "defend"/);
     assert.match(serverSource, /goHomeGoblinSlot\(slot/);
     assert.match(serverSource, /function positionBubbleAboveTarget/);
     assert.match(serverSource, /function bubbleCandidatesForTarget/);
     assert.match(serverSource, /left: cx - bw \/ 2/);
+  });
+
+  it("keeps the idle town as a center hut emoji skyline and only wakes goblins for their turn", () => {
+    assert.match(serverSource, /class="skyline mid t4-flex"[\s\S]*🛖/);
+    assert.match(serverSource, /class="skyline back t3"[\s\S]*🏚️/);
+    assert.match(serverSource, /data-visual-tier="0"/);
+    assert.match(serverSource, /\.warren\[data-visual-tier="4"\] \.t3,[\s\S]*\.warren\[data-visual-tier="4"\] \.t4/);
+    assert.match(serverSource, /const visualTier = Math\.min\(4, Math\.max\(1, t\)\)/);
+    assert.match(serverSource, /warren\.dataset\.tier = String\(t\)/);
+    assert.match(serverSource, /warren\.dataset\.visualTier = String\(visualTier\)/);
+    assert.match(serverSource, /\$\("hoard"\)\.textContent = piles\[visualTier\] \|\| ""/);
+    assert.match(serverSource, /\.tank\.chat-mode \.skyline/);
+    assert.doesNotMatch(serverSource, /town-goblin-residents/);
+    assert.doesNotMatch(serverSource, /class="town-goblin/);
+    assert.doesNotMatch(serverSource, /@keyframes town-goblin-argue/);
+    assert.doesNotMatch(serverSource, /class="goblin-houses"/);
+    assert.doesNotMatch(serverSource, /\.goblin-house/);
+
+    const packStartBlock = serverSource.match(/case "pack:start":[\s\S]*?break;/);
+    assert.ok(packStartBlock);
+    assert.match(packStartBlock[0], /renderGoblinSlots\(step\.size\)/);
+    assert.doesNotMatch(packStartBlock[0], /playGoblinAction/);
+    assert.doesNotMatch(packStartBlock[0], /wrap\.dataset\.home = "false"/);
+
+    const turnHelperStart = serverSource.indexOf("function bringGoblinOutForTurn");
+    const turnHelperEnd = serverSource.indexOf("function goHomeAllGoblins");
+    assert.ok(turnHelperStart > -1);
+    assert.ok(turnHelperEnd > turnHelperStart);
+    const turnHelper = serverSource.slice(turnHelperStart, turnHelperEnd);
+    assert.match(turnHelper, /playGoblinAction\(slot, "come-out"/);
+    assert.match(turnHelper, /playGoblinAction\(slot, action/);
+    assert.match(turnHelper, /goHomeGoblinSlot\(slot/);
+
+    const thinkingStart = serverSource.indexOf("function updateThinkingBubble");
+    const thinkingEnd = serverSource.indexOf("function clearThinkingBubble");
+    assert.ok(thinkingStart > -1);
+    assert.ok(thinkingEnd > thinkingStart);
+    const thinkingBlock = serverSource.slice(thinkingStart, thinkingEnd);
+    assert.match(thinkingBlock, /bringGoblinOutForTurn\(goblin, "argue"/);
   });
 
   it("shows specialist recovery by exploding and inverting the existing goblin pack", () => {

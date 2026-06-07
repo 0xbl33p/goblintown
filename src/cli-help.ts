@@ -5,6 +5,12 @@ Usage:
   goblintown init
       Initialize a Warren in the current directory.
 
+  goblintown install [--port <N>] [--no-serve]
+      Single-command agent setup. Creates a Warren, installs the Codex MCP
+      config, sidecar skill, and composer plugin, then starts the Tank in
+      AI-autopilot mode. MCP rite/plan tools default to harness-token execution;
+      pass executionMode=local_provider only for local Tank/provider spend.
+
   goblintown /ask "<task>"
       Goblin Mode: Single Goblin, one worker, one answer.
   goblintown /town "<task>"
@@ -154,6 +160,33 @@ Usage:
       Show the bundled Goblintown Cloud project, first-run Local Only vs Goblintown Cloud choice,
       Settings -> Account controls, and optional Firebase env overrides.
 
+  goblintown mcp [--doctor|--install-codex|--config-snippet] [--package <npm-spec>]
+      Start the local stdio MCP sidecar for Codex. The sidecar exposes Single
+      Goblin, full Rite, Planner DAG, provider snapshot, and doctor tools from
+      the current project Warren, or a Codex-local global Warren under
+      ~/.codex/goblintown when no project Warren exists. --install-codex writes
+      ~/.codex/config.toml. No hosted MCP is required.
+
+  goblintown chatgpt install [--port <N>] [--no-tunnel] [--no-open]
+  goblintown chatgpt serve [--port <N>] [--host <host>] [--public-base-url <https://...>] [--tunnel] [--allowed-host <host>]...
+      Install or start the Goblintown ChatGPT App 1.0 dev adapter. The easy path
+      is npx -y goblintown@latest chatgpt install: it starts the adapter,
+      opens the walkthrough page, and creates a quick HTTPS tunnel for ChatGPT
+      Developer Mode. The adapter exposes a Streamable HTTP MCP endpoint at /mcp
+      and a Tank widget resource.
+
+  goblintown skill install [--skills-dir <path>] [--force]
+      Install the bundled goblintown-sidecar Codex skill into ~/.codex/skills
+      so Codex knows when and how to install packages, register MCP, ask for
+      consent, and use the Goblintown MCP tools.
+
+  goblintown plugin install [--local-mcp]
+      Install Goblintown Codex Plugin 1.0 into ~/plugins/goblintown and add it
+      to ~/.agents/plugins/marketplace.json, then run codex plugin add so
+      Goblintown is installed and enabled for Codex's composer + menu. Use
+      --local-mcp from a built checkout to point the plugin at that checkout's
+      dist/cli.js instead of npm latest.
+
   goblintown addon [ls]
   goblintown addon enable solana
   goblintown addon disable solana
@@ -172,9 +205,10 @@ Usage:
       summaries, and store optional API keys locally in .goblintown/secrets.json.
       Sources: coingecko, dune, neynar, santiment, cryptopanic, lunarcrush.
 
-  goblintown serve [--port <N>]
-      Start the Goblin Mode GUI. Default port=7777. The legacy Tank UI is at /tank.
-      First run asks Local Only vs Goblintown Cloud; later change it in Settings -> Account.
+  goblintown serve [--port <N>] [--chat]
+      Start the Goblin Mode GUI. Default port=7777.
+      By default runs in AI-autopilot mode: the Tank diorama with config menus, no chat surface.
+      The agent drives rites and plans via MCP tools. Use --chat to restore the legacy chat UI.
       Settings also contains Country, Mail, Add-ons, API Provider, and Reset -> Asteroid Mode.
       Bundled sprite sheets and the Goblintown wordmark are loaded from site/assets.
 
@@ -190,14 +224,17 @@ Environment:
   FIREBASE_STORAGE_BUCKET     optional override
   FIREBASE_MESSAGING_SENDER_ID optional override
   FIREBASE_MEASUREMENT_ID     optional override
-  GOBLINTOWN_MODEL_GOBLIN     default: gpt-5.4-mini
-  GOBLINTOWN_MODEL_OGRE       default: gpt-5.5
-  GOBLINTOWN_MODEL_TROLL      default: gpt-5.4-mini
-  GOBLINTOWN_MODEL_SCRIBE     default: gpt-5.4-mini  (Pigeon-as-Scribe artifact distillation)
+  GOBLINTOWN_MODEL_GOBLIN     default: gpt-5-mini
+  GOBLINTOWN_MODEL_OGRE       default: gpt-5
+  GOBLINTOWN_MODEL_TROLL      default: gpt-5-mini
+  GOBLINTOWN_MODEL_SCRIBE     default: gpt-5-mini  (Pigeon-as-Scribe artifact distillation)
   GOBLINTOWN_EMBEDDING_MODEL  default: text-embedding-3-small  (artifact retrieval)
   GOBLINTOWN_TOOLS_HTTP       set to 1 to enable http.head verifier tool (default disabled)
   GOBLINTOWN_TOOLS_SOLANA     set to 1 to enable the Solana onchain add-on without changing warren.json
   GOBLINTOWN_SOLANA_RPC_URL   optional Solana RPC endpoint (default: https://api.mainnet-beta.solana.com)
+  GOBLINTOWN_CHATGPT_PORT     default port for goblintown chatgpt serve (8787)
+  GOBLINTOWN_CHATGPT_HOST     bind host for goblintown chatgpt serve (127.0.0.1)
+  GOBLINTOWN_CHATGPT_ALLOWED_HOSTS comma-separated Host headers for ChatGPT tunnels/deployments
   COINGECKO_API_KEY           optional sentiment key; overrides local .goblintown/secrets.json
   DUNE_API_KEY                optional sentiment key; overrides local .goblintown/secrets.json
   NEYNAR_API_KEY              optional sentiment key; overrides local .goblintown/secrets.json

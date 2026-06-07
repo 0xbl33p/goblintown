@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Goblintown — local AI chat and rite orchestration</title>
-<meta name="description" content="A local-first desktop AI app for simple chat, live voice, provider routing, memory, rites, and multi-agent orchestration." />
+<title>Goblintown — agent-first orchestration for front ends</title>
+<meta name="description" content="Goblintown is an agent-first, model-augmentable orchestration tool compatible with most front ends: Codex Plugin 1.0, Desktop Beta 0.1, and ChatGPT App 1.0 dev preview." />
 <meta property="og:title" content="Goblintown" />
-<meta property="og:description" content="Desktop AI chat first, multi-agent rites when work needs the full town. Local-first, provider-routed, voice-capable, and packaged as simple installers." />
+<meta property="og:description" content="Agent-first, model-augmentable orchestration for Codex Plugin 1.0, Desktop Beta 0.1, ChatGPT App 1.0 dev preview, and future front-end adapters." />
 <meta property="og:type" content="website" />
 <meta name="theme-color" content="#0d1410" />
 <link rel="icon" href="assets/mayor-icon.png" />
@@ -234,6 +234,7 @@
   <nav class="top">
     <span class="brand">goblintown</span>
     <span class="spacer"></span>
+    <a class="tab" href="#distributions">distributions</a>
     <a class="tab" href="#install">download</a>
     <a class="tab" href="#usage">usage</a>
     <a class="tab" href="#roster">roster</a>
@@ -244,9 +245,9 @@
   <div class="hero">
     <h1>goblintown<span class="blink"></span></h1>
     <p class="tagline">
-      A local-first desktop AI app. Start with simple chat, pick the API or
-      local model that powers it, then summon full rites when the work needs
-      memory, tools, debate, critique, and saved artifacts.
+      Agent-first, model-augmentable orchestration compatible with most front
+      ends: Codex Plugin 1.0 now, Desktop Beta 0.1 shipped, ChatGPT App 1.0
+      dev preview, and more host adapters after that.
     </p>
     <a class="cta primary" href="#install">
       <span>download</span>
@@ -270,6 +271,21 @@
     raccoons, trolls, ogres, pigeons.
   </p>
   <p>This project takes that ban list as a roster.</p>
+</section>
+
+<section id="distributions">
+  <h2><span class="hash">#</span> distributions</h2>
+  <p>
+    The core stays agent-first. Each package adapts that orchestration layer to
+    a different front end, deciding how the host opens the Tank and whether
+    model work runs through host tokens or an explicit local-provider route.
+  </p>
+  <div class="grid-2">
+    <div class="card"><h3>Codex Plugin 1.0</h3><p>The first front-end adapter: Codex composer plugin, sidecar skill, local stdio MCP server, and AI-autopilot Tank handoff. Install with <code>npx -y goblintown@latest install</code>.</p></div>
+    <div class="card"><h3>Desktop Beta 0.1</h3><p>The shipped desktop shell for macOS DMGs, Windows installers, and Linux AppImages. The files still use the historical <code>0.7.0-beta.1</code> asset names so existing release links and checksums keep working.</p></div>
+    <div class="card"><h3>ChatGPT App 1.0</h3><p>Dev-preview ChatGPT Apps SDK front-end adapter with a Streamable HTTP MCP endpoint at <code>/mcp</code>, a Tank widget resource, and a one-command installer. It keeps the same default token policy as Codex: configure the rite for the host unless the user explicitly chooses local-provider execution.</p></div>
+    <div class="card"><h3>Future host adapters</h3><p>Hermes, Opencode, OpenGPT, Claude Code, and other front ends get their own named lane: <code>Goblintown &lt;Host&gt; App</code> or <code>Goblintown &lt;Host&gt; Plugin</code>.</p></div>
+  </div>
 </section>
 
 <section id="roster">
@@ -447,11 +463,10 @@
 </section>
 
 <section id="install">
-  <h2><span class="hash">#</span> download</h2>
+  <h2><span class="hash">#</span> download Desktop Beta 0.1</h2>
   <p>
-    The desktop app opens directly into chat, asks which API or local model
-    should power Goblintown, and keeps setup to a few guided clicks. One-click
-    installers, no build step.
+    Desktop Beta 0.1 opens into the Goblintown control room and keeps setup to a
+    few guided clicks. One-click installers, no build step.
   </p>
   <div class="downloads">
     <a class="cta primary" href="https://github.com/0xbl33p/goblintown/releases/download/v0.7.0-beta.1/Goblintown-0.7.0-beta.1-mac-arm64.dmg"><span>macOS · Apple Silicon</span><span class="arrow">↓</span></a>
@@ -466,9 +481,15 @@
     installer. Linux: mark the AppImage executable and run it. Every asset and
     <code>SHA256SUMS.txt</code> lives on the
     <a href="https://github.com/0xbl33p/goblintown/releases/tag/v0.7.0-beta.1">v0.7.0-beta.1 release</a>.
-    These beta builds aren't code-signed yet, so macOS may need right-click →
-    Open and Windows may show a SmartScreen "More info → Run anyway" prompt.
+    This is the historical tag for Desktop Beta 0.1. These beta builds aren't
+    code-signed yet, so macOS may need right-click → Open and Windows may show
+    a SmartScreen "More info → Run anyway" prompt.
   </p>
+  <p>Installing the current Codex distribution instead?</p>
+<pre>npx -y goblintown@latest install    <span class="comment"># Goblintown Codex Plugin 1.0</span></pre>
+  <p>Testing the ChatGPT App 1.0 dev preview?</p>
+<pre>npx -y goblintown@latest chatgpt install
+<span class="comment"># starts the adapter, opens the walkthrough, and prints the ChatGPT MCP URL</span></pre>
   <p>Prefer the command line? Install from npm:</p>
 <pre>npm install -g goblintown
 goblintown serve        <span class="comment"># opens the GUI at http://localhost:7777/</span></pre>
@@ -624,6 +645,10 @@ export default function (loot, verdict) {
     <div class="links">
       <a href="https://github.com/0xbl33p/goblintown">github ↗</a>
       <a href="https://github.com/0xbl33p/goblintown/issues">issues ↗</a>
+      <a href="privacy.html">privacy</a>
+      <a href="terms.html">terms</a>
+      <a href="dashboard.html">dashboard</a>
+      <a href="admin.html">admin</a>
       <a href="https://openai.com/index/where-the-goblins-came-from/">the postmortem ↗</a>
     </div>
     <div class="meta">

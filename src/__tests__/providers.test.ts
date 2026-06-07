@@ -119,18 +119,26 @@ describe("provider presets", () => {
     assert.equal(runtime.apiKey, "sk-lm-legacy-token");
   });
 
-  it("prefers provider-specific keys but falls back to OPENAI_API_KEY", () => {
+  it("requires provider-specific keys unless the preset explicitly uses OPENAI_API_KEY", () => {
     const specific = resolveProviderRuntime(
       { preset: "groq" },
       { GROQ_API_KEY: "groq-key", OPENAI_API_KEY: "generic-key" },
     );
     assert.equal(specific.apiKey, "groq-key");
 
-    const fallback = resolveProviderRuntime(
+    const missing = resolveProviderRuntime(
       { preset: "groq" },
       { OPENAI_API_KEY: "generic-key" },
     );
-    assert.equal(fallback.apiKey, "generic-key");
+    assert.equal(missing.apiKey, "");
+    assert.equal(missing.apiKeySource, "none");
+    assert.equal(missing.missingApiKey, "GROQ_API_KEY");
+
+    const custom = resolveProviderRuntime(
+      { preset: "custom", apiKeyEnv: "OPENAI_API_KEY" },
+      { OPENAI_API_KEY: "generic-key" },
+    );
+    assert.equal(custom.apiKey, "generic-key");
   });
 
   it("prefers environment keys over saved local secrets", () => {
@@ -159,15 +167,15 @@ describe("provider presets", () => {
       models: { goblin: "deepseek-v4-flash", ogre: "deepseek-v4-pro" },
     });
 
-    assert.equal(resolveModelForSlot("goblin", "gpt-5.4-mini", cfg), "deepseek-v4-flash");
-    assert.equal(resolveModelForSlot("ogre", "gpt-5.5", cfg), "deepseek-v4-pro");
+    assert.equal(resolveModelForSlot("goblin", "gpt-5-mini", cfg), "deepseek-v4-flash");
+    assert.equal(resolveModelForSlot("ogre", "gpt-5", cfg), "deepseek-v4-pro");
     assert.ok(MODEL_SLOTS.includes("scribe"));
   });
 
   it("supports per-slot provider routes", () => {
     const cfg = normalizeProviderConfig({
       preset: "openai",
-      models: { goblin: "gpt-5.4-mini" },
+      models: { goblin: "gpt-5-mini" },
       routes: {
         goblin: {
           preset: "ollama",
@@ -180,11 +188,34 @@ describe("provider presets", () => {
     assert.equal(goblinRuntime.id, "ollama");
     assert.equal(goblinRuntime.baseURL, "http://localhost:11434/v1");
     assert.equal(
-      resolveModelForSlot("goblin", "gpt-5.4-mini", cfg, {}),
+      resolveModelForSlot("goblin", "gpt-5-mini", cfg, {}),
       "gemma3:27b",
     );
     const ogreRuntime = resolveProviderRuntimeForSlot("ogre", cfg, {});
     assert.equal(ogreRuntime.id, "openai");
+  });
+
+  it("uses routed provider key defaults instead of inheriting the global key env", () => {
+    const cfg = normalizeProviderConfig({
+      preset: "openai",
+      apiKeyEnv: "OPENAI_API_KEY",
+      routes: {
+        goblin: {
+          preset: "deepseek",
+          model: "deepseek-chat",
+        },
+      },
+    });
+
+    const runtime = resolveProviderRuntimeForSlot("goblin", cfg, {
+      DEEPSEEK_API_KEY: "deepseek-key",
+      OPENAI_API_KEY: "openai-key",
+    });
+
+    assert.equal(runtime.id, "deepseek");
+    assert.equal(runtime.apiKeyEnv, "DEEPSEEK_API_KEY");
+    assert.equal(runtime.apiKey, "deepseek-key");
+    assert.equal(resolveModelForSlot("goblin", "gpt-5-mini", cfg, {}), "deepseek-chat");
   });
 });
 

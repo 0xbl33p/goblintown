@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goblintown Dashboard</title>
+<meta name="description" content="Goblintown signed-in user dashboard placeholder for future userland DB and cloud account features." />
+<meta name="theme-color" content="#0d1410" />
+<link rel="icon" href="assets/mayor-icon.png" />
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0d1410;
+    --bg-deep: #0a0e08;
+    --fg: #b9d3a8;
+    --fg-bright: #d8efb6;
+    --accent: #8fcf52;
+    --accent-hot: #c2f37a;
+    --muted: #5a7042;
+    --line: #1f2d18;
+    --warn: #f3df7a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 20% 0%, rgba(143, 207, 82, 0.08), transparent 34%),
+      radial-gradient(circle at 84% 28%, rgba(243, 223, 122, 0.045), transparent 46%),
+      var(--bg);
+    color: var(--fg);
+    font: 15px/1.6 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { color: var(--accent-hot); }
+  .wrap { width: min(980px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 4rem; }
+  nav { display: flex; align-items: center; gap: 1rem; margin-bottom: 4rem; }
+  nav .brand { color: var(--fg-bright); font-weight: 700; letter-spacing: .04em; }
+  nav .spacer { flex: 1; }
+  nav a { color: var(--muted); }
+  h1 { margin: 0 0 1rem; color: var(--fg-bright); font-size: clamp(2.1rem, 8vw, 4.5rem); line-height: 1; }
+  .tagline { max-width: 680px; margin: 0 0 2rem; font-size: 1.05rem; }
+  .panel {
+    border: 1px solid var(--line);
+    background: rgba(10, 14, 8, .78);
+    padding: 1.1rem 1.25rem;
+    margin: 1rem 0;
+  }
+  .panel h2 { margin: 0 0 .5rem; color: var(--fg-bright); font-size: 1rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
+  .badge {
+    display: inline-block;
+    border: 1px solid rgba(243, 223, 122, .36);
+    color: var(--warn);
+    padding: .15rem .45rem;
+    margin-bottom: .8rem;
+    font-size: .78rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  ul { margin: .5rem 0 0; padding-left: 1.2rem; }
+  footer { margin-top: 3rem; color: var(--muted); font-size: .88rem; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <nav>
+    <a class="brand" href="/">Goblintown</a>
+    <span class="spacer"></span>
+    <a href="/admin.html">admin</a>
+    <a href="/privacy.html">privacy</a>
+    <a href="/terms.html">terms</a>
+  </nav>
+
+  <span class="badge">planned signed-in surface</span>
+  <h1>User dashboard</h1>
+  <p class="tagline">
+    This is the future Goblintown account surface for userland DB state. It should be
+    signed-in, opt-in, and separate from the ChatGPT app widget.
+  </p>
+
+  <section class="grid">
+    <div class="panel">
+      <h2>Account</h2>
+      <p>Sign in, cloud mode, friend code, country metadata, and account status.</p>
+    </div>
+    <div class="panel">
+      <h2>Warrens</h2>
+      <p>Connected Warrens, local/cloud sync status, recent rites, and Hoard summaries.</p>
+    </div>
+    <div class="panel">
+      <h2>Settings</h2>
+      <p>Provider preferences, sentiment source keys, add-ons, mail, and reset controls.</p>
+    </div>
+    <div class="panel">
+      <h2>Artifacts</h2>
+      <p>Typed Artifact history, imports, embeddings/vectorization state, and lineage links.</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Boundary</h2>
+    <ul>
+      <li>ChatGPT-hosted rites do not require or spend local provider keys.</li>
+      <li>Userland DB storage should require sign-in and explicit user consent.</li>
+      <li>Local-only secrets stay local unless the user chooses cloud mode.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Goblintown dashboard placeholder. Backend auth and userland DB wiring are next.
+  </footer>
+</main>
+</body>
+</html>

@@ -5,8 +5,10 @@ try {
   // no .env file — that's fine
 }
 
+import { spawn } from "node:child_process";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { auditRite } from "./audit.js";
 import {
   addonStatusPayload,
@@ -139,6 +141,18 @@ async function main(): Promise<void> {
       return cmdCountry(argv.slice(1));
     case "cloud":
       return cmdCloud(argv.slice(1));
+    case "mcp":
+      return cmdMcp(argv.slice(1));
+    case "chatgpt":
+      return cmdChatGpt(argv.slice(1));
+    case "skill":
+    case "skills":
+      return cmdSkill(argv.slice(1));
+    case "plugin":
+    case "plugins":
+    case "extension":
+    case "extensions":
+      return cmdPlugin(argv.slice(1));
     case "addon":
     case "addons":
       return cmdAddon(argv.slice(1));
@@ -146,6 +160,8 @@ async function main(): Promise<void> {
       return cmdSentiment(argv.slice(1));
     case "serve":
       return cmdServe(argv.slice(1));
+    case "install":
+      return cmdInstall(argv.slice(1));
     case "ancestry":
       return cmdAncestry(argv.slice(1));
     case "export-trace":
@@ -1659,10 +1675,201 @@ async function cmdCountryRun(args: string[]): Promise<void> {
   }
 }
 
+async function cmdInstall(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const help = flags.help === "true" || flags.h === "true";
+  if (help) {
+    process.stdout.write(
+      [
+        "usage: goblintown install [--port <N>] [--no-serve]",
+        "",
+        "Single-command agent setup:",
+        "  1. Creates a Warren if none exists in the current directory.",
+        "  2. Installs the Codex MCP config into ~/.codex/config.toml.",
+        "  3. Installs the goblintown-sidecar skill into ~/.codex/skills.",
+        "  4. Installs and enables Goblintown Codex Plugin 1.0 for the composer.",
+        "  5. Starts the Tank in AI-autopilot mode (no chat surface).",
+        "",
+        "The agent drives the Tank via MCP tools:",
+        "  goblintown_tank  — launch or reuse the Tank",
+        "  goblintown_rite  — full multi-agent rite",
+        "  goblintown_plan  — planner DAG execution",
+        "  goblintown_chat  — single goblin call",
+        "",
+        "Flags:",
+        "  --port <N>    Port for the Tank (default 7777).",
+        "  --no-serve    Skip starting the server.",
+        "",
+      ].join("\n"),
+    );
+    return;
+  }
+  const { goblintownInstall, formatInstallOutput } = await import("./install.js");
+  const port = flags.port ? Number(flags.port) : 7777;
+  const shouldServe = flags["no-serve"] !== "true";
+  const result = await goblintownInstall(process.cwd(), {
+    port,
+    serve: shouldServe,
+  });
+  process.stdout.write(formatInstallOutput(result));
+  if (!result.ok) process.exitCode = 1;
+}
+
 async function cmdServe(args: string[]): Promise<void> {
   const flags = parseFlags(args);
   const port = flags.port ? Number(flags.port) : 7777;
-  await serve({ cwd: process.cwd(), port });
+  const chatMode = flags.chat === "true";
+  await serve({ cwd: process.cwd(), port, autopilot: !chatMode });
+}
+
+async function cmdChatGpt(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const positionals = positionalArgs(args);
+  const action = positionals[0] ?? "serve";
+  const help = [
+    "usage:",
+    "  goblintown chatgpt install [--port <N>] [--no-tunnel] [--no-open]",
+    "  goblintown chatgpt serve [--port <N>] [--host <host>] [--public-base-url <https://...>] [--tunnel] [--allowed-host <host>]...",
+    "",
+    "Installs or starts the Goblintown ChatGPT App 1.0 dev adapter.",
+    "It exposes a Streamable HTTP MCP endpoint at /mcp and a Tank widget resource for ChatGPT Developer Mode.",
+    "",
+    "Easy path:",
+    "  npx -y goblintown@latest chatgpt install",
+    "",
+    "Flags:",
+    "  --port <N>             Port for the local adapter (default 8787).",
+    "  --host <host>          Bind host (default 127.0.0.1).",
+    "  --public-base-url <u>  Public HTTPS base URL from a tunnel or deployment.",
+    "                         Install default: https://goblintown-mcp.vercel.app",
+    "  --tunnel               Start a quick Cloudflare tunnel. Use with local testing only.",
+    "  --no-tunnel            Do not start a tunnel during install.",
+    "  --no-open              Do not open the local walkthrough page.",
+    "  --allowed-host <host>  Extra allowed Host header. Repeatable.",
+    "  --allowed-hosts <csv>  Extra allowed Host headers.",
+    "",
+    "Environment:",
+    "  GOBLINTOWN_CHATGPT_PORT",
+    "  GOBLINTOWN_CHATGPT_HOST",
+    "  GOBLINTOWN_CHATGPT_PUBLIC_BASE_URL",
+    "  GOBLINTOWN_CHATGPT_ALLOWED_HOSTS",
+    "",
+  ].join("\n");
+
+  if (flags.help === "true" || flags.h === "true" || args[0] === "-h" || action === "help") {
+    process.stdout.write(help);
+    return;
+  }
+  if (!["install", "setup", "serve", "start"].includes(action)) {
+    process.stderr.write(`Unknown chatgpt command: ${action}\n\n${help}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const {
+    startGoblintownChatGptApp,
+    startGoblintownChatGptQuickTunnel,
+  } = await import("./chatgpt-app.js");
+  const port = flags.port ? Number(flags.port) : undefined;
+  if (port !== undefined && (!Number.isFinite(port) || port <= 0)) {
+    process.stderr.write("--port must be a positive number.\n");
+    process.exitCode = 1;
+    return;
+  }
+  const installMode = action === "install" || action === "setup";
+  const installPublicBaseUrl = installMode
+    ? (flags["public-base-url"] ??
+      process.env.GOBLINTOWN_CHATGPT_PUBLIC_BASE_URL ??
+      "https://goblintown-mcp.vercel.app")
+    : flags["public-base-url"];
+  const useTunnel = installMode
+    ? flags.tunnel === "true" && flags["no-tunnel"] !== "true"
+    : flags.tunnel === "true";
+  const allowedHosts = [
+    ...(useTunnel ? ["localhost", "127.0.0.1", "[::1]"] : []),
+    ...collectFlag(args, "allowed-host"),
+    ...splitCsv(flags["allowed-hosts"]),
+  ];
+  if (installMode && !useTunnel && installPublicBaseUrl) {
+    const hostedBaseUrl = normalizeChatGptInstallBaseUrl(installPublicBaseUrl);
+    if (flags["no-open"] !== "true") {
+      openUrl(hostedBaseUrl);
+    }
+    process.stdout.write(
+      `Goblintown ChatGPT App 1.0 hosted installer ready.\n` +
+        `  walkthrough: ${hostedBaseUrl}\n` +
+        `  MCP URL:     ${hostedBaseUrl}/mcp\n` +
+        `  health:    ${hostedBaseUrl}/healthz\n` +
+        `\n` +
+        `Next:\n` +
+        `  1. Open ChatGPT Developer Mode.\n` +
+        `  2. Add a new MCP server/app.\n` +
+        `  3. Paste this MCP URL: ${hostedBaseUrl}/mcp\n` +
+        `\n` +
+        `This endpoint is hosted on Vercel; no local terminal needs to stay open.\n`,
+    );
+    return;
+  }
+  const handle = await startGoblintownChatGptApp({
+    cwd: process.cwd(),
+    host: flags.host ?? (useTunnel ? "0.0.0.0" : undefined),
+    port,
+    publicBaseUrl: installPublicBaseUrl,
+    allowedHosts: allowedHosts.length > 0 ? allowedHosts : undefined,
+  });
+  const localGuideUrl = useTunnel ? `http://localhost:${handle.port}` : handle.url;
+  let tunnel: Awaited<ReturnType<typeof startGoblintownChatGptQuickTunnel>> | undefined;
+  if (useTunnel && !flags["public-base-url"]) {
+    process.stdout.write("Starting a public HTTPS tunnel for ChatGPT...\n");
+    try {
+      tunnel = await startGoblintownChatGptQuickTunnel(localGuideUrl, {
+        onTunnelUrl: (url) => {
+          handle.addAllowedHost(url);
+          handle.setPublicBaseUrl(url);
+          process.stdout.write(`Tunnel candidate: ${url}\n`);
+        },
+      });
+      handle.addAllowedHost(tunnel.url);
+      handle.setPublicBaseUrl(tunnel.url);
+    } catch (err) {
+      await handle.close();
+      throw err;
+    }
+  }
+  if (installMode && flags["no-open"] !== "true") {
+    openUrl(localGuideUrl);
+  }
+
+  process.stdout.write(
+    `Goblintown ChatGPT App 1.0 ${installMode ? "installer" : "dev adapter"} ready.\n` +
+      `  walkthrough: ${localGuideUrl}\n` +
+      `  MCP URL:     ${handle.mcpUrl}\n` +
+      `  health:    ${handle.healthUrl}\n` +
+      `\n` +
+      `Next:\n` +
+      `  1. Open ChatGPT Developer Mode.\n` +
+      `  2. Add a new MCP server/app.\n` +
+      `  3. Paste this MCP URL: ${handle.mcpUrl}\n` +
+      `\n` +
+      `Keep this terminal open while using the ChatGPT app.\n`,
+  );
+
+  const shutdown = async (): Promise<void> => {
+    await tunnel?.close();
+    await handle.close();
+    process.exit(0);
+  };
+  process.once("SIGINT", () => void shutdown());
+  process.once("SIGTERM", () => void shutdown());
+  await new Promise<never>(() => {
+    // Keep the adapter alive until the user stops the process.
+  });
+}
+
+function normalizeChatGptInstallBaseUrl(value: string): string {
+  const trimmed = value.trim();
+  const withProtocol = /^https?:\/\//iu.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return withProtocol.replace(/\/+$/u, "");
 }
 
 async function cmdCloud(args: string[]): Promise<void> {
@@ -2119,6 +2326,145 @@ async function cmdPlan(args: string[]): Promise<void> {
   }
 }
 
+async function cmdMcp(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  if (flags["install-codex"] === "true") {
+    const {
+      installGoblintownCodexMcpConfig,
+      mcpDoctorPayload,
+    } = await import("./mcp.js");
+    const packageSpec = flags.package || flags["package-spec"];
+    const configPath = flags["codex-config"] || flags.config;
+    const install = await installGoblintownCodexMcpConfig({
+      packageSpec,
+      configPath,
+    });
+    const doctor = await mcpDoctorPayload(process.cwd(), { packageSpec });
+    const payload: Record<string, unknown> = {
+      ...doctor,
+      install,
+    };
+    if (install.ok !== true) {
+      payload.ok = false;
+      process.exitCode = 1;
+    }
+    process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+    return;
+  }
+  if (flags["config-snippet"] === "true") {
+    const { buildGoblintownMcpConfig } = await import("./mcp.js");
+    const packageSpec = flags.package || flags["package-spec"];
+    process.stdout.write(JSON.stringify(buildGoblintownMcpConfig({ packageSpec }), null, 2) + "\n");
+    return;
+  }
+  if (flags.doctor === "true") {
+    const { mcpDoctorPayload } = await import("./mcp.js");
+    const packageSpec = flags.package || flags["package-spec"];
+    process.stdout.write(JSON.stringify(await mcpDoctorPayload(process.cwd(), { packageSpec }), null, 2) + "\n");
+    return;
+  }
+  if (flags.help === "true" || flags.h === "true") {
+    process.stdout.write(
+      [
+        "usage: goblintown mcp [--doctor|--config-snippet]",
+        "",
+        "Starts the local stdio MCP sidecar for Codex.",
+        "  --doctor           Check the project/global Warren and print a config snippet.",
+        "  --install-codex    Add/update [mcp_servers.goblintown] in ~/.codex/config.toml.",
+        "  --codex-config <path>  Config path to update with --install-codex.",
+        "  --config-snippet   Print only the Codex MCP config JSON.",
+        "  --package <spec>   Use an npm package spec in snippets (default: goblintown@latest).",
+        "",
+      ].join("\n"),
+    );
+    return;
+  }
+  const { runGoblintownMcpServer } = await import("./mcp.js");
+  await runGoblintownMcpServer({ cwd: process.cwd() });
+}
+
+async function cmdSkill(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const positionals = positionalArgs(args);
+  const action = positionals[0];
+  const help = [
+    "usage: goblintown skill install [--skills-dir <path>] [--source-dir <path>] [--force]",
+    "",
+    "Installs the bundled goblintown-sidecar Codex skill into ~/.codex/skills.",
+    "Restart Codex after installing or updating the skill.",
+    "",
+  ].join("\n");
+  if (flags.help === "true" || flags.h === "true" || action === "help" || !action) {
+    process.stdout.write(help);
+    return;
+  }
+  if (action === "install") {
+    const { installGoblintownCodexSkill } = await import("./skill-install.js");
+    const result = await installGoblintownCodexSkill({
+      skillsDir: flags["skills-dir"],
+      sourceDir: flags["source-dir"],
+      force: flags.force === "true",
+    });
+    if (!result.ok) process.exitCode = 1;
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return;
+  }
+  if (action === "path") {
+    const { defaultCodexSkillsDir, GOBLINTOWN_SIDECAR_SKILL_NAME } = await import("./skill-install.js");
+    process.stdout.write(`${join(defaultCodexSkillsDir(), GOBLINTOWN_SIDECAR_SKILL_NAME)}\n`);
+    return;
+  }
+  process.stdout.write(help);
+}
+
+async function cmdPlugin(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const positionals = positionalArgs(args);
+  const action = positionals[0];
+  const help = [
+    "usage: goblintown plugin install [--target-dir <path>] [--marketplace-path <path>] [--source-dir <path>] [--package <npm-spec>|--local-mcp|--mcp-cli <path>] [--force]",
+    "",
+    "Installs Goblintown Codex Plugin 1.0 into ~/plugins/goblintown",
+    "adds it to the personal marketplace at ~/.agents/plugins/marketplace.json,",
+    "and runs codex plugin add so it is enabled in Codex.",
+    "Restart Codex after installing or updating the plugin.",
+    "",
+    "Aliases: goblintown extension install, goblintown plugins install.",
+    "",
+  ].join("\n");
+  if (flags.help === "true" || flags.h === "true" || action === "help" || !action) {
+    process.stdout.write(help);
+    return;
+  }
+  if (action === "install") {
+    if ((flags["local-mcp"] === "true" || flags["mcp-cli"]) && (flags.package || flags["package-spec"])) {
+      process.stderr.write("--local-mcp/--mcp-cli cannot be combined with --package.\n");
+      process.exitCode = 1;
+      return;
+    }
+    const { installGoblintownCodexPlugin } = await import("./plugin-install.js");
+    const localMcpCliPath =
+      flags["mcp-cli"] || (flags["local-mcp"] === "true" ? fileURLToPath(import.meta.url) : undefined);
+    const result = await installGoblintownCodexPlugin({
+      targetDir: flags["target-dir"],
+      marketplacePath: flags["marketplace-path"],
+      sourceDir: flags["source-dir"],
+      force: flags.force === "true",
+      mcpPackageSpec: flags.package || flags["package-spec"],
+      localMcpCliPath,
+    });
+    if (!result.ok) process.exitCode = 1;
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return;
+  }
+  if (action === "path") {
+    const { defaultCodexPluginDir } = await import("./plugin-install.js");
+    process.stdout.write(`${defaultCodexPluginDir()}\n`);
+    return;
+  }
+  process.stdout.write(help);
+}
+
 async function cmdExportTrace(args: string[]): Promise<void> {
   const positional = args.filter((a) => !a.startsWith("--"));
   const idArg = positional[0];
@@ -2435,6 +2781,23 @@ function collectFlag(args: string[], name: string): string[] {
     }
   }
   return out;
+}
+
+function openUrl(url: string): void {
+  const command = process.platform === "darwin"
+    ? "open"
+    : process.platform === "win32"
+      ? "cmd"
+      : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.on("error", () => {
+    // Opening the guide is a convenience; the URL is printed either way.
+  });
+  child.unref();
 }
 
 function isModelSlot(value: string): value is ModelSlot {

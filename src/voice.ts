@@ -2,6 +2,10 @@ import type { VoiceConfig, VoiceProviderId } from "./types.js";
 
 export const DEFAULT_VOICE_PROMPT =
   "Goblintown chat, rites, Tank, Hoard, loot, model settings, and local AI workbench commands.";
+export const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
+export const OPENAI_REALTIME_MODEL = "gpt-realtime-2";
+export const OPENAI_REALTIME_VOICE = "marin";
+export const OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
 
 export interface VoiceTranscriptionRequest {
   url: string;
@@ -19,6 +23,29 @@ export interface VoiceTranscriptionInput {
   mimeType: string;
 }
 
+export interface OpenAIRealtimeSessionConfig {
+  type: "realtime";
+  model: string;
+  output_modalities: ["audio"];
+  audio: {
+    input: {
+      transcription: {
+        model: string;
+      };
+      turn_detection: {
+        type: "server_vad";
+        create_response: boolean;
+        interrupt_response: boolean;
+      };
+    };
+    output: {
+      voice: string;
+    };
+  };
+  instructions: string;
+  max_output_tokens: number;
+}
+
 export function normalizeVoiceConfig(value: unknown): VoiceConfig {
   if (!value || typeof value !== "object") {
     return {
@@ -32,6 +59,7 @@ export function normalizeVoiceConfig(value: unknown): VoiceConfig {
   const baseURL = stringOrUndefined(input.baseURL);
   const apiKeyEnv = isEnvName(input.apiKeyEnv) ? input.apiKeyEnv : undefined;
   const model = normalizeVoiceModel(provider, stringOrUndefined(input.model));
+  const outputVoice = normalizeOutputVoice(input.outputVoice);
   const language = stringOrUndefined(input.language) ?? "en-US";
   const prompt = stringOrUndefined(input.prompt) ?? DEFAULT_VOICE_PROMPT;
   return {
@@ -39,6 +67,7 @@ export function normalizeVoiceConfig(value: unknown): VoiceConfig {
     ...(baseURL ? { baseURL } : {}),
     ...(apiKeyEnv ? { apiKeyEnv } : {}),
     ...(model ? { model } : {}),
+    ...(outputVoice ? { outputVoice } : {}),
     language,
     prompt,
   };
@@ -83,8 +112,8 @@ export function buildVoiceTranscriptionRequest(
       ? config.baseURL || "https://api.openai.com/v1/audio/transcriptions"
       : config.baseURL || "http://localhost:8000/v1/audio/transcriptions";
   const model =
-    config.model ||
-    (config.provider === "openai" ? "gpt-4o-mini-transcribe" : undefined);
+    openAITranscriptionModel(config) ||
+    (config.provider === "openai" ? OPENAI_TRANSCRIPTION_MODEL : undefined);
   const formFields: Record<string, string> = {};
   if (model) formFields.model = model;
   if (config.language) formFields.language = config.language;
@@ -98,6 +127,43 @@ export function buildVoiceTranscriptionRequest(
     formFields,
     audio: input.audio,
     mimeType,
+  };
+}
+
+export function openAIRealtimeCallURL(config: VoiceConfig): string {
+  const normalized = normalizeVoiceConfig(config);
+  if (normalized.provider === "openai" && normalized.baseURL && /\/realtime\/calls\/?$/i.test(normalized.baseURL)) {
+    return normalized.baseURL;
+  }
+  return OPENAI_REALTIME_CALLS_URL;
+}
+
+export function buildOpenAIRealtimeSessionConfig(
+  config: VoiceConfig,
+  options: { personality?: string } = {},
+): OpenAIRealtimeSessionConfig {
+  const normalized = normalizeVoiceConfig(config);
+  return {
+    type: "realtime",
+    model: openAIRealtimeModel(normalized.model),
+    output_modalities: ["audio"],
+    audio: {
+      input: {
+        transcription: {
+          model: OPENAI_TRANSCRIPTION_MODEL,
+        },
+        turn_detection: {
+          type: "server_vad",
+          create_response: true,
+          interrupt_response: true,
+        },
+      },
+      output: {
+        voice: normalized.outputVoice || OPENAI_REALTIME_VOICE,
+      },
+    },
+    instructions: openAIRealtimeInstructions(normalized, options.personality),
+    max_output_tokens: 900,
   };
 }
 
@@ -179,6 +245,41 @@ function normalizeVoiceModel(provider: VoiceProviderId, model: string | undefine
     if (!model || /^aura-/i.test(model)) return "nova-3";
   }
   return model;
+}
+
+function normalizeOutputVoice(value: unknown): string | undefined {
+  const input = stringOrUndefined(value);
+  if (!input || !/^[a-z0-9_-]+$/i.test(input)) return undefined;
+  return input;
+}
+
+function openAITranscriptionModel(config: VoiceConfig): string | undefined {
+  if (config.provider !== "openai") return config.model;
+  if (!config.model || isOpenAIRealtimeModel(config.model)) return OPENAI_TRANSCRIPTION_MODEL;
+  return config.model;
+}
+
+function openAIRealtimeModel(model: string | undefined): string {
+  if (!model || !isOpenAIRealtimeModel(model)) return OPENAI_REALTIME_MODEL;
+  return model;
+}
+
+function isOpenAIRealtimeModel(model: string): boolean {
+  return /^gpt-(?:[a-z0-9.-]+-)?realtime/i.test(model) || /^gpt-audio/i.test(model);
+}
+
+function openAIRealtimeInstructions(config: VoiceConfig, personality: string | undefined): string {
+  const style = personality && /^[a-z0-9_-]+$/i.test(personality) ? personality : "goblin_mode";
+  const vocabulary = config.prompt || DEFAULT_VOICE_PROMPT;
+  return [
+    "You are the live voice for Goblintown's single-goblin chat.",
+    "Use the active personality label as steering, not as a literal name: " + style + ".",
+    "Keep content useful, direct, and a little weird in the Goblintown house style.",
+    "Favor Goblintown vocabulary when it is relevant: " + vocabulary,
+    "Sound lively and textured, with quick turns and expressive timing, but keep speech clear enough to follow.",
+    "Answer in spoken conversational language. Avoid markdown tables, long lists, URLs, or code unless the user asks.",
+    "Do not claim to run tools or rites unless the app actually starts them; describe the next action plainly when needed.",
+  ].join("\n");
 }
 
 function compactHeaders(headers: Record<string, string | undefined>): Record<string, string> {
